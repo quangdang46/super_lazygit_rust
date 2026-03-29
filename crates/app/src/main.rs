@@ -68,8 +68,8 @@ mod tests {
     use super::*;
     use super_lazygit_core::{
         AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, Event, RepoId,
-        RepoSummary, ScanStatus, Timestamp, WatcherEventKind, WatcherHealth, WorkerEvent,
-        WorkspaceState,
+        RepoSummary, ScanStatus, TimerEvent, Timestamp, WatcherEventKind, WatcherHealth,
+        WorkerEvent, WorkspaceState,
     };
     use super_lazygit_test_support::{clean_repo, TempRepo};
 
@@ -246,6 +246,50 @@ mod tests {
             WatcherHealth::Degraded {
                 message: "watch backend unavailable".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn runtime_periodic_refresh_polls_when_watcher_is_degraded() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let handle = ScriptedWatcherHandle::new();
+        handle.set_configure_error("watch backend unavailable");
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime =
+            AppRuntime::with_watcher(app, workspace, git, ScriptedWatcherBackend::new(handle));
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![repo_id.clone()],
+            scanned_at: Timestamp(7),
+        })]);
+
+        std::fs::write(repo.path().join("fallback.txt"), "poll me").expect("write fallback file");
+        runtime.run([Event::Timer(TimerEvent::PeriodicRefreshTick)]);
+
+        let summary = runtime
+            .app()
+            .state()
+            .workspace
+            .repo_summaries
+            .get(&repo_id)
+            .expect("summary after fallback poll");
+        assert!(summary.dirty);
+        assert_eq!(
+            runtime.app().state().workspace.watcher_health,
+            WatcherHealth::Degraded {
+                message: "watch backend unavailable".to_string(),
+            }
+        );
+        assert_eq!(
+            summary.watcher_freshness,
+            super_lazygit_core::WatcherFreshness::Fresh
         );
     }
 

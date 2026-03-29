@@ -478,11 +478,12 @@ impl TuiApp {
             .unwrap_or(repo_mode.current_repo_id.0.as_str());
         let lines = vec![
             Line::from(format!(
-                "Repo: {}  Branch: {}",
+                "Repo: {}  Branch: {}  Watch: {}",
                 title,
                 self.selected_summary()
                     .and_then(|summary| summary.branch.as_deref())
-                    .unwrap_or("detached")
+                    .unwrap_or("detached"),
+                watcher_health_label(&self.state.workspace.watcher_health)
             )),
             Line::from(repo_subview_tabs(repo_mode.active_subview)),
         ];
@@ -1984,8 +1985,34 @@ fn workspace_status_line(state: &AppState, visible_count: usize, theme: Theme) -
             Style::default().fg(theme.foreground),
         ),
         Span::raw("  "),
+        Span::styled(
+            format!(
+                "watch={}",
+                watcher_health_label(&state.workspace.watcher_health)
+            ),
+            workspace_watch_style(&state.workspace.watcher_health, theme),
+        ),
+        Span::raw("  "),
         Span::styled(format!("scan={scan}"), Style::default().fg(theme.muted)),
     ])
+}
+
+fn watcher_health_label(health: &super_lazygit_core::WatcherHealth) -> &'static str {
+    match health {
+        super_lazygit_core::WatcherHealth::Unknown => "unknown",
+        super_lazygit_core::WatcherHealth::Healthy => "live",
+        super_lazygit_core::WatcherHealth::Degraded { .. } => "polling",
+    }
+}
+
+fn workspace_watch_style(health: &super_lazygit_core::WatcherHealth, theme: Theme) -> Style {
+    match health {
+        super_lazygit_core::WatcherHealth::Degraded { .. } => Style::default()
+            .fg(theme.danger)
+            .add_modifier(Modifier::BOLD),
+        super_lazygit_core::WatcherHealth::Healthy => Style::default().fg(theme.success),
+        super_lazygit_core::WatcherHealth::Unknown => Style::default().fg(theme.muted),
+    }
 }
 
 fn parse_hex_color(hex: &str) -> Option<Color> {
@@ -2333,6 +2360,32 @@ mod tests {
         assert!(rendered.contains("beta"));
         assert!(!rendered.contains("gamma"));
         assert!(rendered.contains("Attention:"));
+    }
+
+    #[test]
+    fn render_workspace_shell_shows_polling_badges_when_watcher_is_degraded() {
+        let repo_id = RepoId::new("/tmp/repo");
+        let mut summary = workspace_repo_summary(&repo_id.0, "repo");
+        summary.watcher_freshness = super_lazygit_core::WatcherFreshness::Stale;
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(repo_id.clone(), summary)]),
+                selected_repo_id: Some(repo_id),
+                watcher_health: super_lazygit_core::WatcherHealth::Degraded {
+                    message: "watch backend unavailable".to_string(),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(160, 20);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("watch=polling"));
+        assert!(rendered.contains("Watcher: Stale"));
     }
 
     #[test]
@@ -2980,6 +3033,7 @@ mod tests {
         assert!(rendered.contains("@@ -1,1 +1,2 @@"));
         assert!(rendered.contains("+new line"));
         assert!(rendered.contains("Repository shell"));
+        assert!(rendered.contains("Watch: unknown"));
     }
 
     #[test]

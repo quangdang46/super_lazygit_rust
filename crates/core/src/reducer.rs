@@ -573,6 +573,9 @@ fn reduce_watcher_event(state: &mut AppState, event: WatcherEvent, effects: &mut
         }
         WatcherEvent::WatcherDegraded { message } => {
             state.workspace.watcher_health = WatcherHealth::Degraded { message };
+            for summary in state.workspace.repo_summaries.values_mut() {
+                summary.watcher_freshness = crate::state::WatcherFreshness::Stale;
+            }
             effects.push(Effect::ScheduleRender);
         }
         WatcherEvent::WatcherRecovered => {
@@ -590,6 +593,28 @@ fn reduce_timer_event(state: &mut AppState, event: TimerEvent, effects: &mut Vec
                 ScanStatus::Idle | ScanStatus::Complete { .. }
             ) {
                 state.workspace.scan_status = ScanStatus::Scanning;
+            }
+
+            if matches!(
+                state.workspace.watcher_health,
+                WatcherHealth::Degraded { .. }
+            ) {
+                if state.workspace.discovered_repo_ids.is_empty() {
+                    effects.push(Effect::StartRepoScan);
+                } else {
+                    let active_repo_id = state
+                        .repo_mode
+                        .as_ref()
+                        .map(|repo_mode| &repo_mode.current_repo_id);
+                    let repo_ids = state
+                        .workspace
+                        .prioritized_repo_ids(&state.workspace.discovered_repo_ids, active_repo_id);
+                    effects.push(Effect::RefreshRepoSummaries { repo_ids });
+                    if let Some(repo_id) = active_repo_id.cloned() {
+                        effects.push(load_repo_detail_effect(state, repo_id));
+                    }
+                }
+                effects.push(Effect::ScheduleRender);
             }
         }
         TimerEvent::PeriodicFetchTick => {}
@@ -1394,8 +1419,18 @@ mod tests {
 
     #[test]
     fn watcher_degraded_updates_health() {
+        let repo_id = RepoId::new("/tmp/repo");
+        let mut state = AppState::default();
+        state.workspace.repo_summaries.insert(
+            repo_id.clone(),
+            RepoSummary {
+                repo_id,
+                watcher_freshness: crate::state::WatcherFreshness::Fresh,
+                ..workspace_summary("/tmp/repo")
+            },
+        );
         let result = reduce(
-            AppState::default(),
+            state,
             Event::Watcher(WatcherEvent::WatcherDegraded {
                 message: "watch overflow".to_string(),
             }),
@@ -1407,6 +1442,12 @@ mod tests {
                 message: "watch overflow".to_string()
             }
         );
+        assert!(result
+            .state
+            .workspace
+            .repo_summaries
+            .values()
+            .all(|summary| summary.watcher_freshness == crate::state::WatcherFreshness::Stale));
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
@@ -2686,6 +2727,58 @@ mod tests {
             crate::state::ScanStatus::Scanning
         );
         assert!(result.effects.is_empty());
+    }
+
+    #[test]
+    fn periodic_refresh_tick_in_degraded_mode_polls_prioritized_repos() {
+        let repo_active = RepoId::new("/tmp/active");
+        let repo_visible = RepoId::new("/tmp/visible");
+        let repo_hidden = RepoId::new("/tmp/hidden");
+        let mut visible = workspace_summary(&repo_visible.0);
+        visible.dirty = true;
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(repo_active.clone())),
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![
+                    repo_hidden.clone(),
+                    repo_visible.clone(),
+                    repo_active.clone(),
+                ],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (repo_active.clone(), workspace_summary(&repo_active.0)),
+                    (repo_visible.clone(), visible),
+                    (repo_hidden.clone(), workspace_summary(&repo_hidden.0)),
+                ]),
+                filter_mode: WorkspaceFilterMode::DirtyOnly,
+                watcher_health: WatcherHealth::Degraded {
+                    message: "polling".to_string(),
+                },
+                ..Default::default()
+            },
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Timer(TimerEvent::PeriodicRefreshTick));
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummaries {
+                    repo_ids: vec![
+                        repo_active.clone(),
+                        repo_visible.clone(),
+                        repo_hidden.clone(),
+                    ],
+                },
+                Effect::LoadRepoDetail {
+                    repo_id: repo_active,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
     }
 
     #[test]
