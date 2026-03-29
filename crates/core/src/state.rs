@@ -8,6 +8,7 @@ pub struct AppState {
     pub mode: AppMode,
     pub focused_pane: PaneId,
     pub modal_stack: Vec<Modal>,
+    pub pending_confirmation: Option<PendingConfirmation>,
     pub status_messages: VecDeque<StatusMessage>,
     pub notifications: VecDeque<Notification>,
     pub background_jobs: BTreeMap<JobId, BackgroundJob>,
@@ -57,6 +58,19 @@ pub enum ModalKind {
     Confirm,
     CommandPalette,
     InputPrompt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingConfirmation {
+    pub repo_id: RepoId,
+    pub operation: ConfirmableOperation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfirmableOperation {
+    Fetch,
+    Pull,
+    Push,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

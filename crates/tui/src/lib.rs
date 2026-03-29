@@ -112,25 +112,15 @@ impl TuiApp {
         if let Some(modal) = self.state.modal_stack.last() {
             let modal_area = centered_rect(area, 72, 45);
             Clear.render(modal_area, &mut buffer);
-            Paragraph::new(vec![
-                Line::from(Span::styled(
-                    modal.title.clone(),
-                    Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(""),
-                Line::from(format!("{:?}", modal.kind)),
-                Line::from("Esc closes this overlay."),
-            ])
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Modal")
-                    .border_style(self.pane_style(PaneId::Modal, theme)),
-            )
-            .alignment(Alignment::Left)
-            .render(modal_area, &mut buffer);
+            Paragraph::new(self.modal_lines(modal, theme))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Modal")
+                        .border_style(self.pane_style(PaneId::Modal, theme)),
+                )
+                .alignment(Alignment::Left)
+                .render(modal_area, &mut buffer);
         }
 
         self.diagnostics
@@ -188,9 +178,16 @@ impl TuiApp {
 
         if !self.state.modal_stack.is_empty() {
             let normalized = raw.trim().to_ascii_lowercase();
-            return match normalized.as_str() {
-                "esc" | "q" => Some(Action::CloseTopModal),
-                _ => None,
+            return match self.state.modal_stack.last().map(|modal| modal.kind) {
+                Some(super_lazygit_core::ModalKind::Confirm) => match normalized.as_str() {
+                    "enter" | "y" => Some(Action::ConfirmPendingOperation),
+                    "esc" | "q" | "n" => Some(Action::CloseTopModal),
+                    _ => None,
+                },
+                _ => match normalized.as_str() {
+                    "esc" | "q" => Some(Action::CloseTopModal),
+                    _ => None,
+                },
             };
         };
 
@@ -701,6 +698,33 @@ impl TuiApp {
             .selected_repo_id
             .as_ref()
             .and_then(|repo_id| self.state.workspace.repo_summaries.get(repo_id))
+    }
+
+    fn modal_lines(&self, modal: &super_lazygit_core::Modal, theme: Theme) -> Vec<Line<'static>> {
+        let mut lines = vec![Line::from(Span::styled(
+            modal.title.clone(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))];
+
+        match modal.kind {
+            super_lazygit_core::ModalKind::Confirm => {
+                lines.push(Line::from(""));
+                if let Some(pending) = self.state.pending_confirmation.as_ref() {
+                    lines.push(Line::from(format!("Repo: {}", pending.repo_id.0)));
+                    lines.push(Line::from(confirmation_copy(pending.operation)));
+                }
+                lines.push(Line::from("Enter or y confirms. Esc, n, or q cancels."));
+            }
+            _ => {
+                lines.push(Line::from(""));
+                lines.push(Line::from(format!("{:?}", modal.kind)));
+                lines.push(Line::from("Esc closes this overlay."));
+            }
+        }
+
+        lines
     }
 }
 
@@ -1479,6 +1503,20 @@ fn operation_progress_label(progress: &super_lazygit_core::OperationProgress) ->
     }
 }
 
+fn confirmation_copy(operation: super_lazygit_core::ConfirmableOperation) -> &'static str {
+    match operation {
+        super_lazygit_core::ConfirmableOperation::Fetch => {
+            "Fetch remote updates for the current repository?"
+        }
+        super_lazygit_core::ConfirmableOperation::Pull => {
+            "Pull remote changes into the current branch?"
+        }
+        super_lazygit_core::ConfirmableOperation::Push => {
+            "Push the current branch to its configured upstream?"
+        }
+    }
+}
+
 fn mode_label(mode: AppMode) -> &'static str {
     match mode {
         AppMode::Workspace => "WORKSPACE",
@@ -2168,6 +2206,29 @@ mod tests {
     }
 
     #[test]
+    fn confirm_modal_renders_repo_specific_copy() {
+        let state = AppState {
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![super_lazygit_core::Modal::new(
+                ModalKind::Confirm,
+                "Confirm pull",
+            )],
+            pending_confirmation: Some(super_lazygit_core::PendingConfirmation {
+                repo_id: RepoId::new("repo-1"),
+                operation: super_lazygit_core::ConfirmableOperation::Pull,
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(80, 20);
+
+        let rendered = app.render_to_string();
+        assert!(rendered.contains("Confirm pull"));
+        assert!(rendered.contains("Repo: repo-1"));
+        assert!(rendered.contains("Enter or y confirms"));
+    }
+
+    #[test]
     fn repo_mode_routes_subviews_and_focus() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -2231,7 +2292,46 @@ mod tests {
         assert!(result
             .effects
             .iter()
-            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunGitCommand(_))));
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::ScheduleRender)));
+        assert_eq!(
+            result
+                .state
+                .modal_stack
+                .last()
+                .map(|modal| (&modal.kind, modal.title.as_str())),
+            Some((&ModalKind::Confirm, "Confirm push"))
+        );
+    }
+
+    #[test]
+    fn confirm_modal_routes_enter_to_transport_job() {
+        let state = AppState {
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![super_lazygit_core::Modal::new(
+                ModalKind::Confirm,
+                "Confirm fetch",
+            )],
+            pending_confirmation: Some(super_lazygit_core::PendingConfirmation {
+                repo_id: RepoId::new("repo-1"),
+                operation: super_lazygit_core::ConfirmableOperation::Fetch,
+            }),
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::FetchSelectedRepo,
+                ..
+            })
+        )));
     }
 
     #[test]

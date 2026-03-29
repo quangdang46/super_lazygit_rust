@@ -19,6 +19,7 @@ pub enum Action {
     SetFocusedPane(crate::state::PaneId),
     OpenModal { kind: ModalKind, title: String },
     CloseTopModal,
+    ConfirmPendingOperation,
     RefreshSelectedRepo,
     RefreshVisibleRepos,
     StageSelection,

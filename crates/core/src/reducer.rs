@@ -5,8 +5,9 @@ use crate::effect::{
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
-    ComparisonTarget, DiffPresentation, JobId, MessageLevel, Notification, OperationProgress,
-    PaneId, RepoModeState, ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
+    ComparisonTarget, ConfirmableOperation, DiffPresentation, JobId, MessageLevel, Notification,
+    OperationProgress, PaneId, RepoModeState, ScanStatus, SelectedHunk, StatusMessage,
+    WatcherHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +150,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::CloseTopModal => {
+            if state
+                .modal_stack
+                .last()
+                .is_some_and(|modal| matches!(modal.kind, crate::state::ModalKind::Confirm))
+            {
+                state.pending_confirmation = None;
+            }
             state.modal_stack.pop();
             if state.modal_stack.is_empty() {
                 state.focused_pane = match state.mode {
@@ -157,6 +165,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 };
             }
             effects.push(Effect::ScheduleRender);
+        }
+        Action::ConfirmPendingOperation => {
+            if let Some(job) = confirm_pending_operation(state) {
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                effects.push(Effect::ScheduleRender);
+            }
         }
         Action::RefreshSelectedRepo => {
             if let Some(repo_id) = state.workspace.selected_repo_id.clone() {
@@ -292,33 +307,33 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::FetchSelectedRepo => {
-            if let Some(repo_mode) = &state.repo_mode {
-                let job = git_job(
-                    repo_mode.current_repo_id.clone(),
-                    GitCommand::FetchSelectedRepo,
-                );
-                enqueue_git_job(state, &job, "Fetch remote updates");
-                effects.push(Effect::RunGitCommand(job));
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                open_confirmation_modal(state, repo_id, ConfirmableOperation::Fetch);
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::PullCurrentBranch => {
-            if let Some(repo_mode) = &state.repo_mode {
-                let job = git_job(
-                    repo_mode.current_repo_id.clone(),
-                    GitCommand::PullCurrentBranch,
-                );
-                enqueue_git_job(state, &job, "Pull current branch");
-                effects.push(Effect::RunGitCommand(job));
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                open_confirmation_modal(state, repo_id, ConfirmableOperation::Pull);
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::PushCurrentBranch => {
-            if let Some(repo_mode) = &state.repo_mode {
-                let job = git_job(
-                    repo_mode.current_repo_id.clone(),
-                    GitCommand::PushCurrentBranch,
-                );
-                enqueue_git_job(state, &job, "Push current branch");
-                effects.push(Effect::RunGitCommand(job));
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                open_confirmation_modal(state, repo_id, ConfirmableOperation::Push);
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::SwitchRepoSubview(subview) => {
@@ -734,6 +749,47 @@ fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
     Some(job)
 }
 
+fn open_confirmation_modal(
+    state: &mut AppState,
+    repo_id: crate::state::RepoId,
+    operation: ConfirmableOperation,
+) {
+    state.pending_confirmation = Some(crate::state::PendingConfirmation { repo_id, operation });
+    state.modal_stack.push(crate::state::Modal::new(
+        crate::state::ModalKind::Confirm,
+        confirmation_title(operation),
+    ));
+    state.focused_pane = PaneId::Modal;
+}
+
+fn confirmation_title(operation: ConfirmableOperation) -> &'static str {
+    match operation {
+        ConfirmableOperation::Fetch => "Confirm fetch",
+        ConfirmableOperation::Pull => "Confirm pull",
+        ConfirmableOperation::Push => "Confirm push",
+    }
+}
+
+fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> {
+    let pending = state.pending_confirmation.take()?;
+    state.modal_stack.pop();
+    if state.modal_stack.is_empty() {
+        state.focused_pane = match state.mode {
+            AppMode::Workspace => PaneId::WorkspaceList,
+            AppMode::Repository => PaneId::RepoUnstaged,
+        };
+    }
+
+    let (command, summary) = match pending.operation {
+        ConfirmableOperation::Fetch => (GitCommand::FetchSelectedRepo, "Fetch remote updates"),
+        ConfirmableOperation::Pull => (GitCommand::PullCurrentBranch, "Pull current branch"),
+        ConfirmableOperation::Push => (GitCommand::PushCurrentBranch, "Push current branch"),
+    };
+    let job = git_job(pending.repo_id, command);
+    enqueue_git_job(state, &job, summary);
+    Some(job)
+}
+
 fn sync_commit_selection(repo_mode: &mut RepoModeState) {
     let Some(detail) = repo_mode.detail.as_mut() else {
         repo_mode.commits_view.selected_index = None;
@@ -992,9 +1048,10 @@ mod tests {
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
-        CommitItem, ComparisonTarget, DiffHunk, DiffLine, DiffLineKind, DiffModel,
-        DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind, PaneId,
-        RepoDetail, RepoId, RepoSubview, RepoSummary, SelectedHunk, Timestamp, WatcherHealth,
+        CommitItem, ComparisonTarget, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
+        DiffModel, DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind,
+        PaneId, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, SelectedHunk,
+        Timestamp, WatcherHealth,
     };
 
     use super::reduce;
@@ -1087,6 +1144,100 @@ mod tests {
         assert!(closed.state.modal_stack.is_empty());
         assert_eq!(closed.state.focused_pane, PaneId::WorkspaceList);
         assert_eq!(closed.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn transport_actions_open_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Action(Action::PullCurrentBranch));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation)),
+            Some((repo_id, ConfirmableOperation::Pull))
+        );
+        assert_eq!(
+            result
+                .state
+                .modal_stack
+                .last()
+                .map(|modal| (&modal.kind, modal.title.as_str())),
+            Some((&ModalKind::Confirm, "Confirm pull"))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_transport_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Confirm, "Confirm push")],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::Push,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:push-current-branch");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::PushCurrentBranch,
+            })]
+        );
+    }
+
+    #[test]
+    fn closing_confirmation_modal_clears_pending_operation() {
+        let state = AppState {
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Confirm fetch",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: RepoId::new("repo-1"),
+                operation: ConfirmableOperation::Fetch,
+            }),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CloseTopModal));
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::WorkspaceList);
     }
 
     fn repo_detail_with_file_tree() -> RepoDetail {
