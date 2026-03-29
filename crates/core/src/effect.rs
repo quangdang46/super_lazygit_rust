@@ -6,6 +6,7 @@ use crate::state::{JobId, RepoId};
 pub enum Effect {
     StartRepoScan,
     ConfigureWatcher { repo_ids: Vec<RepoId> },
+    ScheduleWatcherDebounce,
     RefreshRepoSummaries { repo_ids: Vec<RepoId> },
     RefreshRepoSummary { repo_id: RepoId },
     LoadRepoDetail { repo_id: RepoId },

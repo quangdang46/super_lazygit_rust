@@ -139,6 +139,10 @@ pub struct WorkspaceState {
     pub scan_status: ScanStatus,
     pub watcher_health: WatcherHealth,
     pub last_full_refresh_at: Option<Timestamp>,
+    #[serde(skip)]
+    pub pending_watcher_invalidations: BTreeMap<RepoId, usize>,
+    #[serde(skip)]
+    pub watcher_debounce_pending: bool,
 }
 
 impl WorkspaceState {

@@ -253,6 +253,9 @@ mod tests {
         handle.push_event(AppWatcherEvent::RepoInvalidated {
             repo_id: repo_id.clone(),
         });
+        handle.push_event(AppWatcherEvent::RepoInvalidated {
+            repo_id: repo_id.clone(),
+        });
 
         let config = AppConfig::default();
         let state = AppState::default();

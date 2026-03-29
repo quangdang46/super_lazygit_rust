@@ -8,7 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::watcher::{NullWatcherBackend, WatchRegistration, WatcherBackend};
 use super_lazygit_core::{
     AppWatcherEvent, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId, RepoId,
-    RepoSummary, Timestamp, WorkerEvent,
+    RepoSummary, TimerEvent, Timestamp, WorkerEvent,
 };
 use super_lazygit_git::{
     GitFacade, GitResult, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest,
@@ -25,6 +25,7 @@ pub struct AppRuntime {
     git: GitFacade,
     diagnostics: Diagnostics,
     watcher: Box<dyn WatcherBackend>,
+    watcher_debounce_scheduled: bool,
 }
 
 impl AppRuntime {
@@ -49,6 +50,7 @@ impl AppRuntime {
             git,
             diagnostics: Diagnostics::default(),
             watcher: Box::new(watcher),
+            watcher_debounce_scheduled: false,
         }
     }
 
@@ -88,6 +90,10 @@ impl AppRuntime {
             }
             for watcher_event in self.drain_watcher_events() {
                 queue.push_back(watcher_event);
+            }
+            if queue.is_empty() && self.watcher_debounce_scheduled {
+                self.watcher_debounce_scheduled = false;
+                queue.push_back(Event::Timer(TimerEvent::WatcherDebounceFlush));
             }
         }
     }
@@ -145,6 +151,9 @@ impl AppRuntime {
                 }
                 Effect::ConfigureWatcher { repo_ids } => {
                     follow_up_events.extend(self.configure_watcher(repo_ids));
+                }
+                Effect::ScheduleWatcherDebounce => {
+                    self.watcher_debounce_scheduled = true;
                 }
                 Effect::RefreshRepoSummaries { repo_ids } => {
                     follow_up_events.extend(self.refresh_repo_summaries(repo_ids.clone()));

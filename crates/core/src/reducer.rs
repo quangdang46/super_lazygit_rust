@@ -21,7 +21,7 @@ pub fn reduce(state: AppState, event: Event) -> ReduceResult {
         Event::Action(action) => reduce_action(&mut state, action, &mut effects),
         Event::Worker(event) => reduce_worker_event(&mut state, event, &mut effects),
         Event::Watcher(event) => reduce_watcher_event(&mut state, event, &mut effects),
-        Event::Timer(event) => reduce_timer_event(&mut state, event),
+        Event::Timer(event) => reduce_timer_event(&mut state, event, &mut effects),
         Event::Input(_) => {}
     }
 
@@ -368,15 +368,14 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
 fn reduce_watcher_event(state: &mut AppState, event: WatcherEvent, effects: &mut Vec<Effect>) {
     match event {
         WatcherEvent::RepoInvalidated { repo_id } => {
-            effects.push(Effect::RefreshRepoSummary {
-                repo_id: repo_id.clone(),
-            });
-            if state
-                .repo_mode
-                .as_ref()
-                .is_some_and(|repo_mode| repo_mode.current_repo_id == repo_id)
-            {
-                effects.push(Effect::LoadRepoDetail { repo_id });
+            *state
+                .workspace
+                .pending_watcher_invalidations
+                .entry(repo_id)
+                .or_insert(0) += 1;
+            if !state.workspace.watcher_debounce_pending {
+                state.workspace.watcher_debounce_pending = true;
+                effects.push(Effect::ScheduleWatcherDebounce);
             }
         }
         WatcherEvent::WatcherDegraded { message } => {
@@ -390,7 +389,7 @@ fn reduce_watcher_event(state: &mut AppState, event: WatcherEvent, effects: &mut
     }
 }
 
-fn reduce_timer_event(state: &mut AppState, event: TimerEvent) {
+fn reduce_timer_event(state: &mut AppState, event: TimerEvent, effects: &mut Vec<Effect>) {
     match event {
         TimerEvent::PeriodicRefreshTick => {
             if matches!(
@@ -401,6 +400,29 @@ fn reduce_timer_event(state: &mut AppState, event: TimerEvent) {
             }
         }
         TimerEvent::PeriodicFetchTick => {}
+        TimerEvent::WatcherDebounceFlush => {
+            let repo_ids = state
+                .workspace
+                .pending_watcher_invalidations
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            state.workspace.pending_watcher_invalidations.clear();
+            state.workspace.watcher_debounce_pending = false;
+
+            for repo_id in repo_ids {
+                effects.push(Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                });
+                if state
+                    .repo_mode
+                    .as_ref()
+                    .is_some_and(|repo_mode| repo_mode.current_repo_id == repo_id)
+                {
+                    effects.push(Effect::LoadRepoDetail { repo_id });
+                }
+            }
+        }
         TimerEvent::ToastExpiryTick { now } => {
             state.notifications.retain(|notification| {
                 notification
@@ -1266,15 +1288,16 @@ mod tests {
             }),
         );
 
+        assert_eq!(result.effects, vec![Effect::ScheduleWatcherDebounce]);
         assert_eq!(
-            result.effects,
-            vec![
-                Effect::RefreshRepoSummary {
-                    repo_id: repo_id.clone(),
-                },
-                Effect::LoadRepoDetail { repo_id },
-            ]
+            result
+                .state
+                .workspace
+                .pending_watcher_invalidations
+                .get(&repo_id),
+            Some(&1)
         );
+        assert!(result.state.workspace.watcher_debounce_pending);
     }
 
     #[test]
@@ -1287,6 +1310,74 @@ mod tests {
                 repo_id: repo_id.clone(),
             }),
         );
+
+        assert_eq!(result.effects, vec![Effect::ScheduleWatcherDebounce]);
+        assert_eq!(
+            result
+                .state
+                .workspace
+                .pending_watcher_invalidations
+                .get(&repo_id),
+            Some(&1)
+        );
+    }
+
+    #[test]
+    fn watcher_debounce_flush_coalesces_repeated_repo_invalidations() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+        let state = reduce(
+            state,
+            Event::Watcher(WatcherEvent::RepoInvalidated {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+        let state = reduce(
+            state,
+            Event::Watcher(WatcherEvent::RepoInvalidated {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Timer(TimerEvent::WatcherDebounceFlush));
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                },
+                Effect::LoadRepoDetail { repo_id },
+            ]
+        );
+        assert!(result
+            .state
+            .workspace
+            .pending_watcher_invalidations
+            .is_empty());
+        assert!(!result.state.workspace.watcher_debounce_pending);
+    }
+
+    #[test]
+    fn watcher_debounce_flush_outside_repo_mode_only_refreshes_summary() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Watcher(WatcherEvent::RepoInvalidated {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Timer(TimerEvent::WatcherDebounceFlush));
 
         assert_eq!(result.effects, vec![Effect::RefreshRepoSummary { repo_id }]);
     }

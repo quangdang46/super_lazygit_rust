@@ -76,5 +76,6 @@ pub enum WatcherEvent {
 pub enum TimerEvent {
     PeriodicRefreshTick,
     PeriodicFetchTick,
+    WatcherDebounceFlush,
     ToastExpiryTick { now: Timestamp },
 }
