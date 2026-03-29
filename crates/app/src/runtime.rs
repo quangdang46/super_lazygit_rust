@@ -129,18 +129,32 @@ impl AppRuntime {
                 }
                 Effect::RunGitCommand(request) => {
                     let summary = git_command_summary(&request.command);
-                    self.git.record_operation(summary, true);
-                    self.diagnostics.extend_snapshot(self.git.diagnostics());
                     follow_up_events.push(Event::Worker(WorkerEvent::GitOperationStarted {
                         job_id: request.job_id.clone(),
                         repo_id: request.repo_id.clone(),
                         summary: summary.to_string(),
                     }));
-                    follow_up_events.push(Event::Worker(WorkerEvent::GitOperationCompleted {
-                        job_id: request.job_id.clone(),
-                        repo_id: request.repo_id.clone(),
-                        summary: format!("{summary} completed"),
-                    }));
+
+                    match self.git.run_command(request.clone()) {
+                        Ok(outcome) => {
+                            self.diagnostics.extend_snapshot(self.git.diagnostics());
+                            follow_up_events.push(Event::Worker(
+                                WorkerEvent::GitOperationCompleted {
+                                    job_id: request.job_id.clone(),
+                                    repo_id: outcome.repo_id,
+                                    summary: outcome.summary,
+                                },
+                            ));
+                        }
+                        Err(error) => {
+                            self.diagnostics.extend_snapshot(self.git.diagnostics());
+                            follow_up_events.push(Event::Worker(WorkerEvent::GitOperationFailed {
+                                job_id: request.job_id.clone(),
+                                repo_id: request.repo_id.clone(),
+                                error: error.to_string(),
+                            }));
+                        }
+                    }
                 }
                 Effect::PersistCache | Effect::PersistConfig | Effect::ScheduleRender => {
                     let _ = self.app.render();
@@ -156,6 +170,10 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
     match command {
         GitCommand::StageSelection => "stage_selection",
         GitCommand::CommitStaged { .. } => "commit_staged",
+        GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::CheckoutBranch { .. } => "checkout_branch",
+        GitCommand::FetchSelectedRepo => "fetch_selected_repo",
+        GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",
         GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
     }

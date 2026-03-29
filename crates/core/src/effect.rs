@@ -24,6 +24,10 @@ pub struct GitCommandRequest {
 pub enum GitCommand {
     StageSelection,
     CommitStaged { message: String },
+    AmendHead { message: Option<String> },
+    CheckoutBranch { branch_ref: String },
+    FetchSelectedRepo,
+    PullCurrentBranch,
     PushCurrentBranch,
     RefreshSelectedRepo,
 }

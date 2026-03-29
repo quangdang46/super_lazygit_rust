@@ -95,17 +95,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     repo_mode.current_repo_id.clone(),
                     GitCommand::StageSelection,
                 );
-                state
-                    .background_jobs
-                    .insert(job.job_id.clone(), background_job(&job));
-                state
-                    .repo_mode
-                    .as_mut()
-                    .expect("repo mode exists")
-                    .operation_progress = OperationProgress::Running {
-                    job_id: job.job_id.clone(),
-                    summary: "Stage selection".to_string(),
-                };
+                enqueue_git_job(state, &job, "Stage selection");
                 effects.push(Effect::RunGitCommand(job));
             }
         }
@@ -117,17 +107,51 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                         message: message.clone(),
                     },
                 );
-                state
-                    .background_jobs
-                    .insert(job.job_id.clone(), background_job(&job));
-                state
-                    .repo_mode
-                    .as_mut()
-                    .expect("repo mode exists")
-                    .operation_progress = OperationProgress::Running {
-                    job_id: job.job_id.clone(),
-                    summary: "Commit staged changes".to_string(),
-                };
+                enqueue_git_job(state, &job, "Commit staged changes");
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::AmendHead { message } => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::AmendHead {
+                        message: message.clone(),
+                    },
+                );
+                enqueue_git_job(state, &job, "Amend HEAD commit");
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::CheckoutBranch { branch_ref } => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::CheckoutBranch {
+                        branch_ref: branch_ref.clone(),
+                    },
+                );
+                enqueue_git_job(state, &job, "Checkout branch");
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::FetchSelectedRepo => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::FetchSelectedRepo,
+                );
+                enqueue_git_job(state, &job, "Fetch remote updates");
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::PullCurrentBranch => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::PullCurrentBranch,
+                );
+                enqueue_git_job(state, &job, "Pull current branch");
                 effects.push(Effect::RunGitCommand(job));
             }
         }
@@ -137,17 +161,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     repo_mode.current_repo_id.clone(),
                     GitCommand::PushCurrentBranch,
                 );
-                state
-                    .background_jobs
-                    .insert(job.job_id.clone(), background_job(&job));
-                state
-                    .repo_mode
-                    .as_mut()
-                    .expect("repo mode exists")
-                    .operation_progress = OperationProgress::Running {
-                    job_id: job.job_id.clone(),
-                    summary: "Push current branch".to_string(),
-                };
+                enqueue_git_job(state, &job, "Push current branch");
                 effects.push(Effect::RunGitCommand(job));
             }
         }
@@ -343,9 +357,27 @@ fn job_suffix(command: &GitCommand) -> &'static str {
     match command {
         GitCommand::StageSelection => "stage-selection",
         GitCommand::CommitStaged { .. } => "commit-staged",
+        GitCommand::AmendHead { .. } => "amend-head",
+        GitCommand::CheckoutBranch { .. } => "checkout-branch",
+        GitCommand::FetchSelectedRepo => "fetch-selected-repo",
+        GitCommand::PullCurrentBranch => "pull-current-branch",
         GitCommand::PushCurrentBranch => "push-current-branch",
         GitCommand::RefreshSelectedRepo => "refresh-selected-repo",
     }
+}
+
+fn enqueue_git_job(state: &mut AppState, job: &GitCommandRequest, summary: &str) {
+    state
+        .background_jobs
+        .insert(job.job_id.clone(), background_job(job));
+    state
+        .repo_mode
+        .as_mut()
+        .expect("repo mode exists")
+        .operation_progress = OperationProgress::Running {
+        job_id: job.job_id.clone(),
+        summary: summary.to_string(),
+    };
 }
 
 fn background_job(job: &GitCommandRequest) -> BackgroundJob {

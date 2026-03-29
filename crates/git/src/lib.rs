@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffModel, GitCommandRequest, HeadKind,
-    RemoteSummary, RepoDetail, RepoId, RepoSummary, Timestamp,
+    ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffModel, GitCommand, GitCommandRequest,
+    HeadKind, RemoteSummary, RepoDetail, RepoId, RepoSummary, Timestamp,
 };
 use thiserror::Error;
 
@@ -478,11 +478,48 @@ impl GitBackend for CliGitBackend {
     }
 
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
-        Err(GitError::OperationFailed {
-            message: format!(
-                "{} is not executable through the cli summary backend",
-                git_command_label(&request)
-            ),
+        let repo_path = repo_path(&request.repo_id)?;
+        let summary = match &request.command {
+            GitCommand::StageSelection => {
+                git(&repo_path, ["add", "."])?;
+                "Staged current selection".to_string()
+            }
+            GitCommand::CommitStaged { message } => {
+                git(&repo_path, ["commit", "-m", message.as_str()])?;
+                format!("Committed staged changes: {message}")
+            }
+            GitCommand::AmendHead { message } => {
+                match message.as_deref() {
+                    Some(message) => git(&repo_path, ["commit", "--amend", "-m", message])?,
+                    None => git(&repo_path, ["commit", "--amend", "--no-edit"])?,
+                }
+                "Amended HEAD commit".to_string()
+            }
+            GitCommand::CheckoutBranch { branch_ref } => {
+                git(&repo_path, ["checkout", branch_ref.as_str()])?;
+                format!("Checked out {branch_ref}")
+            }
+            GitCommand::FetchSelectedRepo => {
+                run_fetch(&repo_path)?;
+                "Fetched remote updates".to_string()
+            }
+            GitCommand::PullCurrentBranch => {
+                run_pull(&repo_path)?;
+                "Pulled current branch".to_string()
+            }
+            GitCommand::PushCurrentBranch => {
+                run_push(&repo_path)?;
+                "Pushed current branch".to_string()
+            }
+            GitCommand::RefreshSelectedRepo => {
+                git(&repo_path, ["status", "--short"])?;
+                "Refreshed selected repository".to_string()
+            }
+        };
+
+        Ok(GitCommandOutcome {
+            repo_id: request.repo_id,
+            summary,
         })
     }
 }
@@ -510,10 +547,14 @@ fn prefer_backend(active_backend: GitBackendKind, preferred: GitBackendKind) -> 
 
 fn git_command_label(request: &GitCommandRequest) -> &'static str {
     match &request.command {
-        super_lazygit_core::GitCommand::StageSelection => "stage_selection",
-        super_lazygit_core::GitCommand::CommitStaged { .. } => "commit_staged",
-        super_lazygit_core::GitCommand::PushCurrentBranch => "push_current_branch",
-        super_lazygit_core::GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
+        GitCommand::StageSelection => "stage_selection",
+        GitCommand::CommitStaged { .. } => "commit_staged",
+        GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::CheckoutBranch { .. } => "checkout_branch",
+        GitCommand::FetchSelectedRepo => "fetch_selected_repo",
+        GitCommand::PullCurrentBranch => "pull_current_branch",
+        GitCommand::PushCurrentBranch => "push_current_branch",
+        GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
     }
 }
 
@@ -560,6 +601,80 @@ fn tracking_remote(repo_path: &Path) -> GitResult<(Option<String>, Option<String
     Ok((remote_name, Some(upstream)))
 }
 
+fn repo_path(repo_id: &RepoId) -> GitResult<PathBuf> {
+    let repo_path = PathBuf::from(&repo_id.0);
+    if !is_git_repo(&repo_path) {
+        return Err(GitError::RepoNotFound {
+            repo_id: repo_id.clone(),
+        });
+    }
+    Ok(repo_path)
+}
+
+fn run_fetch(repo_path: &Path) -> GitResult<()> {
+    if let Some(remote) = default_remote(repo_path)? {
+        git(repo_path, ["fetch", remote.as_str()])
+    } else {
+        git(repo_path, ["fetch", "--all"])
+    }
+}
+
+fn run_pull(repo_path: &Path) -> GitResult<()> {
+    if has_upstream(repo_path)? {
+        git(repo_path, ["pull", "--ff-only"])
+    } else {
+        Err(GitError::OperationFailed {
+            message: "pull requires an upstream tracking branch".to_string(),
+        })
+    }
+}
+
+fn run_push(repo_path: &Path) -> GitResult<()> {
+    if has_upstream(repo_path)? {
+        git(repo_path, ["push"])
+    } else {
+        let branch = current_branch_name(repo_path)?;
+        let remote = default_remote(repo_path)?.unwrap_or_else(|| "origin".to_string());
+        git(
+            repo_path,
+            ["push", "--set-upstream", remote.as_str(), branch.as_str()],
+        )
+    }
+}
+
+fn default_remote(repo_path: &Path) -> GitResult<Option<String>> {
+    let remote = git_stdout_allow_failure(repo_path, ["remote"])?;
+    Ok(remote
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned))
+}
+
+fn has_upstream(repo_path: &Path) -> GitResult<bool> {
+    Ok(!git_stdout_allow_failure(
+        repo_path,
+        [
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    )?
+    .is_empty())
+}
+
+fn current_branch_name(repo_path: &Path) -> GitResult<String> {
+    let branch = git_stdout(repo_path, ["branch", "--show-current"])?;
+    if branch.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: "push requires an attached branch HEAD".to_string(),
+        });
+    }
+    Ok(branch)
+}
+
 fn fetch_head_timestamp(repo_path: &Path) -> GitResult<Option<Timestamp>> {
     let git_dir = git_stdout(repo_path, ["rev-parse", "--git-dir"])?;
     let fetch_head = repo_path.join(git_dir).join("FETCH_HEAD");
@@ -568,6 +683,18 @@ fn fetch_head_timestamp(repo_path: &Path) -> GitResult<Option<Timestamp>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(io_error(error)),
     }
+}
+
+fn git<I, S>(repo_path: &Path, args: I) -> GitResult<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = git_output(repo_path, args)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    Ok(())
 }
 
 fn git_stdout<I, S>(repo_path: &Path, args: I) -> GitResult<String>
