@@ -119,6 +119,11 @@ impl AppRuntime {
         self.app.render_to_string()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn persist_cache(&self) -> std::io::Result<()> {
+        self.workspace.persist_cache(&self.app.state().workspace)
+    }
+
     fn apply_effects(&mut self, effects: &[Effect]) -> Vec<Event> {
         let mut follow_up_events = Vec::new();
 

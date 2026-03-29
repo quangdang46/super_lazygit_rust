@@ -60,7 +60,9 @@ fn main() -> Result<()> {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{Duration, Instant};
 
     use super::watcher::{ScriptedWatcherBackend, ScriptedWatcherHandle};
     use super::*;
@@ -593,6 +595,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn performance_harness_measures_startup_scan_refresh_and_diff_loads() {
+        let fixture = PerfWorkspaceFixture::new(6);
+        let budgets = PerfBudgets::from_env();
+
+        let mut cold = performance_runtime(fixture.root().to_path_buf());
+        let cold_started = Instant::now();
+        let cold_bootstrap = cold.bootstrap().expect("cold bootstrap");
+        let cold_wall = cold_started.elapsed();
+
+        let scan_before = cold.diagnostics_snapshot();
+        cold.run([Event::Action(Action::RefreshVisibleRepos)]);
+        let scan_after = cold.diagnostics_snapshot();
+        assert_eq!(
+            cold.app().state().workspace.discovered_repo_ids.len(),
+            fixture.repo_count,
+            "workspace scan should discover every perf fixture repo"
+        );
+        let workspace_scan = latest_git_timing_since(&scan_before, &scan_after, "scan_workspace");
+
+        let refresh_before = cold.diagnostics_snapshot();
+        cold.run([Event::Action(Action::RefreshSelectedRepo)]);
+        let refresh_after = cold.diagnostics_snapshot();
+        let summary_refresh =
+            latest_git_timing_since(&refresh_before, &refresh_after, "read_repo_summary");
+
+        let detail_before = cold.diagnostics_snapshot();
+        cold.run([Event::Action(Action::EnterRepoMode {
+            repo_id: fixture.diff_repo_id.clone(),
+        })]);
+        let detail_after = cold.diagnostics_snapshot();
+        let repo_detail_load =
+            latest_git_timing_since(&detail_before, &detail_after, "read_repo_detail");
+
+        cold.persist_cache().expect("persist warm cache");
+
+        let mut warm = performance_runtime(fixture.root().to_path_buf());
+        let warm_started = Instant::now();
+        let warm_bootstrap = warm.bootstrap().expect("warm bootstrap");
+        let warm_wall = warm_started.elapsed();
+        assert_eq!(
+            warm.app().state().workspace.discovered_repo_ids.len(),
+            fixture.repo_count,
+            "warm startup should hydrate repo identities from cache"
+        );
+
+        let report = PerfReport {
+            repo_count: fixture.repo_count,
+            cold_startup_total: cold_bootstrap.startup_total,
+            cold_startup_wall: cold_wall,
+            warm_startup_total: warm_bootstrap.startup_total,
+            warm_startup_wall: warm_wall,
+            workspace_scan,
+            summary_refresh,
+            repo_detail_load,
+        };
+        eprintln!("{report}");
+
+        assert!(
+            report.cold_startup_wall <= budgets.cold_startup_wall,
+            "cold startup wall time exceeded budget\nbudgets={budgets:?}\n{report}"
+        );
+        assert!(
+            report.warm_startup_wall <= budgets.warm_startup_wall,
+            "warm startup wall time exceeded budget\nbudgets={budgets:?}\n{report}"
+        );
+        assert!(
+            report.workspace_scan <= budgets.workspace_scan,
+            "workspace scan exceeded budget\nbudgets={budgets:?}\n{report}"
+        );
+        assert!(
+            report.summary_refresh <= budgets.summary_refresh,
+            "summary refresh exceeded budget\nbudgets={budgets:?}\n{report}"
+        );
+        assert!(
+            report.repo_detail_load <= budgets.repo_detail_load,
+            "repo detail load exceeded budget\nbudgets={budgets:?}\n{report}"
+        );
+    }
+
     struct E2eHarness {
         runtime: AppRuntime,
         timeline: Vec<String>,
@@ -716,5 +798,174 @@ mod tests {
             .filter(|line| *line != "?? .super-lazygit/")
             .collect::<Vec<_>>()
             .join("\n"))
+    }
+
+    fn performance_runtime(workspace_root: PathBuf) -> AppRuntime {
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let mut app = TuiApp::new(state, config);
+        app.resize(120, 32);
+        AppRuntime::new(
+            app,
+            WorkspaceRegistry::new(Some(workspace_root)),
+            GitFacade::default(),
+        )
+    }
+
+    fn latest_git_timing_since(
+        before: &super_lazygit_core::DiagnosticsSnapshot,
+        after: &super_lazygit_core::DiagnosticsSnapshot,
+        operation_prefix: &str,
+    ) -> Duration {
+        after.git_operations[before.git_operations.len()..]
+            .iter()
+            .rev()
+            .find(|timing| timing.operation.starts_with(operation_prefix))
+            .map(|timing| timing.elapsed)
+            .expect("git timing should exist for perf checkpoint")
+    }
+
+    #[derive(Debug)]
+    struct PerfBudgets {
+        cold_startup_wall: Duration,
+        warm_startup_wall: Duration,
+        workspace_scan: Duration,
+        summary_refresh: Duration,
+        repo_detail_load: Duration,
+    }
+
+    impl PerfBudgets {
+        fn from_env() -> Self {
+            Self {
+                cold_startup_wall: duration_budget("SUPER_LAZYGIT_PERF_COLD_STARTUP_MS", 400),
+                warm_startup_wall: duration_budget("SUPER_LAZYGIT_PERF_WARM_STARTUP_MS", 250),
+                workspace_scan: duration_budget("SUPER_LAZYGIT_PERF_SCAN_MS", 2000),
+                summary_refresh: duration_budget("SUPER_LAZYGIT_PERF_REFRESH_MS", 1000),
+                repo_detail_load: duration_budget("SUPER_LAZYGIT_PERF_DETAIL_MS", 1000),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct PerfReport {
+        repo_count: usize,
+        cold_startup_total: Duration,
+        cold_startup_wall: Duration,
+        warm_startup_total: Duration,
+        warm_startup_wall: Duration,
+        workspace_scan: Duration,
+        summary_refresh: Duration,
+        repo_detail_load: Duration,
+    }
+
+    impl std::fmt::Display for PerfReport {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "PERF REPORT repos={} cold_startup_total_ms={} cold_startup_wall_ms={} warm_startup_total_ms={} warm_startup_wall_ms={} workspace_scan_ms={} summary_refresh_ms={} repo_detail_load_ms={}",
+                self.repo_count,
+                self.cold_startup_total.as_millis(),
+                self.cold_startup_wall.as_millis(),
+                self.warm_startup_total.as_millis(),
+                self.warm_startup_wall.as_millis(),
+                self.workspace_scan.as_millis(),
+                self.summary_refresh.as_millis(),
+                self.repo_detail_load.as_millis(),
+            )
+        }
+    }
+
+    struct PerfWorkspaceFixture {
+        root: tempfile::TempDir,
+        diff_repo_id: RepoId,
+        repo_count: usize,
+    }
+
+    impl PerfWorkspaceFixture {
+        fn new(repo_count: usize) -> Self {
+            let root = tempfile::tempdir().expect("perf workspace root");
+            let mut diff_repo_id = None;
+
+            for index in 0..repo_count {
+                let repo_name = format!("repo-{index:02}");
+                let repo_path = root.path().join(&repo_name);
+                let diff_repo = index == 0;
+                init_perf_repo(&repo_path, diff_repo);
+                if diff_repo {
+                    diff_repo_id = Some(repo_id_for_path(&repo_path));
+                }
+            }
+
+            Self {
+                root,
+                diff_repo_id: diff_repo_id.expect("diff repo id"),
+                repo_count,
+            }
+        }
+
+        fn root(&self) -> &Path {
+            self.root.path()
+        }
+    }
+
+    fn init_perf_repo(path: &Path, with_unstaged_diff: bool) {
+        fs::create_dir_all(path).expect("create perf repo dir");
+        git_in(path, ["init", "--initial-branch=main"]);
+        git_in(path, ["config", "user.name", "Super Lazygit Perf"]);
+        git_in(path, ["config", "user.email", "perf@example.com"]);
+
+        fs::write(path.join("README.md"), "# Perf Fixture\n").expect("write readme");
+        if with_unstaged_diff {
+            fs::create_dir_all(path.join("src")).expect("create src dir");
+            fs::write(
+                path.join("src/lib.rs"),
+                "pub fn value() -> u32 {\n    1\n}\n",
+            )
+            .expect("write initial diff file");
+        }
+
+        git_in(path, ["add", "."]);
+        git_in(path, ["commit", "-m", "initial"]);
+
+        if with_unstaged_diff {
+            fs::write(
+                path.join("src/lib.rs"),
+                "pub fn value() -> u32 {\n    2\n}\n\npub fn extra() -> u32 {\n    3\n}\n",
+            )
+            .expect("write updated diff file");
+        }
+    }
+
+    fn git_in<const N: usize>(path: &Path, args: [&str; N]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("run perf git command");
+        assert!(
+            output.status.success(),
+            "git command failed in {} with args {:?}\nstdout:\n{}\nstderr:\n{}",
+            path.display(),
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn repo_id_for_path(path: &Path) -> RepoId {
+        RepoId::new(
+            path.canonicalize()
+                .unwrap_or_else(|_| path.to_path_buf())
+                .display()
+                .to_string(),
+        )
+    }
+
+    fn duration_budget(name: &str, default_ms: u64) -> Duration {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_millis(default_ms))
     }
 }
