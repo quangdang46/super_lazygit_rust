@@ -591,6 +591,33 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["stash", "drop", stash_ref.as_str()])?;
                 format!("Dropped {stash_ref}")
             }
+            GitCommand::CreateWorktree { path, branch_ref } => {
+                let output = Command::new("git")
+                    .arg("worktree")
+                    .arg("add")
+                    .arg(path)
+                    .arg(branch_ref)
+                    .current_dir(&repo_path)
+                    .output()
+                    .map_err(io_error)?;
+                if !output.status.success() {
+                    return Err(command_failure(output));
+                }
+                format!("Created worktree {} from {branch_ref}", path.display())
+            }
+            GitCommand::RemoveWorktree { path } => {
+                let output = Command::new("git")
+                    .arg("worktree")
+                    .arg("remove")
+                    .arg(path)
+                    .current_dir(&repo_path)
+                    .output()
+                    .map_err(io_error)?;
+                if !output.status.success() {
+                    return Err(command_failure(output));
+                }
+                format!("Removed worktree {}", path.display())
+            }
             GitCommand::SetBranchUpstream {
                 branch_name,
                 upstream_ref,
@@ -691,6 +718,8 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::DeleteBranch { .. } => "delete_branch",
         GitCommand::ApplyStash { .. } => "apply_stash",
         GitCommand::DropStash { .. } => "drop_stash",
+        GitCommand::CreateWorktree { .. } => "create_worktree",
+        GitCommand::RemoveWorktree { .. } => "remove_worktree",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
@@ -1736,7 +1765,7 @@ struct ParsedHunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, RepoId};
+    use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, JobId, RepoId};
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
         rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, temp_repo,
@@ -2458,6 +2487,43 @@ mod tests {
                 .filter(|line| line.kind == DiffLineKind::HunkHeader)
                 .count()
         );
+    }
+
+    #[test]
+    fn cli_backend_creates_and_removes_worktrees() {
+        let repo = worktree_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let worktree_parent = tempfile::tempdir().expect("tempdir");
+        let created_path = worktree_parent.path().join("repo-hotfix");
+        repo.git(["branch", "hotfix", "main"])
+            .expect("create spare branch");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:create-worktree"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::CreateWorktree {
+                    path: created_path.clone(),
+                    branch_ref: "hotfix".to_string(),
+                },
+            })
+            .expect("create worktree succeeds");
+
+        let after_create = repo.worktree_list().expect("worktree list");
+        assert!(after_create.contains(created_path.to_string_lossy().as_ref()));
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:remove-worktree"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::RemoveWorktree {
+                    path: created_path.clone(),
+                },
+            })
+            .expect("remove worktree succeeds");
+
+        let after_remove = repo.worktree_list().expect("worktree list");
+        assert!(!after_remove.contains(created_path.to_string_lossy().as_ref()));
     }
 
     #[test]

@@ -75,6 +75,7 @@ pub enum ConfirmableOperation {
     Push,
     DeleteBranch { branch_name: String },
     DropStash { stash_ref: String },
+    RemoveWorktree { path: PathBuf },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +90,7 @@ pub enum InputPromptOperation {
     CreateBranch,
     RenameBranch { current_name: String },
     SetBranchUpstream { branch_name: String },
+    CreateWorktree,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

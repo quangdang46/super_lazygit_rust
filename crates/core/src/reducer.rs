@@ -192,6 +192,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextWorktree => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_worktree_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousWorktree => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_worktree_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::ScrollRepoDetailUp => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.diff_scroll = repo_mode.diff_scroll.saturating_sub(1);
@@ -477,6 +491,34 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::CreateWorktree => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                open_input_prompt(state, repo_id, InputPromptOperation::CreateWorktree);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::RemoveSelectedWorktree => {
+            if let Some((repo_id, path)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_worktree_item(repo_mode)
+                    .map(|item| (repo_mode.current_repo_id.clone(), item.path.clone()))
+            }) {
+                if path == std::path::Path::new(&repo_id.0) {
+                    push_warning(state, "Use git directly to remove the primary worktree.");
+                    effects.push(Effect::ScheduleRender);
+                } else {
+                    open_confirmation_modal(
+                        state,
+                        repo_id,
+                        ConfirmableOperation::RemoveWorktree { path },
+                    );
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::FetchSelectedRepo => {
             if let Some(repo_id) = state
                 .repo_mode
@@ -525,6 +567,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
                 if matches!(subview, crate::state::RepoSubview::Reflog) {
                     sync_reflog_selection(repo_mode);
+                }
+                if matches!(subview, crate::state::RepoSubview::Worktrees) {
+                    sync_worktree_selection(repo_mode);
                 }
                 state.focused_pane = PaneId::RepoDetail;
                 effects.push(Effect::ScheduleRender);
@@ -643,6 +688,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_commit_selection(repo_mode);
                     sync_stash_selection(repo_mode);
                     sync_reflog_selection(repo_mode);
+                    sync_worktree_selection(repo_mode);
                     sync_diff_selection(repo_mode);
                     repo_mode.operation_progress = OperationProgress::Idle;
                 }
@@ -1004,6 +1050,9 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
             format!("Delete branch {branch_name}")
         }
         ConfirmableOperation::DropStash { stash_ref } => format!("Drop stash {stash_ref}"),
+        ConfirmableOperation::RemoveWorktree { path } => {
+            format!("Remove worktree {}", path.display())
+        }
     }
 }
 
@@ -1032,6 +1081,10 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 stash_ref: stash_ref.clone(),
             },
             "Drop stash",
+        ),
+        ConfirmableOperation::RemoveWorktree { path } => (
+            GitCommand::RemoveWorktree { path: path.clone() },
+            "Remove worktree",
         ),
     };
     let job = git_job(pending.repo_id, command);
@@ -1067,6 +1120,7 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Set upstream for {branch_name}")
         }
+        InputPromptOperation::CreateWorktree => "Create worktree".to_string(),
     }
 }
 
@@ -1075,6 +1129,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
+        InputPromptOperation::CreateWorktree => String::new(),
     }
 }
 
@@ -1112,10 +1167,34 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
             },
             format!("Set upstream for {branch_name}"),
         ),
+        InputPromptOperation::CreateWorktree => {
+            let Some((path, branch_ref)) = parse_create_worktree_input(&value) else {
+                push_warning(state, "Enter worktree details as: <path> <branch>.");
+                state.pending_input_prompt = Some(pending);
+                return None;
+            };
+            (
+                GitCommand::CreateWorktree {
+                    path: path.clone(),
+                    branch_ref: branch_ref.clone(),
+                },
+                format!("Create worktree {} from {branch_ref}", path.display()),
+            )
+        }
     };
     let job = git_job(pending.repo_id, command);
     enqueue_git_job(state, &job, &summary);
     Some(job)
+}
+
+fn parse_create_worktree_input(value: &str) -> Option<(std::path::PathBuf, String)> {
+    let (path, branch_ref) = value.rsplit_once(char::is_whitespace)?;
+    let path = path.trim();
+    let branch_ref = branch_ref.trim();
+    if path.is_empty() || branch_ref.is_empty() {
+        return None;
+    }
+    Some((std::path::PathBuf::from(path), branch_ref.to_string()))
 }
 
 fn sync_branch_selection(repo_mode: &mut RepoModeState) {
@@ -1181,6 +1260,17 @@ fn sync_reflog_selection(repo_mode: &mut RepoModeState) {
     repo_mode
         .reflog_view
         .ensure_selection(detail.reflog_items.len());
+}
+
+fn sync_worktree_selection(repo_mode: &mut RepoModeState) {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.worktree_view.selected_index = None;
+        return;
+    };
+
+    repo_mode
+        .worktree_view
+        .ensure_selection(detail.worktrees.len());
 }
 
 fn sync_status_selection(repo_mode: &mut RepoModeState) {
@@ -1281,6 +1371,16 @@ fn selected_stash_item(repo_mode: &RepoModeState) -> Option<&crate::state::Stash
     detail.stashes.get(selected_index)
 }
 
+fn selected_worktree_item(repo_mode: &RepoModeState) -> Option<&crate::state::WorktreeItem> {
+    let detail = repo_mode.detail.as_ref()?;
+    let selected_index = repo_mode
+        .worktree_view
+        .selected_index
+        .filter(|index| *index < detail.worktrees.len())
+        .unwrap_or(0);
+    detail.worktrees.get(selected_index)
+}
+
 fn step_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     let Some(detail) = repo_mode.detail.as_ref() else {
         repo_mode.branches_view.selected_index = None;
@@ -1317,6 +1417,19 @@ fn step_reflog_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     let after = repo_mode
         .reflog_view
         .select_with_step(detail.reflog_items.len(), step);
+    after.is_some() && after != before
+}
+
+fn step_worktree_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.worktree_view.selected_index = None;
+        return false;
+    };
+
+    let before = repo_mode.worktree_view.selected_index;
+    let after = repo_mode
+        .worktree_view
+        .select_with_step(detail.worktrees.len(), step);
     after.is_some() && after != before
 }
 
@@ -1440,6 +1553,8 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::DeleteBranch { .. } => "delete-branch",
         GitCommand::ApplyStash { .. } => "apply-stash",
         GitCommand::DropStash { .. } => "drop-stash",
+        GitCommand::CreateWorktree { .. } => "create-worktree",
+        GitCommand::RemoveWorktree { .. } => "remove-worktree",
         GitCommand::SetBranchUpstream { .. } => "set-branch-upstream",
         GitCommand::FetchSelectedRepo => "fetch-selected-repo",
         GitCommand::PullCurrentBranch => "pull-current-branch",
@@ -1508,9 +1623,10 @@ mod tests {
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
         CommitItem, ComparisonTarget, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
-        DiffModel, DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind,
-        PaneId, ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
-        ScanStatus, SelectedHunk, StashItem, Timestamp, WatcherHealth, WorkspaceFilterMode,
+        DiffModel, DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId,
+        MessageLevel, ModalKind, PaneId, ReflogItem, RepoDetail, RepoId, RepoModeState,
+        RepoSubview, RepoSummary, ScanStatus, SelectedHunk, StashItem, Timestamp, WatcherHealth,
+        WorkspaceFilterMode, WorktreeItem,
     };
 
     use super::reduce;
@@ -1894,6 +2010,47 @@ mod tests {
     }
 
     #[test]
+    fn select_next_worktree_advances_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(RepoDetail {
+                    worktrees: vec![
+                        WorktreeItem {
+                            path: std::path::PathBuf::from("/tmp/repo-main"),
+                            branch: Some("main".to_string()),
+                        },
+                        WorktreeItem {
+                            path: std::path::PathBuf::from("/tmp/repo-feature"),
+                            branch: Some("feature".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                worktree_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SelectNextWorktree));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
     fn apply_selected_stash_queues_git_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -1990,6 +2147,72 @@ mod tests {
     }
 
     #[test]
+    fn create_worktree_opens_input_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CreateWorktree));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.value.clone()
+            )),
+            Some((repo_id, InputPromptOperation::CreateWorktree, String::new()))
+        );
+    }
+
+    #[test]
+    fn remove_selected_worktree_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let removable_path = std::path::PathBuf::from("/tmp/repo-feature");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(RepoDetail {
+                    worktrees: vec![WorktreeItem {
+                        path: removable_path.clone(),
+                        branch: Some("feature".to_string()),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                worktree_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RemoveSelectedWorktree));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::RemoveWorktree {
+                    path: removable_path,
+                }
+            ))
+        );
+    }
+
+    #[test]
     fn submit_branch_create_prompt_queues_git_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -2029,6 +2252,43 @@ mod tests {
                 repo_id,
                 command: GitCommand::CreateBranch {
                     branch_name: "feature/new-ui".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_worktree_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Create worktree",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateWorktree,
+                value: "../repo-feature feature".to_string(),
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-worktree");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateWorktree {
+                    path: std::path::PathBuf::from("../repo-feature"),
+                    branch_ref: "feature".to_string(),
                 },
             })]
         );

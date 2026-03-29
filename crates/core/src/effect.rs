@@ -70,6 +70,13 @@ pub enum GitCommand {
     DropStash {
         stash_ref: String,
     },
+    CreateWorktree {
+        path: PathBuf,
+        branch_ref: String,
+    },
+    RemoveWorktree {
+        path: PathBuf,
+    },
     SetBranchUpstream {
         branch_name: String,
         upstream_ref: String,

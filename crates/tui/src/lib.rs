@@ -321,6 +321,7 @@ impl TuiApp {
                         | RepoSubview::Commits
                         | RepoSubview::Stash
                         | RepoSubview::Reflog
+                        | RepoSubview::Worktrees
                 )
             })
         {
@@ -414,6 +415,18 @@ impl TuiApp {
                     }
                     (RepoSubview::Reflog, _, "k" | "up") => {
                         return Some(Action::SelectPreviousReflog);
+                    }
+                    (RepoSubview::Worktrees, _, "j" | "down") => {
+                        return Some(Action::SelectNextWorktree);
+                    }
+                    (RepoSubview::Worktrees, _, "k" | "up") => {
+                        return Some(Action::SelectPreviousWorktree);
+                    }
+                    (RepoSubview::Worktrees, _, "c") => {
+                        return Some(Action::CreateWorktree);
+                    }
+                    (RepoSubview::Worktrees, _, "d") => {
+                        return Some(Action::RemoveSelectedWorktree);
                     }
                     _ => {}
                 }
@@ -764,7 +777,12 @@ impl TuiApp {
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
-                _ => repo_detail_lines(repo_mode.active_subview, repo_mode.detail.as_ref()),
+                RepoSubview::Worktrees => repo_worktree_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.worktree_view.selected_index,
+                    self.state.focused_pane == PaneId::RepoDetail,
+                    theme,
+                ),
             };
             (
                 format!("Detail: {}", repo_subview_label(repo_mode.active_subview)),
@@ -1412,69 +1430,6 @@ fn workspace_empty_preview_lines(state: &AppState) -> Vec<Line<'static>> {
     }
 }
 
-fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<Line<'static>> {
-    match subview {
-        RepoSubview::Status => vec![
-            Line::from(format!(
-                "Files: {}",
-                detail.map_or(0, |detail| detail.file_tree.len())
-            )),
-            Line::from(format!(
-                "Working tree: {}",
-                detail.map_or(0, |detail| {
-                    detail
-                        .file_tree
-                        .iter()
-                        .filter(|item| item.unstaged_kind.is_some())
-                        .count()
-                })
-            )),
-            Line::from(format!(
-                "Staged: {}",
-                detail.map_or(0, |detail| {
-                    detail
-                        .file_tree
-                        .iter()
-                        .filter(|item| item.staged_kind.is_some())
-                        .count()
-                })
-            )),
-        ],
-        RepoSubview::Branches => vec![Line::from(format!(
-            "Branches: {}",
-            detail.map_or(0, |detail| detail.branches.len())
-        ))],
-        RepoSubview::Commits => vec![
-            Line::from(format!(
-                "Commits: {}",
-                detail.map_or(0, |detail| detail.commits.len())
-            )),
-            Line::from("Commit history preview is active when this pane has focus."),
-        ],
-        RepoSubview::Stash => vec![
-            Line::from(format!(
-                "Stashes: {}",
-                detail.map_or(0, |detail| detail.stashes.len())
-            )),
-            Line::from("Stash flows are staged behind this shell scaffold."),
-        ],
-        RepoSubview::Reflog => vec![
-            Line::from(format!(
-                "Reflog entries: {}",
-                detail.map_or(0, |detail| detail.reflog_items.len())
-            )),
-            Line::from("Recovery-oriented navigation lands in later beads."),
-        ],
-        RepoSubview::Worktrees => vec![
-            Line::from(format!(
-                "Worktrees: {}",
-                detail.map_or(0, |detail| detail.worktrees.len())
-            )),
-            Line::from("Worktree creation and removal reuse this detail shell."),
-        ],
-    }
-}
-
 fn repo_branch_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
@@ -1700,6 +1655,75 @@ fn repo_reflog_lines(
             }
         }
         lines.push(Line::from(Span::styled(entry.description.clone(), style)));
+    }
+
+    lines
+}
+
+fn repo_worktree_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Worktrees",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    if detail.worktrees.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Worktrees",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("No linked worktrees are available."),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| *index < detail.worktrees.len())
+        .unwrap_or(0);
+    let selected_worktree = &detail.worktrees[selected_index];
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "Worktrees",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("Selected: {}", selected_worktree.path.display())),
+        Line::from(format!(
+            "Branch: {}",
+            selected_worktree.branch.as_deref().unwrap_or("(detached)")
+        )),
+        Line::from("c creates. d removes the selected linked worktree."),
+        Line::from(""),
+    ];
+
+    for (index, worktree) in detail.worktrees.iter().enumerate() {
+        let mut style = Style::default().fg(theme.foreground);
+        if index == selected_index {
+            style = style.add_modifier(Modifier::BOLD);
+            if is_focused {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+        }
+        let branch = worktree.branch.as_deref().unwrap_or("(detached)");
+        lines.push(Line::from(Span::styled(
+            format!("{}  [{branch}]", worktree.path.display()),
+            style,
+        )));
     }
 
     lines
@@ -1988,6 +2012,12 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         super_lazygit_core::ConfirmableOperation::DropStash { stash_ref } => {
             format!("Drop {stash_ref}? This permanently removes the stash entry.")
         }
+        super_lazygit_core::ConfirmableOperation::RemoveWorktree { path } => {
+            format!(
+                "Remove linked worktree {}? Git will delete the worktree checkout.",
+                path.display()
+            )
+        }
     }
 }
 
@@ -2002,6 +2032,10 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         }
         super_lazygit_core::InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Enter the upstream ref for {branch_name}, for example origin/main.")
+        }
+        super_lazygit_core::InputPromptOperation::CreateWorktree => {
+            "Enter worktree details as: <path> <branch>. Example: ../repo-feature feature."
+                .to_string()
         }
     }
 }
@@ -2682,6 +2716,16 @@ mod tests {
                 },
                 super_lazygit_core::ReflogItem {
                     description: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
+                },
+            ],
+            worktrees: vec![
+                super_lazygit_core::WorktreeItem {
+                    path: PathBuf::from("/tmp/repo-1"),
+                    branch: Some("main".to_string()),
+                },
+                super_lazygit_core::WorktreeItem {
+                    path: PathBuf::from("/tmp/repo-1-feature"),
+                    branch: Some("feature".to_string()),
                 },
             ],
             ..Default::default()
@@ -3567,6 +3611,63 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_worktree_detail_routes_selection_create_and_remove() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
+            Some(1)
+        );
+
+        let mut create_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let create = create_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "c".to_string(),
+        })));
+        assert_eq!(create.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            create
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.operation.clone()),
+            Some(super_lazygit_core::InputPromptOperation::CreateWorktree)
+        );
+
+        let mut remove_app = TuiApp::new(down.state, AppConfig::default());
+        let remove = remove_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "d".to_string(),
+        })));
+        assert_eq!(remove.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            remove
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::RemoveWorktree {
+                path: PathBuf::from("/tmp/repo-1-feature"),
+            })
+        );
+    }
+
+    #[test]
     fn repo_mode_unstaged_pane_routes_status_navigation_and_stage_action() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -4094,6 +4195,54 @@ mod tests {
         assert!(rendered.contains("Use j/k to inspect recent HEAD and ref movement."));
         assert!(rendered.contains("HEAD@{0}: checkout: moving from feature to main"));
         assert!(rendered.contains("HEAD@{1}: commit: add repo-mode stash flows"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_worktree_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(sample_repo_detail()),
+                worktree_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Worktrees"));
+        assert!(rendered.contains("Selected: /tmp/repo-1-feature"));
+        assert!(rendered.contains("Branch: feature"));
+        assert!(rendered.contains("c creates. d removes the selected linked worktree."));
+        assert!(rendered.contains("/tmp/repo-1  [main]"));
+        assert!(rendered.contains("/tmp/repo-1-feature  [feature]"));
     }
 
     #[test]
