@@ -7,10 +7,10 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    BranchItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffLine,
-    DiffLineKind, DiffModel, FileStatus, FileStatusKind, GitCommand, GitCommandRequest, HeadKind,
-    MergeState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, StashItem, Timestamp,
-    WatcherFreshness, WorktreeItem,
+    BranchItem, CommitFileItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
+    DiffLine, DiffLineKind, DiffModel, FileStatus, FileStatusKind, GitCommand, GitCommandRequest,
+    HeadKind, MergeState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, StashItem,
+    Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -502,18 +502,22 @@ impl GitBackend for CliGitBackend {
         let repo_path = repo_path(&request.repo_id)?;
         let status = read_status_snapshot(&repo_path)?;
         let diff = read_diff_model(&repo_path, None, status.first_path.clone())?;
+        let commits = read_commits(&repo_path);
+        let comparison_target = commits
+            .first()
+            .map(|commit| ComparisonTarget::Commit(commit.oid.clone()));
 
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
             branches: read_branches(&repo_path),
-            commits: read_commits(&repo_path),
+            commits,
             stashes: read_stashes(&repo_path),
             reflog_items: read_reflog(&repo_path),
             worktrees: read_worktrees(&repo_path),
             commit_input: String::new(),
             merge_state: read_merge_state(&repo_path),
-            comparison_target: None,
+            comparison_target,
         })
     }
 
@@ -1296,14 +1300,72 @@ fn read_commits(repo_path: &Path) -> Vec<CommitItem> {
                 .lines()
                 .filter_map(|line| {
                     let (oid, summary) = line.split_once('\0')?;
+                    let changed_files = read_commit_files(repo_path, oid);
+                    let diff = read_commit_diff(repo_path, oid);
                     Some(CommitItem {
                         oid: oid.to_string(),
+                        short_oid: oid.chars().take(7).collect(),
                         summary: summary.to_string(),
+                        changed_files,
+                        diff,
                     })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn read_commit_files(repo_path: &Path, oid: &str) -> Vec<CommitFileItem> {
+    git_stdout(
+        repo_path,
+        ["show", "--format=", "--name-status", "--no-renames", oid],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+
+                let (code, path) = trimmed
+                    .split_once('\t')
+                    .or_else(|| trimmed.split_once(char::is_whitespace))?;
+                Some(CommitFileItem {
+                    path: PathBuf::from(path.trim()),
+                    kind: commit_status_kind(code),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn read_commit_diff(repo_path: &Path, oid: &str) -> DiffModel {
+    git_stdout(
+        repo_path,
+        [
+            "show",
+            "--format=",
+            "--no-ext-diff",
+            "--binary",
+            "--unified=3",
+            oid,
+        ],
+    )
+    .map(|output| parse_diff_model(None, &output))
+    .unwrap_or_default()
+}
+
+fn commit_status_kind(code: &str) -> FileStatusKind {
+    match code.chars().next().unwrap_or('M') {
+        'A' => FileStatusKind::Added,
+        'D' => FileStatusKind::Deleted,
+        'R' => FileStatusKind::Renamed,
+        'U' => FileStatusKind::Conflicted,
+        _ => FileStatusKind::Modified,
+    }
 }
 
 fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
@@ -1426,8 +1488,9 @@ mod tests {
     use super::*;
     use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, RepoId};
     use super_lazygit_test_support::{
-        clean_repo, conflicted_repo, detached_head_repo, dirty_repo, rebase_in_progress_repo,
-        staged_and_unstaged_repo, stashed_repo, temp_repo, upstream_diverged_repo, worktree_repo,
+        clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
+        rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, temp_repo,
+        upstream_diverged_repo, worktree_repo,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1736,6 +1799,55 @@ mod tests {
         assert!(!detail.commits.is_empty());
         assert!(!detail.stashes.is_empty());
         assert!(!detail.reflog_items.is_empty());
+    }
+
+    #[test]
+    fn cli_backend_reads_commit_history_in_reverse_chronological_order() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.commits[0].summary, "add lib");
+        assert_eq!(detail.commits[1].summary, "second");
+        assert_eq!(
+            detail.comparison_target,
+            Some(ComparisonTarget::Commit(detail.commits[0].oid.clone()))
+        );
+    }
+
+    #[test]
+    fn cli_backend_reads_commit_changed_files_and_diff_preview() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("detail should load");
+
+        let head_commit = &detail.commits[0];
+        assert_eq!(head_commit.short_oid.len(), 7);
+        assert!(head_commit
+            .changed_files
+            .iter()
+            .any(|file| file.path == std::path::Path::new("src/lib.rs")
+                && file.kind == FileStatusKind::Added));
+        assert!(head_commit
+            .diff
+            .lines
+            .iter()
+            .any(|line| line.content.contains("src/lib.rs")));
+        assert!(head_commit
+            .diff
+            .lines
+            .iter()
+            .any(|line| line.content.contains("+pub fn answer() -> u32 {")));
     }
 
     #[test]

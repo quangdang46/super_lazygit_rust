@@ -107,6 +107,22 @@ pub fn detached_head_repo() -> io::Result<TempRepo> {
     Ok(repo)
 }
 
+pub fn history_preview_repo() -> io::Result<TempRepo> {
+    let repo = TempRepo::new()?;
+
+    repo.write_file("history.txt", "one\n")?;
+    repo.commit_all("initial")?;
+
+    repo.append_file("history.txt", "two\n")?;
+    repo.write_file("notes.md", "# Notes\n")?;
+    repo.commit_all("second")?;
+
+    repo.write_file("src/lib.rs", "pub fn answer() -> u32 {\n    42\n}\n")?;
+    repo.commit_all("add lib")?;
+
+    Ok(repo)
+}
+
 pub fn worktree_repo() -> io::Result<TempRepo> {
     let mut repo = TempRepo::new()?;
 
@@ -431,6 +447,18 @@ mod tests {
 
         let head = repo.git_expect_failure(["symbolic-ref", "--quiet", "HEAD"])?;
         assert!(head.status.code().is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn creates_history_preview_repo() -> io::Result<()> {
+        let repo = history_preview_repo()?;
+
+        let log = repo.git_capture(["log", "--format=%s", "-n", "3"])?;
+        let log = stdout_string(log)?;
+        assert!(log.contains("add lib"));
+        assert!(log.contains("second"));
+        assert!(log.contains("initial"));
         Ok(())
     }
 

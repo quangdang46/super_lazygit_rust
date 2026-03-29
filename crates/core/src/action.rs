@@ -8,6 +8,8 @@ pub enum Action {
     LeaveRepoMode,
     SelectNextRepo,
     SelectPreviousRepo,
+    SelectNextCommit,
+    SelectPreviousCommit,
     ScrollRepoDetailUp,
     ScrollRepoDetailDown,
     SetFocusedPane(crate::state::PaneId),

@@ -272,6 +272,34 @@ pub struct ListViewState {
     pub selected_index: Option<usize>,
 }
 
+impl ListViewState {
+    pub fn ensure_selection(&mut self, len: usize) -> Option<usize> {
+        if len == 0 {
+            self.selected_index = None;
+            return None;
+        }
+
+        let selected = self
+            .selected_index
+            .filter(|index| *index < len)
+            .unwrap_or(0);
+        self.selected_index = Some(selected);
+        Some(selected)
+    }
+
+    pub fn select_with_step(&mut self, len: usize, step: isize) -> Option<usize> {
+        if len == 0 {
+            self.selected_index = None;
+            return None;
+        }
+
+        let current = self.ensure_selection(len).unwrap_or(0);
+        let next = (current as isize + step).rem_euclid(len as isize) as usize;
+        self.selected_index = Some(next);
+        Some(next)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationProgress {
     #[default]
@@ -393,7 +421,16 @@ pub struct BranchItem {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitItem {
     pub oid: String,
+    pub short_oid: String,
     pub summary: String,
+    pub changed_files: Vec<CommitFileItem>,
+    pub diff: DiffModel,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitFileItem {
+    pub path: PathBuf,
+    pub kind: FileStatusKind,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -473,7 +510,9 @@ pub struct Timestamp(pub u64);
 
 #[cfg(test)]
 mod tests {
-    use super::{OperationProgress, RepoId, RepoModeState, RepoSubview, WorkspaceState};
+    use super::{
+        ListViewState, OperationProgress, RepoId, RepoModeState, RepoSubview, WorkspaceState,
+    };
 
     #[test]
     fn select_next_wraps_to_first_repo() {
@@ -528,6 +567,31 @@ mod tests {
 
         assert_eq!(selected, None);
         assert_eq!(workspace.selected_repo_id, None);
+    }
+
+    #[test]
+    fn list_view_selection_defaults_to_first_item() {
+        let mut view = ListViewState::default();
+
+        let selected = view.ensure_selection(3);
+
+        assert_eq!(selected, Some(0));
+        assert_eq!(view.selected_index, Some(0));
+    }
+
+    #[test]
+    fn list_view_selection_wraps_with_step() {
+        let mut view = ListViewState {
+            selected_index: Some(0),
+        };
+
+        let previous = view.select_with_step(3, -1);
+        assert_eq!(previous, Some(2));
+        assert_eq!(view.selected_index, Some(2));
+
+        let next = view.select_with_step(3, 1);
+        assert_eq!(next, Some(0));
+        assert_eq!(view.selected_index, Some(0));
     }
 
     #[test]

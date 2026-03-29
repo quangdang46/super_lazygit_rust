@@ -226,16 +226,29 @@ impl TuiApp {
         }
 
         if self.state.focused_pane == PaneId::RepoDetail
-            && self
-                .state
-                .repo_mode
-                .as_ref()
-                .is_some_and(|repo_mode| repo_mode.active_subview == RepoSubview::Status)
+            && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                matches!(
+                    repo_mode.active_subview,
+                    RepoSubview::Status | RepoSubview::Commits
+                )
+            })
         {
-            match normalized {
-                "j" | "down" => return Some(Action::ScrollRepoDetailDown),
-                "k" | "up" => return Some(Action::ScrollRepoDetailUp),
-                _ => {}
+            if let Some(repo_mode) = self.state.repo_mode.as_ref() {
+                match (repo_mode.active_subview, normalized) {
+                    (RepoSubview::Status, "j" | "down") => {
+                        return Some(Action::ScrollRepoDetailDown);
+                    }
+                    (RepoSubview::Status, "k" | "up") => {
+                        return Some(Action::ScrollRepoDetailUp);
+                    }
+                    (RepoSubview::Commits, "j" | "down") => {
+                        return Some(Action::SelectNextCommit);
+                    }
+                    (RepoSubview::Commits, "k" | "up") => {
+                        return Some(Action::SelectPreviousCommit);
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -464,6 +477,12 @@ impl TuiApp {
                     usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
+                RepoSubview::Commits => repo_commit_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.commits_view.selected_index,
+                    usize::from(area.height.saturating_sub(2)),
+                    theme,
+                ),
                 _ => repo_detail_lines(repo_mode.active_subview, repo_mode.detail.as_ref()),
             };
             (
@@ -685,7 +704,7 @@ fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<L
                 "Commits: {}",
                 detail.map_or(0, |detail| detail.commits.len())
             )),
-            Line::from("Commit history preview plugs into this pane next."),
+            Line::from("Commit history preview is active when this pane has focus."),
         ],
         RepoSubview::Stash => vec![
             Line::from(format!(
@@ -709,6 +728,121 @@ fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<L
             Line::from("Worktree creation and removal reuse this detail shell."),
         ],
     }
+}
+
+fn repo_commit_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    viewport_lines: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Commit history",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    if detail.commits.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Commit history",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("No commits available for this repository."),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| *index < detail.commits.len())
+        .unwrap_or(0);
+    let selected = &detail.commits[selected_index];
+    let compare_target = detail
+        .comparison_target
+        .as_ref()
+        .map(|target| match target {
+            super_lazygit_core::ComparisonTarget::Branch(name)
+            | super_lazygit_core::ComparisonTarget::Commit(name) => name.as_str(),
+        })
+        .unwrap_or("-");
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            format!(
+                "Selected {}/{}  {}  {}",
+                selected_index + 1,
+                detail.commits.len(),
+                selected.short_oid,
+                selected.summary
+            ),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("Compare target: {compare_target}")),
+        Line::from("History:"),
+    ];
+
+    let window_start = selected_index.saturating_sub(2);
+    let window_end = (window_start + 5).min(detail.commits.len());
+    lines.extend(
+        detail.commits[window_start..window_end]
+            .iter()
+            .enumerate()
+            .map(|(offset, commit)| {
+                let absolute_index = window_start + offset;
+                let prefix = if absolute_index == selected_index {
+                    ">"
+                } else {
+                    " "
+                };
+                Line::from(format!("{prefix} {} {}", commit.short_oid, commit.summary))
+            }),
+    );
+
+    lines.push(Line::from("Files:"));
+    if selected.changed_files.is_empty() {
+        lines.push(Line::from("  (no changed files reported)"));
+    } else {
+        lines.extend(selected.changed_files.iter().take(6).map(|file| {
+            Line::from(format!(
+                "  {} {}",
+                commit_file_kind_label(file.kind),
+                file.path.display()
+            ))
+        }));
+        if selected.changed_files.len() > 6 {
+            lines.push(Line::from(format!(
+                "  … {} more file(s)",
+                selected.changed_files.len() - 6
+            )));
+        }
+    }
+
+    lines.push(Line::from("Preview:"));
+    if selected.diff.lines.is_empty() {
+        lines.push(Line::from("No patch preview available for this commit."));
+    } else {
+        let remaining = viewport_lines.saturating_sub(lines.len()).max(1);
+        lines.extend(
+            selected
+                .diff
+                .lines
+                .iter()
+                .take(remaining)
+                .map(|line| render_diff_line(line.kind, &line.content, theme)),
+        );
+    }
+
+    lines.truncate(viewport_lines.max(1));
+    lines
 }
 
 fn repo_diff_lines(
@@ -776,6 +910,17 @@ fn repo_diff_lines(
             .map(|line| render_diff_line(line.kind, &line.content, theme)),
     );
     lines
+}
+
+fn commit_file_kind_label(kind: super_lazygit_core::FileStatusKind) -> &'static str {
+    match kind {
+        super_lazygit_core::FileStatusKind::Added => "A",
+        super_lazygit_core::FileStatusKind::Deleted => "D",
+        super_lazygit_core::FileStatusKind::Renamed => "R",
+        super_lazygit_core::FileStatusKind::Untracked => "?",
+        super_lazygit_core::FileStatusKind::Conflicted => "U",
+        super_lazygit_core::FileStatusKind::Modified => "M",
+    }
 }
 
 fn render_diff_line(kind: DiffLineKind, content: &str, theme: Theme) -> Line<'static> {
@@ -945,6 +1090,9 @@ fn default_status_text(state: &AppState) -> String {
                     if repo_mode.active_subview == RepoSubview::Status {
                         "Status diff focus; j/k scroll through hunks and keep orientation here."
                             .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Commits {
+                        "Commits detail focus; j/k browse history and keep the selected commit compare-ready."
+                            .to_string()
                     } else {
                         format!(
                             "{} detail focus; deeper interactions are staged behind the shell bead.",
@@ -971,6 +1119,8 @@ fn repo_help_text(state: &AppState) -> String {
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
                     "Status diff pane  j/k scroll diff  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Commits {
+                    "Commits pane  j/k move commit  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
                         "{} detail pane  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
@@ -1015,8 +1165,8 @@ mod tests {
 
     use super::*;
     use super_lazygit_core::{
-        DiffLine, DiffLineKind, DiffModel, FileStatus, FileStatusKind, ModalKind, RepoModeState,
-        StatusMessage, WorkspaceState,
+        CommitFileItem, CommitItem, ComparisonTarget, DiffLine, DiffLineKind, DiffModel,
+        FileStatus, FileStatusKind, ModalKind, RepoModeState, StatusMessage, WorkspaceState,
     };
 
     fn sample_repo_detail() -> RepoDetail {
@@ -1058,6 +1208,59 @@ mod tests {
                 hunk_count: 1,
             },
             branches: vec![Default::default(), Default::default()],
+            commits: vec![
+                CommitItem {
+                    oid: "abcdef1234567890".to_string(),
+                    short_oid: "abcdef1".to_string(),
+                    summary: "add lib".to_string(),
+                    changed_files: vec![CommitFileItem {
+                        path: PathBuf::from("src/lib.rs"),
+                        kind: FileStatusKind::Added,
+                    }],
+                    diff: DiffModel {
+                        selected_path: None,
+                        lines: vec![
+                            DiffLine {
+                                kind: DiffLineKind::Meta,
+                                content: "diff --git a/src/lib.rs b/src/lib.rs".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::HunkHeader,
+                                content: "@@ -0,0 +1,3 @@".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+pub fn answer() -> u32 {".to_string(),
+                            },
+                        ],
+                        hunk_count: 1,
+                    },
+                },
+                CommitItem {
+                    oid: "1234567890abcdef".to_string(),
+                    short_oid: "1234567".to_string(),
+                    summary: "second".to_string(),
+                    changed_files: vec![CommitFileItem {
+                        path: PathBuf::from("notes.md"),
+                        kind: FileStatusKind::Added,
+                    }],
+                    diff: DiffModel {
+                        selected_path: None,
+                        lines: vec![
+                            DiffLine {
+                                kind: DiffLineKind::Meta,
+                                content: "diff --git a/notes.md b/notes.md".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+# Notes".to_string(),
+                            },
+                        ],
+                        hunk_count: 0,
+                    },
+                },
+            ],
+            comparison_target: Some(ComparisonTarget::Commit("abcdef1234567890".to_string())),
             ..Default::default()
         }
     }
@@ -1235,6 +1438,51 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_commit_detail_routes_jk_between_commits() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commits_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref())
+                .and_then(|detail| detail.comparison_target.clone()),
+            Some(ComparisonTarget::Commit("1234567890abcdef".to_string()))
+        );
+
+        let up = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "k".to_string(),
+        })));
+        assert_eq!(
+            up.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commits_view.selected_index),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn repo_mode_status_detail_scrolls_diff_and_preserves_orientation() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -1356,5 +1604,50 @@ mod tests {
         assert!(rendered.contains("@@ -1,1 +1,2 @@"));
         assert!(rendered.contains("+new line"));
         assert!(rendered.contains("Repository shell"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_commit_history_preview() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Commits"));
+        assert!(rendered.contains("Selected 1/2"));
+        assert!(rendered.contains("Compare target: abcdef1234567890"));
+        assert!(rendered.contains("> abcdef1 add lib"));
+        assert!(rendered.contains("A src/lib.rs"));
+        assert!(rendered.contains("+pub fn answer() -> u32 {"));
     }
 }
