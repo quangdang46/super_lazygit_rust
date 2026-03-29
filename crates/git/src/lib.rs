@@ -26,6 +26,9 @@ pub trait GitBackend: Send + Sync + 'static {
     fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel>;
 
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome>;
+
+    fn apply_patch_selection(&self, request: PatchSelectionRequest)
+        -> GitResult<GitCommandOutcome>;
 }
 
 #[derive(Clone)]
@@ -123,6 +126,18 @@ impl GitFacade {
         let route = self.route_for(operation);
         let started_at = Instant::now();
         let result = self.backend.run_command(request);
+        self.finish_operation(operation, route, started_at, &result);
+        result
+    }
+
+    pub fn apply_patch_selection(
+        &mut self,
+        request: PatchSelectionRequest,
+    ) -> GitResult<GitCommandOutcome> {
+        let operation = GitOperationKind::WriteCommand;
+        let route = self.route_for(operation);
+        let started_at = Instant::now();
+        let result = self.backend.apply_patch_selection(request);
         self.finish_operation(operation, route, started_at, &result);
         result
     }
@@ -315,6 +330,28 @@ pub struct DiffRequest {
     pub selected_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchApplicationMode {
+    Stage,
+    Unstage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedHunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchSelectionRequest {
+    pub repo_id: RepoId,
+    pub path: PathBuf,
+    pub mode: PatchApplicationMode,
+    pub hunks: Vec<SelectedHunk>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitCommandOutcome {
     pub repo_id: RepoId,
@@ -375,6 +412,19 @@ impl GitBackend for NoopGitBackend {
             message: format!(
                 "{} is not executable through the noop backend",
                 git_command_label(&request)
+            ),
+        })
+    }
+
+    fn apply_patch_selection(
+        &self,
+        request: PatchSelectionRequest,
+    ) -> GitResult<GitCommandOutcome> {
+        Err(GitError::OperationFailed {
+            message: format!(
+                "{:?} patch selection for {} is not executable through the noop backend",
+                request.mode,
+                request.path.display()
             ),
         })
     }
@@ -528,6 +578,36 @@ impl GitBackend for CliGitBackend {
             summary,
         })
     }
+
+    fn apply_patch_selection(
+        &self,
+        request: PatchSelectionRequest,
+    ) -> GitResult<GitCommandOutcome> {
+        let repo_path = repo_path(&request.repo_id)?;
+        apply_patch_selection(&repo_path, &request)?;
+
+        let summary = match request.mode {
+            PatchApplicationMode::Stage => {
+                format!(
+                    "Staged {} selected hunk(s) for {}",
+                    request.hunks.len(),
+                    request.path.display()
+                )
+            }
+            PatchApplicationMode::Unstage => {
+                format!(
+                    "Unstaged {} selected hunk(s) for {}",
+                    request.hunks.len(),
+                    request.path.display()
+                )
+            }
+        };
+
+        Ok(GitCommandOutcome {
+            repo_id: request.repo_id,
+            summary,
+        })
+    }
 }
 
 fn select_backend(
@@ -673,12 +753,219 @@ fn fetch_head_timestamp(repo_path: &Path) -> GitResult<Option<Timestamp>> {
     }
 }
 
+fn apply_patch_selection(repo_path: &Path, request: &PatchSelectionRequest) -> GitResult<()> {
+    if request.hunks.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: format!(
+                "{:?} patch selection for {} requires at least one hunk",
+                request.mode,
+                request.path.display()
+            ),
+        });
+    }
+
+    let diff = match request.mode {
+        PatchApplicationMode::Stage => git_stdout_raw(
+            repo_path,
+            vec![
+                OsStr::new("diff"),
+                OsStr::new("--no-ext-diff"),
+                OsStr::new("--binary"),
+                OsStr::new("--unified=0"),
+                OsStr::new("--"),
+                request.path.as_os_str(),
+            ],
+        )?,
+        PatchApplicationMode::Unstage => git_stdout_raw(
+            repo_path,
+            vec![
+                OsStr::new("diff"),
+                OsStr::new("--cached"),
+                OsStr::new("--no-ext-diff"),
+                OsStr::new("--binary"),
+                OsStr::new("--unified=0"),
+                OsStr::new("--"),
+                request.path.as_os_str(),
+            ],
+        )?,
+    };
+    if diff.trim().is_empty() {
+        return Err(GitError::OperationFailed {
+            message: format!(
+                "no {:?} patch data available for {}",
+                request.mode,
+                request.path.display()
+            ),
+        });
+    }
+
+    let selected_patch = build_selected_patch(&diff, &request.hunks)?;
+    let mut args = vec![
+        OsStr::new("apply"),
+        OsStr::new("--cached"),
+        OsStr::new("--unidiff-zero"),
+        OsStr::new("--whitespace=nowarn"),
+    ];
+    if matches!(request.mode, PatchApplicationMode::Unstage) {
+        args.push(OsStr::new("--reverse"));
+    }
+
+    git_with_stdin(repo_path, args, selected_patch.as_bytes())
+}
+
+fn build_selected_patch(diff: &str, selections: &[SelectedHunk]) -> GitResult<String> {
+    let parsed = parse_patch(diff)?;
+    let mut selected_hunks = Vec::new();
+
+    for selection in selections {
+        let Some(hunk) = parsed
+            .hunks
+            .iter()
+            .find(|hunk| hunk.selection == *selection)
+        else {
+            return Err(GitError::OperationFailed {
+                message: format!(
+                    "requested hunk -{},{} +{},{} was not found in patch",
+                    selection.old_start,
+                    selection.old_lines,
+                    selection.new_start,
+                    selection.new_lines
+                ),
+            });
+        };
+        selected_hunks.push(hunk.raw.clone());
+    }
+
+    let mut patch = String::new();
+    for line in &parsed.header_lines {
+        patch.push_str(line);
+        patch.push('\n');
+    }
+    for hunk in selected_hunks {
+        patch.push_str(&hunk);
+    }
+    Ok(patch)
+}
+
+fn parse_patch(diff: &str) -> GitResult<ParsedPatch> {
+    let mut lines = diff.lines();
+    let mut header_lines = Vec::new();
+    let mut hunks = Vec::new();
+    let mut current_hunk: Option<(SelectedHunk, String)> = None;
+
+    while let Some(line) = lines.next() {
+        if let Some(selection) = parse_hunk_header(line)? {
+            if let Some((selection, raw)) = current_hunk.take() {
+                hunks.push(ParsedHunk { selection, raw });
+            }
+            let mut raw = String::new();
+            raw.push_str(line);
+            raw.push('\n');
+            current_hunk = Some((selection, raw));
+            continue;
+        }
+
+        if let Some((_, raw)) = current_hunk.as_mut() {
+            raw.push_str(line);
+            raw.push('\n');
+        } else {
+            header_lines.push(line.to_string());
+        }
+    }
+
+    if let Some((selection, raw)) = current_hunk.take() {
+        hunks.push(ParsedHunk { selection, raw });
+    }
+
+    if hunks.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: "patch did not contain any hunks".to_string(),
+        });
+    }
+
+    Ok(ParsedPatch {
+        header_lines,
+        hunks,
+    })
+}
+
+fn parse_hunk_header(line: &str) -> GitResult<Option<SelectedHunk>> {
+    let Some(rest) = line.strip_prefix("@@ -") else {
+        return Ok(None);
+    };
+    let Some((old_range, remainder)) = rest.split_once(" +") else {
+        return Err(GitError::OperationFailed {
+            message: format!("invalid patch hunk header: {line}"),
+        });
+    };
+    let Some((new_range, _)) = remainder.split_once(" @@") else {
+        return Err(GitError::OperationFailed {
+            message: format!("invalid patch hunk header: {line}"),
+        });
+    };
+
+    let (old_start, old_lines) = parse_patch_range(old_range)?;
+    let (new_start, new_lines) = parse_patch_range(new_range)?;
+    Ok(Some(SelectedHunk {
+        old_start,
+        old_lines,
+        new_start,
+        new_lines,
+    }))
+}
+
+fn parse_patch_range(range: &str) -> GitResult<(u32, u32)> {
+    let (start, lines) = match range.split_once(',') {
+        Some((start, lines)) => (start, lines),
+        None => (range, "1"),
+    };
+    let start = start.parse().map_err(|error| GitError::OperationFailed {
+        message: format!("invalid patch range start `{start}`: {error}"),
+    })?;
+    let lines = lines.parse().map_err(|error| GitError::OperationFailed {
+        message: format!("invalid patch range length `{lines}`: {error}"),
+    })?;
+    Ok((start, lines))
+}
+
 fn git<I, S>(repo_path: &Path, args: I) -> GitResult<()>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
     let output = git_output(repo_path, args)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    Ok(())
+}
+
+fn git_with_stdin<I, S>(repo_path: &Path, args: I, stdin: &[u8]) -> GitResult<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(repo_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(io_error)?;
+
+    let Some(mut child_stdin) = child.stdin.take() else {
+        return Err(GitError::OperationFailed {
+            message: "failed to open git stdin".to_string(),
+        });
+    };
+    child_stdin.write_all(stdin).map_err(io_error)?;
+    drop(child_stdin);
+
+    let output = child.wait_with_output().map_err(io_error)?;
     if !output.status.success() {
         return Err(command_failure(output));
     }
@@ -721,12 +1008,26 @@ where
         .map_err(io_error)
 }
 
+fn git_stdout_raw<I, S>(repo_path: &Path, args: I) -> GitResult<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = git_output(repo_path, args)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    stdout_raw_string(output)
+}
+
 fn stdout_string(output: Output) -> GitResult<String> {
-    String::from_utf8(output.stdout)
-        .map(|value| value.trim().to_owned())
-        .map_err(|error| GitError::OperationFailed {
-            message: error.to_string(),
-        })
+    stdout_raw_string(output).map(|value| value.trim().to_owned())
+}
+
+fn stdout_raw_string(output: Output) -> GitResult<String> {
+    String::from_utf8(output.stdout).map_err(|error| GitError::OperationFailed {
+        message: error.to_string(),
+    })
 }
 
 fn command_failure(output: Output) -> GitError {
@@ -1041,13 +1342,25 @@ fn is_conflict_code(index: char, worktree: char) -> bool {
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedPatch {
+    header_lines: Vec<String>,
+    hunks: Vec<ParsedHunk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedHunk {
+    selection: SelectedHunk,
+    raw: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, RepoId};
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, rebase_in_progress_repo,
-        staged_and_unstaged_repo, stashed_repo, upstream_diverged_repo, worktree_repo,
+        staged_and_unstaged_repo, stashed_repo, temp_repo, upstream_diverged_repo, worktree_repo,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1090,6 +1403,16 @@ mod tests {
             Ok(GitCommandOutcome {
                 repo_id: request.repo_id,
                 summary,
+            })
+        }
+
+        fn apply_patch_selection(
+            &self,
+            request: PatchSelectionRequest,
+        ) -> GitResult<GitCommandOutcome> {
+            Ok(GitCommandOutcome {
+                repo_id: request.repo_id,
+                summary: format!("{:?} patch selection", request.mode),
             })
         }
     }
@@ -1367,5 +1690,146 @@ mod tests {
             .file_tree
             .iter()
             .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
+    fn cli_backend_stages_selected_hunk_from_unstaged_diff() {
+        let repo = multi_hunk_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let diff = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("unstaged diff should load");
+        let parsed = parse_patch(&diff).expect("diff should contain hunks");
+
+        let outcome = backend
+            .apply_patch_selection(PatchSelectionRequest {
+                repo_id: repo_id.clone(),
+                path: PathBuf::from("multi.txt"),
+                mode: PatchApplicationMode::Stage,
+                hunks: vec![parsed.hunks[0].selection],
+            })
+            .expect("patch selection should stage first hunk");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert!(outcome.summary.contains("Staged 1 selected hunk(s)"));
+        assert_eq!(repo.status_porcelain().expect("status"), "MM multi.txt");
+
+        let staged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+        let unstaged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("worktree diff should load");
+
+        assert!(staged.contains("+two staged"));
+        assert!(!staged.contains("+five staged"));
+        assert!(unstaged.contains("+five staged"));
+        assert!(!unstaged.contains("+two staged"));
+    }
+
+    #[test]
+    fn cli_backend_unstages_selected_hunk_from_index_diff() {
+        let repo = multi_hunk_repo().expect("fixture repo");
+        repo.stage("multi.txt").expect("stage file");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let diff = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+        let parsed = parse_patch(&diff).expect("diff should contain hunks");
+
+        let outcome = backend
+            .apply_patch_selection(PatchSelectionRequest {
+                repo_id: repo_id.clone(),
+                path: PathBuf::from("multi.txt"),
+                mode: PatchApplicationMode::Unstage,
+                hunks: vec![parsed.hunks[0].selection],
+            })
+            .expect("patch selection should unstage first hunk");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert!(outcome.summary.contains("Unstaged 1 selected hunk(s)"));
+        assert_eq!(repo.status_porcelain().expect("status"), "MM multi.txt");
+
+        let staged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+        let unstaged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("worktree diff should load");
+
+        assert!(staged.contains("+five staged"));
+        assert!(!staged.contains("+two staged"));
+        assert!(unstaged.contains("+two staged"));
+        assert!(!unstaged.contains("+five staged"));
+    }
+
+    fn multi_hunk_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file("multi.txt", "one\ntwo\nthree\nfour\nfive\nsix\n")?;
+        repo.commit_all("initial")?;
+        repo.write_file(
+            "multi.txt",
+            "one\ntwo staged\nthree\nfour\nfive staged\nsix\n",
+        )?;
+        Ok(repo)
     }
 }
