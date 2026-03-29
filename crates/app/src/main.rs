@@ -60,6 +60,7 @@ fn main() -> Result<()> {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::PathBuf;
 
     use super::watcher::{ScriptedWatcherBackend, ScriptedWatcherHandle};
     use super::*;
@@ -68,7 +69,7 @@ mod tests {
         RepoSummary, ScanStatus, Timestamp, WatcherEventKind, WatcherHealth, WorkerEvent,
         WorkspaceState,
     };
-    use super_lazygit_test_support::clean_repo;
+    use super_lazygit_test_support::{clean_repo, TempRepo};
 
     #[test]
     fn runtime_processes_effects_until_worker_events_update_state() {
@@ -474,5 +475,246 @@ mod tests {
             .background_jobs
             .values()
             .any(|job| matches!(job.state, BackgroundJobState::Failed { .. })));
+    }
+
+    #[test]
+    fn e2e_keyboard_harness_runs_workspace_triage_commit_and_push_flow() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("seed push");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        repo.git(["branch", "--set-upstream-to=origin/main", "main"])
+            .expect("set upstream");
+        repo.append_file("tracked.txt", "local change\n")
+            .expect("make local change");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+        harness.assert_latest_contains("Workspace");
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+        harness.assert_latest_contains("Repository shell");
+        harness.assert_latest_contains("tracked.txt");
+
+        harness.press("stage selected file", "enter");
+        assert_eq!(
+            repo_status_without_app_cache(&repo).expect("status after staging"),
+            "M  tracked.txt",
+            "expected the selected file to be staged\n{}",
+            harness.timeline()
+        );
+        harness.assert_state(
+            |state| {
+                state
+                    .status_messages
+                    .back()
+                    .map(|message| message.text.as_str())
+                    == Some("Staged tracked.txt")
+            },
+            "staging should emit an actionable status message",
+        );
+
+        harness.press("focus staged pane", "tab");
+        harness.press("open commit box", "c");
+        harness.assert_latest_contains("Commit box");
+
+        harness.paste("paste commit message", "feat: e2e flow");
+        harness.assert_latest_contains("feat: e2e flow");
+
+        harness.press("submit commit", "enter");
+        assert_eq!(
+            repo_status_without_app_cache(&repo).expect("status after commit"),
+            "",
+            "expected the working tree to be clean after commit\n{}",
+            harness.timeline()
+        );
+        assert_eq!(
+            command_stdout(&repo, ["log", "-1", "--format=%s"]).expect("head subject"),
+            "feat: e2e flow",
+            "expected the staged commit to land with the typed message\n{}",
+            harness.timeline()
+        );
+        harness.assert_state(
+            |state| {
+                state
+                    .status_messages
+                    .back()
+                    .map(|message| message.text.as_str())
+                    .is_some_and(|message| message.starts_with("Committed staged changes"))
+            },
+            "commit should update the repo status log",
+        );
+
+        harness.press("open push confirmation", "P");
+        harness.assert_latest_contains("Confirm push");
+        harness.assert_latest_contains("Enter or y confirms");
+
+        harness.press("confirm push", "enter");
+        harness.assert_state(
+            |state| {
+                state
+                    .status_messages
+                    .back()
+                    .map(|message| message.text.as_str())
+                    == Some("Pushed current branch")
+            },
+            "push should complete through the confirmation modal",
+        );
+        assert_eq!(
+            command_stdout(&repo, ["rev-list", "--count", "origin/main..HEAD"])
+                .expect("ahead count"),
+            "0",
+            "expected the local branch to be fully pushed\n{}",
+            harness.timeline()
+        );
+
+        let pushed_clone = TempRepo::clone_from(remote.path()).expect("clone pushed remote");
+        assert_eq!(
+            command_stdout(&pushed_clone, ["log", "-1", "--format=%s"])
+                .expect("pushed remote head"),
+            "feat: e2e flow",
+            "expected the remote head to include the e2e commit\n{}",
+            harness.timeline()
+        );
+    }
+
+    struct E2eHarness {
+        runtime: AppRuntime,
+        timeline: Vec<String>,
+    }
+
+    impl E2eHarness {
+        fn new(workspace_root: PathBuf) -> Self {
+            let config = AppConfig::default();
+            let state = AppState::default();
+            let mut app = TuiApp::new(state, config);
+            app.resize(120, 28);
+
+            Self {
+                runtime: AppRuntime::new(
+                    app,
+                    WorkspaceRegistry::new(Some(workspace_root)),
+                    GitFacade::default(),
+                ),
+                timeline: Vec::new(),
+            }
+        }
+
+        fn bootstrap(&mut self) {
+            self.runtime.bootstrap().expect("bootstrap succeeds");
+            self.snapshot("bootstrap");
+            self.runtime
+                .run([Event::Action(Action::RefreshVisibleRepos)]);
+            self.snapshot("refresh visible repos");
+        }
+
+        fn press(&mut self, label: &str, key: &str) {
+            self.runtime
+                .run([Event::Input(super_lazygit_core::InputEvent::KeyPressed(
+                    super_lazygit_core::KeyPress {
+                        key: key.to_string(),
+                    },
+                ))]);
+            self.snapshot(label);
+        }
+
+        fn paste(&mut self, label: &str, text: &str) {
+            self.runtime
+                .run([Event::Input(super_lazygit_core::InputEvent::Paste(
+                    text.to_string(),
+                ))]);
+            self.snapshot(label);
+        }
+
+        #[track_caller]
+        fn assert_latest_contains(&self, needle: &str) {
+            let latest = self
+                .timeline
+                .last()
+                .expect("timeline should contain at least one snapshot");
+            assert!(
+                latest.contains(needle),
+                "expected latest snapshot to contain {needle:?}\n{}",
+                self.timeline()
+            );
+        }
+
+        #[track_caller]
+        fn assert_state(&self, predicate: impl FnOnce(&AppState) -> bool, message: &str) {
+            assert!(
+                predicate(self.runtime.app().state()),
+                "{message}\n{}",
+                self.timeline()
+            );
+        }
+
+        fn snapshot(&mut self, label: &str) {
+            let frame = self.runtime.render_to_string();
+            let state = self.runtime.app().state();
+            let notifications = state
+                .notifications
+                .iter()
+                .map(|notification| notification.text.as_str())
+                .collect::<Vec<_>>();
+            let status_messages = state
+                .status_messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>();
+            let jobs = state
+                .background_jobs
+                .values()
+                .map(|job| format!("{}:{:?}", job.id.0, job.state))
+                .collect::<Vec<_>>();
+            let operation_progress = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| format!("{:?}", repo_mode.operation_progress))
+                .unwrap_or_else(|| "None".to_string());
+            let modal = state
+                .modal_stack
+                .last()
+                .map(|modal| format!("{:?}", modal.kind))
+                .unwrap_or_else(|| "None".to_string());
+
+            self.timeline.push(format!(
+                "=== {label} ===\nmode={:?} focus={:?} modal={modal} progress={operation_progress}\nstatus_messages={status_messages:?}\nnotifications={notifications:?}\njobs={jobs:?}\n{frame}",
+                state.mode, state.focused_pane
+            ));
+        }
+
+        fn timeline(&self) -> String {
+            self.timeline.join("\n\n")
+        }
+    }
+
+    fn command_stdout<const N: usize>(repo: &TempRepo, args: [&str; N]) -> std::io::Result<String> {
+        String::from_utf8(repo.git_capture(args)?.stdout)
+            .map(|value| value.trim().to_string())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
+    fn repo_status_without_app_cache(repo: &TempRepo) -> std::io::Result<String> {
+        Ok(repo
+            .status_porcelain()?
+            .lines()
+            .filter(|line| *line != "?? .super-lazygit/")
+            .collect::<Vec<_>>()
+            .join("\n"))
     }
 }

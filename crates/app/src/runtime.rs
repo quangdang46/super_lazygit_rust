@@ -113,6 +113,12 @@ impl AppRuntime {
         &self.app
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    #[must_use]
+    pub fn render_to_string(&mut self) -> String {
+        self.app.render_to_string()
+    }
+
     fn apply_effects(&mut self, effects: &[Effect]) -> Vec<Event> {
         let mut follow_up_events = Vec::new();
 
