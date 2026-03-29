@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
@@ -646,24 +647,87 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
 }
 
 fn collect_git_repos(root: &Path, repos: &mut Vec<PathBuf>) -> GitResult<()> {
-    if is_git_repo(root) {
-        repos.push(root.to_path_buf());
-        return Ok(());
+    let mut visited = HashSet::new();
+    collect_git_repos_inner(root, repos, &mut visited);
+    Ok(())
+}
+
+fn collect_git_repos_inner(root: &Path, repos: &mut Vec<PathBuf>, visited: &mut HashSet<PathBuf>) {
+    let canonical_root = canonicalize_existing_path(root);
+    if !visited.insert(canonical_root) {
+        return;
     }
 
-    let entries = fs::read_dir(root).map_err(io_error)?;
+    if let Some(repo_root) = resolve_git_repo_root(root) {
+        repos.push(repo_root);
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
     for entry in entries {
-        let entry = entry.map_err(io_error)?;
-        let path = entry.path();
-        if !entry.file_type().map_err(io_error)?.is_dir() {
+        let Ok(entry) = entry else {
             continue;
-        }
+        };
         if entry.file_name() == OsStr::new(".git") {
             continue;
         }
-        collect_git_repos(&path, repos)?;
+
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let is_dir = if file_type.is_dir() {
+            true
+        } else if file_type.is_symlink() {
+            fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir())
+        } else {
+            false
+        };
+        if !is_dir {
+            continue;
+        }
+
+        collect_git_repos_inner(&path, repos, visited);
     }
-    Ok(())
+}
+
+fn resolve_git_repo_root(path: &Path) -> Option<PathBuf> {
+    if !path.is_dir() {
+        return None;
+    }
+
+    let git_path = path.join(".git");
+    let metadata = fs::metadata(&git_path).ok()?;
+    if metadata.is_dir() {
+        return Some(canonicalize_existing_path(path));
+    }
+    if !metadata.is_file() {
+        return None;
+    }
+
+    let gitdir = parse_gitdir_file(&git_path)?;
+    if gitdir.exists() {
+        Some(canonicalize_existing_path(path))
+    } else {
+        None
+    }
+}
+
+fn parse_gitdir_file(git_path: &Path) -> Option<PathBuf> {
+    let contents = fs::read_to_string(git_path).ok()?;
+    let target = contents.trim().strip_prefix("gitdir:")?.trim();
+    let target_path = PathBuf::from(target);
+    Some(if target_path.is_absolute() {
+        target_path
+    } else {
+        git_path.parent()?.join(target_path)
+    })
+}
+
+fn canonicalize_existing_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn is_git_repo(path: &Path) -> bool {
@@ -1552,6 +1616,68 @@ mod tests {
         }
     }
 
+    fn run_git(dir: &Path, args: &[&str]) -> std::io::Result<()> {
+        let output = Command::new("git").args(args).current_dir(dir).output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+
+        Err(std::io::Error::other(format!(
+            "git {:?} failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            args,
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )))
+    }
+
+    fn init_repo_at(
+        path: &Path,
+        tracked_file: &str,
+        contents: &str,
+        message: &str,
+    ) -> std::io::Result<()> {
+        fs::create_dir_all(path)?;
+        run_git(path, &["init", "--initial-branch=main"])?;
+        run_git(path, &["config", "user.name", "Super Lazygit Tests"])?;
+        run_git(path, &["config", "user.email", "tests@example.com"])?;
+        fs::write(path.join(tracked_file), contents)?;
+        run_git(path, &["add", "."])?;
+        run_git(path, &["commit", "-m", message])?;
+        Ok(())
+    }
+
+    fn nested_workspace() -> std::io::Result<tempfile::TempDir> {
+        let root = tempfile::tempdir()?;
+        let outer = root.path().join("outer");
+        let inner = outer.join("vendor/inner");
+
+        init_repo_at(&outer, "outer.txt", "outer\n", "outer init")?;
+        init_repo_at(&inner, "inner.txt", "inner\n", "inner init")?;
+
+        Ok(root)
+    }
+
+    fn linked_worktree_workspace() -> std::io::Result<tempfile::TempDir> {
+        let root = tempfile::tempdir()?;
+        let main_repo = root.path().join("main");
+        let worktree = root.path().join("feature-tree");
+
+        init_repo_at(&main_repo, "main.txt", "main\n", "initial")?;
+        run_git(&main_repo, &["branch", "feature"])?;
+        run_git(
+            &main_repo,
+            &[
+                "worktree",
+                "add",
+                worktree.to_str().unwrap_or("feature-tree"),
+                "feature",
+            ],
+        )?;
+
+        Ok(root)
+    }
+
     #[test]
     fn git_facade_records_operation_latency() {
         let mut git = GitFacade::default();
@@ -1663,7 +1789,113 @@ mod tests {
 
         assert_eq!(
             result.repo_ids,
-            vec![RepoId::new(repo.path().display().to_string())]
+            vec![RepoId::new(
+                fs::canonicalize(repo.path())
+                    .expect("canonical repo path")
+                    .display()
+                    .to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn cli_backend_stops_descending_once_repo_root_is_found() {
+        let workspace = nested_workspace().expect("nested workspace");
+        let backend = CliGitBackend;
+
+        let result = backend
+            .scan_workspace(WorkspaceScanRequest {
+                root: Some(workspace.path().to_path_buf()),
+            })
+            .expect("scan succeeds");
+
+        assert_eq!(result.repo_ids.len(), 1);
+        assert_eq!(
+            result.repo_ids,
+            vec![RepoId::new(
+                fs::canonicalize(workspace.path().join("outer"))
+                    .expect("canonical outer repo")
+                    .display()
+                    .to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn cli_backend_discovers_gitdir_file_worktrees() {
+        let workspace = linked_worktree_workspace().expect("linked worktree workspace");
+        let backend = CliGitBackend;
+
+        let result = backend
+            .scan_workspace(WorkspaceScanRequest {
+                root: Some(workspace.path().to_path_buf()),
+            })
+            .expect("scan succeeds");
+
+        assert_eq!(result.repo_ids.len(), 2);
+        assert!(result.repo_ids.contains(&RepoId::new(
+            fs::canonicalize(workspace.path().join("main"))
+                .expect("canonical main repo")
+                .display()
+                .to_string()
+        )));
+        assert!(result.repo_ids.contains(&RepoId::new(
+            fs::canonicalize(workspace.path().join("feature-tree"))
+                .expect("canonical worktree repo")
+                .display()
+                .to_string()
+        )));
+    }
+
+    #[test]
+    fn cli_backend_ignores_broken_gitdir_files_and_keeps_valid_repos() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let broken = workspace.path().join("broken");
+        let valid = workspace.path().join("valid");
+        fs::create_dir_all(&broken).expect("broken dir");
+        fs::write(broken.join(".git"), "gitdir: ../missing\n").expect("broken gitdir file");
+        init_repo_at(&valid, "valid.txt", "valid\n", "valid init").expect("valid repo");
+        let backend = CliGitBackend;
+
+        let result = backend
+            .scan_workspace(WorkspaceScanRequest {
+                root: Some(workspace.path().to_path_buf()),
+            })
+            .expect("scan succeeds");
+
+        assert_eq!(
+            result.repo_ids,
+            vec![RepoId::new(
+                fs::canonicalize(valid)
+                    .expect("canonical valid repo")
+                    .display()
+                    .to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn cli_backend_canonicalizes_repo_ids_from_noncanonical_roots() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let repo = workspace.path().join("repo");
+        init_repo_at(&repo, "repo.txt", "repo\n", "repo init").expect("repo");
+        let backend = CliGitBackend;
+
+        let noncanonical_root = workspace.path().join("repo").join("..");
+        let result = backend
+            .scan_workspace(WorkspaceScanRequest {
+                root: Some(noncanonical_root),
+            })
+            .expect("scan succeeds");
+
+        assert_eq!(
+            result.repo_ids,
+            vec![RepoId::new(
+                fs::canonicalize(repo)
+                    .expect("canonical repo")
+                    .display()
+                    .to_string()
+            )]
         );
     }
 
