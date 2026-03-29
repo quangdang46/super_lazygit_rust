@@ -375,7 +375,12 @@ impl TuiApp {
     }
 
     fn render_workspace_list(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
-        let mut lines = vec![Line::from(self.workspace_root_label())];
+        let layout = workspace_table_layout(area.width.saturating_sub(2) as usize);
+        let mut lines = vec![
+            Line::from(self.workspace_root_label()),
+            workspace_status_line(&self.state, theme),
+            workspace_table_header(layout, theme),
+        ];
         let repo_ids = &self.state.workspace.discovered_repo_ids;
 
         if repo_ids.is_empty() {
@@ -389,7 +394,14 @@ impl TuiApp {
                     .as_ref()
                     .is_some_and(|selected| selected == repo_id);
                 let summary = self.state.workspace.repo_summaries.get(repo_id);
-                lines.push(repo_line(repo_id, summary, is_selected));
+                lines.push(workspace_repo_line(
+                    repo_id,
+                    summary,
+                    is_selected,
+                    self.state.focused_pane == PaneId::WorkspaceList,
+                    layout,
+                    theme,
+                ));
             }
         }
 
@@ -590,9 +602,17 @@ impl Theme {
 }
 
 fn split_two_columns(area: Rect) -> std::rc::Rc<[Rect]> {
+    let constraints = if area.width >= 120 {
+        [Constraint::Percentage(44), Constraint::Percentage(56)]
+    } else if area.width >= 90 {
+        [Constraint::Percentage(50), Constraint::Percentage(50)]
+    } else {
+        [Constraint::Percentage(58), Constraint::Percentage(42)]
+    };
+
     Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints(constraints)
         .split(area)
 }
 
@@ -631,14 +651,335 @@ fn centered_rect(area: Rect, width_percent: u16, height_percent: u16) -> Rect {
         .split(vertical[1])[1]
 }
 
-fn repo_line(repo_id: &RepoId, summary: Option<&RepoSummary>, is_selected: bool) -> Line<'static> {
+#[derive(Debug, Clone, Copy)]
+struct WorkspaceTableLayout {
+    name_width: usize,
+    branch_width: usize,
+    dirty_width: usize,
+    sync_width: Option<usize>,
+    fetch_width: usize,
+}
+
+fn workspace_table_layout(width: usize) -> WorkspaceTableLayout {
+    if width >= 54 {
+        let branch_width = 14;
+        let dirty_width = 12;
+        let sync_width = 8;
+        let fetch_width = 8;
+        let name_width = width
+            .saturating_sub(branch_width + dirty_width + sync_width + fetch_width + 4)
+            .max(12);
+        WorkspaceTableLayout {
+            name_width,
+            branch_width,
+            dirty_width,
+            sync_width: Some(sync_width),
+            fetch_width,
+        }
+    } else if width >= 40 {
+        let branch_width = 9;
+        let dirty_width = 12;
+        let fetch_width = 6;
+        let name_width = width
+            .saturating_sub(branch_width + dirty_width + fetch_width + 3)
+            .max(10);
+        WorkspaceTableLayout {
+            name_width,
+            branch_width,
+            dirty_width,
+            sync_width: None,
+            fetch_width,
+        }
+    } else {
+        let branch_width = 6;
+        let dirty_width = 10;
+        let fetch_width = 5;
+        let name_width = width
+            .saturating_sub(branch_width + dirty_width + fetch_width + 3)
+            .max(8);
+        WorkspaceTableLayout {
+            name_width,
+            branch_width,
+            dirty_width,
+            sync_width: None,
+            fetch_width,
+        }
+    }
+}
+
+fn workspace_status_line(state: &AppState, theme: Theme) -> Line<'static> {
+    let scan = match &state.workspace.scan_status {
+        super_lazygit_core::ScanStatus::Idle => "idle".to_string(),
+        super_lazygit_core::ScanStatus::Scanning => "scanning".to_string(),
+        super_lazygit_core::ScanStatus::Complete { scanned_repos } => {
+            format!("ready:{scanned_repos}")
+        }
+        super_lazygit_core::ScanStatus::Failed { message } => {
+            format!("failed:{message}")
+        }
+    };
+
+    Line::from(vec![
+        Span::styled(
+            format!("repos={}", state.workspace.discovered_repo_ids.len()),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(format!("scan={scan}"), Style::default().fg(theme.muted)),
+    ])
+}
+
+fn workspace_table_header(layout: WorkspaceTableLayout, theme: Theme) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(
+            pad_cell("REPO", layout.name_width),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            pad_cell(
+                if layout.sync_width.is_some() {
+                    "BRANCH"
+                } else {
+                    "BR"
+                },
+                layout.branch_width,
+            ),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            pad_cell(
+                if layout.sync_width.is_some() {
+                    "DIRTY"
+                } else {
+                    "STATE"
+                },
+                layout.dirty_width,
+            ),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    if let Some(sync_width) = layout.sync_width {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            pad_cell("SYNC", sync_width),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            pad_cell("FETCH", layout.fetch_width),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            pad_cell("AGE", layout.fetch_width),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    Line::from(spans)
+}
+
+fn workspace_repo_line(
+    repo_id: &RepoId,
+    summary: Option<&RepoSummary>,
+    is_selected: bool,
+    list_is_focused: bool,
+    layout: WorkspaceTableLayout,
+    theme: Theme,
+) -> Line<'static> {
     let prefix = if is_selected { ">" } else { " " };
+    let prefix_style = if is_selected {
+        let mut style = Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD);
+        if list_is_focused {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        style
+    } else {
+        Style::default().fg(theme.muted)
+    };
+
     let name = summary.map_or(repo_id.0.as_str(), |summary| summary.display_name.as_str());
     let branch = summary
         .and_then(|summary| summary.branch.as_deref())
-        .unwrap_or("-");
-    let dirty = summary.is_some_and(|summary| summary.dirty);
-    Line::from(format!("{prefix} {name} [{branch}] dirty={dirty}"))
+        .unwrap_or("detached");
+    let dirty = summary.map_or_else(
+        || "pending".to_string(),
+        |summary| workspace_dirty_cell(summary, layout.sync_width.is_none()),
+    );
+    let sync = summary.map_or_else(
+        || "-".to_string(),
+        |summary| format!("+{}/-{}", summary.ahead_count, summary.behind_count),
+    );
+    let fetch = summary
+        .map(workspace_fetch_age)
+        .unwrap_or_else(|| "pending".to_string());
+
+    let mut spans = vec![
+        Span::styled(format!("{prefix} "), prefix_style),
+        Span::styled(
+            pad_cell(name, layout.name_width.saturating_sub(2)),
+            if is_selected {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ),
+        Span::raw(" "),
+        Span::styled(
+            pad_cell(branch, layout.branch_width),
+            Style::default().fg(theme.foreground),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            pad_cell(&dirty, layout.dirty_width),
+            workspace_dirty_style(summary, theme),
+        ),
+    ];
+
+    if let Some(sync_width) = layout.sync_width {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            pad_cell(&sync, sync_width),
+            workspace_sync_style(summary, theme),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            pad_cell(&fetch, layout.fetch_width),
+            workspace_fetch_style(summary, theme),
+        ));
+    } else {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            pad_cell(&fetch, layout.fetch_width),
+            workspace_fetch_style(summary, theme),
+        ));
+    }
+
+    Line::from(spans)
+}
+
+fn workspace_dirty_cell(summary: &RepoSummary, compact: bool) -> String {
+    if summary.conflicted {
+        return "conflict".to_string();
+    }
+    if !summary.dirty {
+        return if compact {
+            "clean +0/-0".to_string()
+        } else {
+            "clean".to_string()
+        };
+    }
+
+    if compact {
+        format!(
+            "{}/{}/{} +{}/-{}",
+            summary.staged_count,
+            summary.unstaged_count,
+            summary.untracked_count,
+            summary.ahead_count,
+            summary.behind_count
+        )
+    } else {
+        format!(
+            "{}S {}U {}?",
+            summary.staged_count, summary.unstaged_count, summary.untracked_count
+        )
+    }
+}
+
+fn workspace_fetch_age(summary: &RepoSummary) -> String {
+    summary
+        .last_fetch_at
+        .map(|timestamp| {
+            let seconds = summary
+                .last_refresh_at
+                .unwrap_or(timestamp)
+                .0
+                .saturating_sub(timestamp.0);
+            if seconds < 60 {
+                format!("{seconds}s")
+            } else if seconds < 3_600 {
+                format!("{}m", seconds / 60)
+            } else if seconds < 86_400 {
+                format!("{}h", seconds / 3_600)
+            } else {
+                format!("{}d", seconds / 86_400)
+            }
+        })
+        .unwrap_or_else(|| "never".to_string())
+}
+
+fn workspace_dirty_style(summary: Option<&RepoSummary>, theme: Theme) -> Style {
+    match summary {
+        Some(summary) if summary.conflicted => Style::default()
+            .fg(theme.danger)
+            .add_modifier(Modifier::BOLD),
+        Some(summary) if summary.dirty => Style::default().fg(theme.danger),
+        Some(_) => Style::default().fg(theme.success),
+        None => Style::default().fg(theme.muted),
+    }
+}
+
+fn workspace_sync_style(summary: Option<&RepoSummary>, theme: Theme) -> Style {
+    match summary {
+        Some(summary) if summary.behind_count > 0 => Style::default()
+            .fg(theme.danger)
+            .add_modifier(Modifier::BOLD),
+        Some(summary) if summary.ahead_count > 0 => Style::default().fg(theme.accent),
+        Some(_) => Style::default().fg(theme.success),
+        None => Style::default().fg(theme.muted),
+    }
+}
+
+fn workspace_fetch_style(summary: Option<&RepoSummary>, theme: Theme) -> Style {
+    match summary {
+        Some(summary) if summary.last_fetch_at.is_none() => Style::default().fg(theme.danger),
+        Some(_) => Style::default().fg(theme.muted),
+        None => Style::default().fg(theme.muted),
+    }
+}
+
+fn pad_cell(value: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let truncated = truncate_cell(value, width);
+    format!("{truncated:<width$}")
+}
+
+fn truncate_cell(value: &str, width: usize) -> String {
+    let count = value.chars().count();
+    if count <= width {
+        return value.to_string();
+    }
+    if width <= 3 {
+        return ".".repeat(width);
+    }
+
+    let mut truncated = value.chars().take(width - 3).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
@@ -1294,6 +1635,10 @@ mod tests {
                 staged_count: 1,
                 unstaged_count: 2,
                 untracked_count: 3,
+                ahead_count: 4,
+                behind_count: 1,
+                last_fetch_at: Some(super_lazygit_core::Timestamp(60)),
+                last_refresh_at: Some(super_lazygit_core::Timestamp(180)),
                 ..Default::default()
             },
         );
@@ -1307,8 +1652,73 @@ mod tests {
         assert!(rendered.contains("Preview"));
         assert!(rendered.contains("WORKSPACE"));
         assert!(rendered.contains("Ready to inspect"));
+        assert!(rendered.contains("repos=1"));
+        assert!(rendered.contains("scan=idle"));
+        assert!(rendered.contains("REPO"));
+        assert!(rendered.contains("BR"));
+        assert!(rendered.contains("STATE"));
+        assert!(rendered.contains("AGE"));
         assert!(rendered.contains("repo-1"));
-        assert!(rendered.contains("dirty=true"));
+        assert!(rendered.contains("1/2/3 +4/-1"));
+        assert!(rendered.contains("2m"));
+    }
+
+    #[test]
+    fn render_workspace_shell_shows_wide_repo_table_columns() {
+        let mut state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1"), RepoId::new("repo-2")],
+                selected_repo_id: Some(RepoId::new("repo-2")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                dirty: false,
+                last_fetch_at: Some(super_lazygit_core::Timestamp(100)),
+                last_refresh_at: Some(super_lazygit_core::Timestamp(130)),
+                ..Default::default()
+            },
+        );
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-2"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-2"),
+                display_name: "repo-2".to_string(),
+                display_path: "/tmp/repo-2".to_string(),
+                branch: Some("feature/workspace-table".to_string()),
+                dirty: true,
+                staged_count: 2,
+                unstaged_count: 1,
+                untracked_count: 0,
+                ahead_count: 3,
+                behind_count: 2,
+                last_fetch_at: Some(super_lazygit_core::Timestamp(25)),
+                last_refresh_at: Some(super_lazygit_core::Timestamp(95)),
+                ..Default::default()
+            },
+        );
+
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(160, 22);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("REPO"));
+        assert!(rendered.contains("BRANCH"));
+        assert!(rendered.contains("DIRTY"));
+        assert!(rendered.contains("SYNC"));
+        assert!(rendered.contains("FETCH"));
+        assert!(rendered.contains("> repo-2"));
+        assert!(rendered.contains("2S 1U 0?"));
+        assert!(rendered.contains("+3/-2"));
+        assert!(rendered.contains("1m"));
     }
 
     #[test]
