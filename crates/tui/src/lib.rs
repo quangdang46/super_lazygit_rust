@@ -9,9 +9,9 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, Action, AppMode, AppState, CommitBoxMode, Diagnostics, DiagnosticsSnapshot,
-    DiffLineKind, DiffPresentation, Event, InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail,
-    RepoId, RepoSubview, RepoSummary,
+    reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, Diagnostics,
+    DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event, InputEvent, KeyPress, PaneId,
+    ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
 };
 
 #[derive(Debug)]
@@ -39,7 +39,8 @@ impl Default for Viewport {
 
 impl TuiApp {
     #[must_use]
-    pub fn new(state: AppState, config: AppConfig) -> Self {
+    pub fn new(mut state: AppState, config: AppConfig) -> Self {
+        state.workspace.ensure_visible_selection();
         Self {
             state,
             config,
@@ -163,6 +164,13 @@ impl TuiApp {
                     );
                     self.state = result.state.clone();
                     result
+                } else if self.workspace_search_focused() && !text.is_empty() {
+                    let result = reduce(
+                        self.state.clone(),
+                        Event::Action(Action::AppendWorkspaceSearch { text }),
+                    );
+                    self.state = result.state.clone();
+                    result
                 } else {
                     ReduceResult {
                         state: self.state.clone(),
@@ -214,17 +222,38 @@ impl TuiApp {
         }
 
         match self.state.mode {
-            AppMode::Workspace => self.route_workspace_key(&normalized),
+            AppMode::Workspace => self.route_workspace_key(raw, &normalized),
             AppMode::Repository => self.route_repo_key(trimmed, &normalized),
         }
     }
 
-    fn route_workspace_key(&self, key: &str) -> Option<Action> {
-        match key {
+    fn route_workspace_key(&self, raw: &str, normalized: &str) -> Option<Action> {
+        if self.workspace_search_focused() {
+            return match raw {
+                "esc" => Some(Action::CancelWorkspaceSearch),
+                "enter" => Some(Action::BlurWorkspaceSearch),
+                "backspace" => Some(Action::BackspaceWorkspaceSearch),
+                "space" | " " => Some(Action::AppendWorkspaceSearch {
+                    text: " ".to_string(),
+                }),
+                _ if raw.chars().count() == 1 => Some(Action::AppendWorkspaceSearch {
+                    text: raw.to_string(),
+                }),
+                _ => None,
+            };
+        }
+
+        match normalized {
+            "/" => Some(Action::FocusWorkspaceSearch),
             "j" | "down" => Some(Action::SelectNextRepo),
             "k" | "up" => Some(Action::SelectPreviousRepo),
             "l" | "right" => Some(Action::SetFocusedPane(PaneId::WorkspacePreview)),
             "h" | "left" => Some(Action::SetFocusedPane(PaneId::WorkspaceList)),
+            "f" => Some(Action::CycleWorkspaceFilter),
+            "s" => Some(Action::CycleWorkspaceSort),
+            "esc" if !self.state.workspace.search_query.is_empty() => {
+                Some(Action::CancelWorkspaceSearch)
+            }
             "enter" => self
                 .state
                 .workspace
@@ -387,6 +416,10 @@ impl TuiApp {
             })
     }
 
+    fn workspace_search_focused(&self) -> bool {
+        matches!(self.state.mode, AppMode::Workspace) && self.state.workspace.search_focused
+    }
+
     fn route_commit_box_key(&self, raw: &str) -> Option<Action> {
         match raw {
             "esc" => Some(Action::CancelCommitBox),
@@ -466,17 +499,17 @@ impl TuiApp {
 
     fn render_workspace_list(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let layout = workspace_table_layout(area.width.saturating_sub(2) as usize);
+        let repo_ids = self.state.workspace.visible_repo_ids();
         let mut lines = vec![
             Line::from(self.workspace_root_label()),
-            workspace_status_line(&self.state, theme),
+            workspace_status_line(&self.state, repo_ids.len(), theme),
             workspace_table_header(layout, theme),
         ];
-        let repo_ids = &self.state.workspace.discovered_repo_ids;
 
         if repo_ids.is_empty() {
-            lines.push(Line::from("No repositories discovered yet."));
+            lines.extend(workspace_empty_list_lines(&self.state));
         } else {
-            for repo_id in repo_ids {
+            for repo_id in &repo_ids {
                 let is_selected = self
                     .state
                     .workspace
@@ -508,6 +541,8 @@ impl TuiApp {
     fn render_workspace_preview(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let lines = if let Some(summary) = self.selected_summary() {
             workspace_preview_lines(summary)
+        } else if self.state.workspace.visible_repo_ids().is_empty() {
+            workspace_empty_preview_lines(&self.state)
         } else {
             vec![
                 Line::from("Preview"),
@@ -857,30 +892,6 @@ fn workspace_table_layout(width: usize) -> WorkspaceTableLayout {
     }
 }
 
-fn workspace_status_line(state: &AppState, theme: Theme) -> Line<'static> {
-    let scan = match &state.workspace.scan_status {
-        super_lazygit_core::ScanStatus::Idle => "idle".to_string(),
-        super_lazygit_core::ScanStatus::Scanning => "scanning".to_string(),
-        super_lazygit_core::ScanStatus::Complete { scanned_repos } => {
-            format!("ready:{scanned_repos}")
-        }
-        super_lazygit_core::ScanStatus::Failed { message } => {
-            format!("failed:{message}")
-        }
-    };
-
-    Line::from(vec![
-        Span::styled(
-            format!("repos={}", state.workspace.discovered_repo_ids.len()),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled(format!("scan={scan}"), Style::default().fg(theme.muted)),
-    ])
-}
-
 fn workspace_table_header(layout: WorkspaceTableLayout, theme: Theme) -> Line<'static> {
     let mut spans = vec![
         Span::styled(
@@ -1162,6 +1173,11 @@ fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
             summary.branch.as_deref().unwrap_or("detached")
         )),
         Line::from(format!(
+            "Attention: {}  Watcher: {:?}",
+            workspace_attention_score(Some(summary)),
+            summary.watcher_freshness
+        )),
+        Line::from(format!(
             "Changes: staged={} unstaged={} untracked={}",
             summary.staged_count, summary.unstaged_count, summary.untracked_count
         )),
@@ -1170,6 +1186,46 @@ fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
             remote, summary.ahead_count, summary.behind_count, summary.conflicted
         )),
         Line::from(format!("Fetch age: {}", fetch_age)),
+    ]
+}
+
+fn workspace_empty_list_lines(state: &AppState) -> Vec<Line<'static>> {
+    if state.workspace.discovered_repo_ids.is_empty() {
+        return vec![Line::from("No repositories discovered yet.")];
+    }
+
+    vec![
+        Line::from("No repositories match the current workspace triage settings."),
+        Line::from(format!(
+            "Filter={}  Search={}",
+            state.workspace.filter_mode.label(),
+            if state.workspace.search_query.is_empty() {
+                "-".to_string()
+            } else {
+                state.workspace.search_query.clone()
+            }
+        )),
+        Line::from("Press f to change filters, / to edit search, or Esc to clear search."),
+    ]
+}
+
+fn workspace_empty_preview_lines(state: &AppState) -> Vec<Line<'static>> {
+    vec![
+        Line::from("Preview"),
+        Line::from("No repositories are currently visible."),
+        Line::from(format!(
+            "Filter: {}  Sort: {}",
+            state.workspace.filter_mode.label(),
+            state.workspace.sort_mode.label()
+        )),
+        Line::from(format!(
+            "Search: {}",
+            if state.workspace.search_query.is_empty() {
+                "-".to_string()
+            } else {
+                state.workspace.search_query.clone()
+            }
+        )),
     ]
 }
 
@@ -1545,7 +1601,11 @@ fn help_text(state: &AppState) -> String {
 
     match state.mode {
         AppMode::Workspace => {
-            "j/k move  Enter open repo  Tab swap pane  ? help  r refresh".to_string()
+            if state.workspace.search_focused {
+                "Workspace search  type to filter  Paste insert  Backspace delete  Enter keep  Esc clear".to_string()
+            } else {
+                "j/k move  / search  f filter  s sort  Enter open repo  Tab swap pane  r refresh  ? help".to_string()
+            }
         }
         AppMode::Repository => repo_help_text(state),
     }
@@ -1768,7 +1828,19 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
 
 fn default_status_text(state: &AppState) -> String {
     match state.mode {
-        AppMode::Workspace => "Select a repository and press Enter to open repo mode.".to_string(),
+        AppMode::Workspace => {
+            if state.workspace.search_focused {
+                "Workspace search focused; type to filter repos, Enter keeps it, and Esc clears it."
+                    .to_string()
+            } else {
+                format!(
+                    "Workspace triage ready; {} repo(s) visible with {} sort and {} filter.",
+                    state.workspace.visible_repo_ids().len(),
+                    state.workspace.sort_mode.label(),
+                    state.workspace.filter_mode.label()
+                )
+            }
+        }
         AppMode::Repository => {
             if let Some(repo_mode) = state
                 .repo_mode
@@ -1860,6 +1932,62 @@ fn repo_help_text(state: &AppState) -> String {
     }
 }
 
+fn workspace_status_line(state: &AppState, visible_count: usize, theme: Theme) -> Line<'static> {
+    let scan = match &state.workspace.scan_status {
+        super_lazygit_core::ScanStatus::Idle => "idle".to_string(),
+        super_lazygit_core::ScanStatus::Scanning => "scanning".to_string(),
+        super_lazygit_core::ScanStatus::Complete { scanned_repos } => {
+            format!("ready:{scanned_repos}")
+        }
+        super_lazygit_core::ScanStatus::Failed { message } => {
+            format!("failed:{message}")
+        }
+    };
+
+    let search = if state.workspace.search_query.is_empty() {
+        "-".to_string()
+    } else {
+        truncate_cell(&state.workspace.search_query, 18)
+    };
+
+    Line::from(vec![
+        Span::styled(
+            format!(
+                "repos={visible_count}/{}",
+                state.workspace.discovered_repo_ids.len()
+            ),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("filter={}", state.workspace.filter_mode.label()),
+            Style::default().fg(theme.foreground),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("sort={}", state.workspace.sort_mode.label()),
+            Style::default().fg(theme.foreground),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!(
+                "search={}{}",
+                search,
+                if state.workspace.search_focused {
+                    "*"
+                } else {
+                    ""
+                }
+            ),
+            Style::default().fg(theme.foreground),
+        ),
+        Span::raw("  "),
+        Span::styled(format!("scan={scan}"), Style::default().fg(theme.muted)),
+    ])
+}
+
 fn parse_hex_color(hex: &str) -> Option<Color> {
     let hex = hex.strip_prefix('#').unwrap_or(hex);
     if hex.len() != 6 {
@@ -1893,7 +2021,8 @@ mod tests {
     use super::*;
     use super_lazygit_core::{
         CommitFileItem, CommitItem, ComparisonTarget, DiffLine, DiffLineKind, DiffModel,
-        FileStatus, FileStatusKind, ModalKind, RepoModeState, StatusMessage, WorkspaceState,
+        FileStatus, FileStatusKind, ModalKind, RepoModeState, StatusMessage, Timestamp,
+        WorkspaceFilterMode, WorkspaceState,
     };
 
     fn sample_repo_detail() -> RepoDetail {
@@ -2031,6 +2160,17 @@ mod tests {
         }
     }
 
+    fn workspace_repo_summary(repo_id: &str, display_name: &str) -> RepoSummary {
+        RepoSummary {
+            repo_id: RepoId::new(repo_id),
+            display_name: display_name.to_string(),
+            display_path: repo_id.to_string(),
+            real_path: PathBuf::from(repo_id),
+            branch: Some("main".to_string()),
+            ..RepoSummary::default()
+        }
+    }
+
     #[test]
     fn render_workspace_shell_shows_status_and_help() {
         let mut state = AppState {
@@ -2069,7 +2209,7 @@ mod tests {
         );
 
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(80, 20);
+        app.resize(120, 20);
 
         let rendered = app.render_to_string();
 
@@ -2078,7 +2218,7 @@ mod tests {
         assert!(rendered.contains("WORKSPACE"));
         assert!(rendered.contains("Ready to inspect"));
         assert!(rendered.contains("repos=1"));
-        assert!(rendered.contains("scan=idle"));
+        assert!(rendered.contains("filter=all"));
         assert!(rendered.contains("REPO"));
         assert!(rendered.contains("BR"));
         assert!(rendered.contains("STATE"));
@@ -2147,6 +2287,55 @@ mod tests {
     }
 
     #[test]
+    fn render_workspace_shell_uses_visible_repo_list_and_reports_triage_state() {
+        let repo_alpha = RepoId::new("/tmp/alpha");
+        let repo_beta = RepoId::new("/tmp/beta-service");
+        let repo_gamma = RepoId::new("/tmp/gamma");
+        let mut beta = workspace_repo_summary(&repo_beta.0, "beta");
+        beta.behind_count = 3;
+        beta.last_local_activity_at = Some(Timestamp(90));
+        beta.last_refresh_at = Some(Timestamp(120));
+        let mut gamma = workspace_repo_summary(&repo_gamma.0, "gamma");
+        gamma.dirty = true;
+        gamma.unstaged_count = 2;
+        gamma.last_refresh_at = Some(Timestamp(120));
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![
+                    repo_alpha.clone(),
+                    repo_beta.clone(),
+                    repo_gamma.clone(),
+                ],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (
+                        repo_alpha.clone(),
+                        workspace_repo_summary(&repo_alpha.0, "alpha"),
+                    ),
+                    (repo_beta.clone(), beta),
+                    (repo_gamma.clone(), gamma),
+                ]),
+                selected_repo_id: Some(repo_alpha),
+                filter_mode: WorkspaceFilterMode::BehindOnly,
+                search_query: "bta".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(180, 22);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("repos=1/3"));
+        assert!(rendered.contains("filter=behind"));
+        assert!(rendered.contains("sort=attention"));
+        assert!(rendered.contains("search=bta"));
+        assert!(rendered.contains("beta"));
+        assert!(!rendered.contains("gamma"));
+        assert!(rendered.contains("Attention:"));
+    }
+
+    #[test]
     fn route_workspace_enter_opens_repo_mode() {
         let state = AppState {
             workspace: WorkspaceState {
@@ -2165,6 +2354,77 @@ mod tests {
         assert_eq!(result.state.mode, AppMode::Repository);
         assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
         assert!(result.state.repo_mode.is_some());
+    }
+
+    #[test]
+    fn route_workspace_search_focus_paste_and_clear() {
+        let repo_alpha = RepoId::new("/tmp/alpha");
+        let repo_beta = RepoId::new("/tmp/beta");
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_alpha.clone(), repo_beta.clone()],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (
+                        repo_alpha.clone(),
+                        workspace_repo_summary(&repo_alpha.0, "alpha"),
+                    ),
+                    (
+                        repo_beta.clone(),
+                        workspace_repo_summary(&repo_beta.0, "beta"),
+                    ),
+                ]),
+                selected_repo_id: Some(repo_alpha.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let focused = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "/".to_string(),
+        })));
+        assert!(focused.state.workspace.search_focused);
+
+        let pasted = app.dispatch(Event::Input(InputEvent::Paste("bet".to_string())));
+        assert_eq!(pasted.state.workspace.search_query, "bet");
+        assert_eq!(
+            pasted.state.workspace.selected_repo_id,
+            Some(repo_beta.clone())
+        );
+        assert!(pasted.state.workspace.search_focused);
+
+        let blurred = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert!(!blurred.state.workspace.search_focused);
+        assert_eq!(blurred.state.workspace.search_query, "bet");
+
+        let cleared = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "esc".to_string(),
+        })));
+        assert!(cleared.state.workspace.search_query.is_empty());
+        assert_eq!(cleared.state.workspace.selected_repo_id, Some(repo_beta));
+    }
+
+    #[test]
+    fn route_workspace_filter_and_sort_keys_cycle_triage_modes() {
+        let mut app = TuiApp::new(AppState::default(), AppConfig::default());
+
+        let filter = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "f".to_string(),
+        })));
+        assert_eq!(
+            filter.state.workspace.filter_mode,
+            WorkspaceFilterMode::DirtyOnly
+        );
+
+        let sort = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "s".to_string(),
+        })));
+        assert_eq!(
+            sort.state.workspace.sort_mode,
+            super_lazygit_core::WorkspaceSortMode::Name
+        );
     }
 
     #[test]

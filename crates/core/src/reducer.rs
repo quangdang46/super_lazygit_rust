@@ -36,6 +36,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::EnterRepoMode { repo_id } => {
             state.mode = AppMode::Repository;
             state.focused_pane = PaneId::RepoUnstaged;
+            state.workspace.search_focused = false;
             state.workspace.selected_repo_id = Some(repo_id.clone());
             push_recent_repo(state, repo_id.clone());
             state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
@@ -49,6 +50,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::LeaveRepoMode => {
             state.mode = AppMode::Workspace;
             state.focused_pane = PaneId::WorkspaceList;
+            state.workspace.search_focused = false;
             state.repo_mode = None;
             effects.push(Effect::ScheduleRender);
         }
@@ -61,6 +63,46 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             if state.workspace.select_previous().is_some() {
                 effects.push(Effect::ScheduleRender);
             }
+        }
+        Action::FocusWorkspaceSearch => {
+            state.workspace.search_focused = true;
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::BlurWorkspaceSearch => {
+            state.workspace.search_focused = false;
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::CancelWorkspaceSearch => {
+            state.workspace.search_focused = false;
+            if !state.workspace.search_query.is_empty() {
+                state.workspace.search_query.clear();
+                state.workspace.ensure_visible_selection();
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::AppendWorkspaceSearch { text } => {
+            if !text.is_empty() {
+                state.workspace.search_focused = true;
+                state.workspace.search_query.push_str(&text);
+                state.workspace.ensure_visible_selection();
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::BackspaceWorkspaceSearch => {
+            if state.workspace.search_query.pop().is_some() {
+                state.workspace.ensure_visible_selection();
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::CycleWorkspaceFilter => {
+            state.workspace.filter_mode = state.workspace.filter_mode.cycle_next();
+            state.workspace.ensure_visible_selection();
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::CycleWorkspaceSort => {
+            state.workspace.sort_mode = state.workspace.sort_mode.cycle_next();
+            state.workspace.ensure_visible_selection();
+            effects.push(Effect::ScheduleRender);
         }
         Action::SelectNextStatusEntry => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
@@ -352,6 +394,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::ApplyWorkspaceScan(workspace) => {
             state.workspace = workspace;
+            state.workspace.ensure_visible_selection();
             effects.push(Effect::ScheduleRender);
         }
     }
@@ -370,10 +413,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 scanned_repos: state.workspace.discovered_repo_ids.len(),
             };
             state.workspace.last_full_refresh_at = Some(scanned_at);
-            if state.workspace.selected_repo_id.is_none() {
-                state.workspace.selected_repo_id =
-                    state.workspace.discovered_repo_ids.first().cloned();
-            }
+            state.workspace.ensure_visible_selection();
             effects.push(Effect::ConfigureWatcher {
                 repo_ids: state.workspace.discovered_repo_ids.clone(),
             });
@@ -400,6 +440,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 .workspace
                 .repo_summaries
                 .insert(summary.repo_id.clone(), summary);
+            state.workspace.ensure_visible_selection();
             effects.push(Effect::PersistCache);
             effects.push(Effect::ScheduleRender);
         }
@@ -1051,10 +1092,19 @@ mod tests {
         CommitItem, ComparisonTarget, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
         DiffModel, DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind,
         PaneId, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, SelectedHunk,
-        Timestamp, WatcherHealth,
+        Timestamp, WatcherHealth, WorkspaceFilterMode,
     };
 
     use super::reduce;
+
+    fn workspace_summary(repo_id: &str) -> RepoSummary {
+        RepoSummary {
+            repo_id: RepoId::new(repo_id),
+            display_name: repo_id.to_string(),
+            display_path: repo_id.to_string(),
+            ..RepoSummary::default()
+        }
+    }
 
     #[test]
     fn enter_repo_mode_creates_repo_state_and_load_effect() {
@@ -1124,6 +1174,75 @@ mod tests {
             Some(RepoId::new("a"))
         );
         assert_eq!(wrapped.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn workspace_search_actions_filter_and_preserve_query() {
+        let repo_alpha = RepoId::new("/tmp/alpha");
+        let repo_beta = RepoId::new("/tmp/beta");
+        let mut state = AppState::default();
+        state.workspace.discovered_repo_ids = vec![repo_alpha.clone(), repo_beta.clone()];
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_alpha.clone(), workspace_summary(&repo_alpha.0));
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_beta.clone(), workspace_summary(&repo_beta.0));
+        state.workspace.selected_repo_id = Some(repo_alpha.clone());
+
+        let focused = reduce(state, Event::Action(Action::FocusWorkspaceSearch));
+        assert!(focused.state.workspace.search_focused);
+
+        let appended = reduce(
+            focused.state,
+            Event::Action(Action::AppendWorkspaceSearch {
+                text: "bet".to_string(),
+            }),
+        );
+        assert_eq!(appended.state.workspace.search_query, "bet");
+        assert_eq!(
+            appended.state.workspace.selected_repo_id,
+            Some(repo_beta.clone())
+        );
+
+        let blurred = reduce(appended.state, Event::Action(Action::BlurWorkspaceSearch));
+        assert!(!blurred.state.workspace.search_focused);
+        assert_eq!(blurred.state.workspace.search_query, "bet");
+
+        let cancelled = reduce(blurred.state, Event::Action(Action::CancelWorkspaceSearch));
+        assert!(!cancelled.state.workspace.search_focused);
+        assert!(cancelled.state.workspace.search_query.is_empty());
+        assert_eq!(cancelled.state.workspace.selected_repo_id, Some(repo_beta));
+    }
+
+    #[test]
+    fn cycling_workspace_filter_reselects_first_visible_repo() {
+        let repo_clean = RepoId::new("/tmp/clean");
+        let repo_dirty = RepoId::new("/tmp/dirty");
+        let mut dirty_summary = workspace_summary(&repo_dirty.0);
+        dirty_summary.dirty = true;
+        let mut state = AppState::default();
+        state.workspace.discovered_repo_ids = vec![repo_clean.clone(), repo_dirty.clone()];
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_clean.clone(), workspace_summary(&repo_clean.0));
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_dirty.clone(), dirty_summary);
+        state.workspace.selected_repo_id = Some(repo_clean);
+
+        let result = reduce(state, Event::Action(Action::CycleWorkspaceFilter));
+
+        assert_eq!(
+            result.state.workspace.filter_mode,
+            WorkspaceFilterMode::DirtyOnly
+        );
+        assert_eq!(result.state.workspace.selected_repo_id, Some(repo_dirty));
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
@@ -1321,9 +1440,8 @@ mod tests {
     #[test]
     fn repo_summary_update_is_stored() {
         let summary = RepoSummary {
-            repo_id: RepoId::new("repo-1"),
             display_name: "Repo 1".to_string(),
-            ..RepoSummary::default()
+            ..workspace_summary("repo-1")
         };
 
         let result = reduce(
@@ -1341,6 +1459,37 @@ mod tests {
         assert_eq!(
             result.effects,
             vec![Effect::PersistCache, Effect::ScheduleRender]
+        );
+    }
+
+    #[test]
+    fn repo_scan_completion_respects_active_filter_selection() {
+        let mut state = AppState::default();
+        state.workspace.filter_mode = WorkspaceFilterMode::DirtyOnly;
+        state.workspace.selected_repo_id = Some(RepoId::new("/tmp/clean"));
+        state
+            .workspace
+            .repo_summaries
+            .insert(RepoId::new("/tmp/clean"), workspace_summary("/tmp/clean"));
+        let mut dirty = workspace_summary("/tmp/dirty");
+        dirty.dirty = true;
+        state
+            .workspace
+            .repo_summaries
+            .insert(RepoId::new("/tmp/dirty"), dirty);
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::RepoScanCompleted {
+                root: None,
+                repo_ids: vec![RepoId::new("/tmp/clean"), RepoId::new("/tmp/dirty")],
+                scanned_at: Timestamp(42),
+            }),
+        );
+
+        assert_eq!(
+            result.state.workspace.selected_repo_id,
+            Some(RepoId::new("/tmp/dirty"))
         );
     }
 
