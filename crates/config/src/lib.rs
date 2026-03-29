@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub workspace: WorkspaceConfig,
@@ -10,18 +10,6 @@ pub struct AppConfig {
     pub theme: ThemeConfig,
     pub keybindings: KeybindingConfig,
     pub diagnostics: DiagnosticsConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            workspace: WorkspaceConfig::default(),
-            editor: EditorConfig::default(),
-            theme: ThemeConfig::default(),
-            keybindings: KeybindingConfig::default(),
-            diagnostics: DiagnosticsConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,20 +44,11 @@ impl Default for EditorConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
     pub preset: ThemePreset,
     pub colors: ThemeColors,
-}
-
-impl Default for ThemeConfig {
-    fn default() -> Self {
-        Self {
-            preset: ThemePreset::default(),
-            colors: ThemeColors::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,18 +82,10 @@ impl Default for ThemeColors {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeybindingConfig {
     pub overrides: Vec<KeybindingOverride>,
-}
-
-impl Default for KeybindingConfig {
-    fn default() -> Self {
-        Self {
-            overrides: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

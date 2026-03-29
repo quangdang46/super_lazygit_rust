@@ -32,7 +32,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
     match action {
         Action::EnterRepoMode { repo_id } => {
             state.mode = AppMode::Repository;
-            state.focused_pane = PaneId::RepoStatus;
+            state.focused_pane = PaneId::RepoUnstaged;
             state.workspace.selected_repo_id = Some(repo_id.clone());
             push_recent_repo(state, repo_id.clone());
             state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
@@ -71,7 +71,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             if state.modal_stack.is_empty() {
                 state.focused_pane = match state.mode {
                     AppMode::Workspace => PaneId::WorkspaceList,
-                    AppMode::Repository => PaneId::RepoStatus,
+                    AppMode::Repository => PaneId::RepoUnstaged,
                 };
             }
             effects.push(Effect::ScheduleRender);
@@ -419,7 +419,7 @@ mod tests {
         );
 
         assert_eq!(result.state.mode, AppMode::Repository);
-        assert_eq!(result.state.focused_pane, PaneId::RepoStatus);
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
         assert_eq!(
             result.state.workspace.selected_repo_id,
             Some(repo_id.clone())
@@ -659,7 +659,7 @@ mod tests {
         let result = reduce(state, Event::Action(Action::CloseTopModal));
 
         assert!(result.state.modal_stack.is_empty());
-        assert_eq!(result.state.focused_pane, PaneId::RepoStatus);
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
     }
 
     #[test]

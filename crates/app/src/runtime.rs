@@ -68,6 +68,7 @@ impl AppRuntime {
         diagnostics.snapshot()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     #[must_use]
     pub fn app(&self) -> &TuiApp {
         &self.app

@@ -843,12 +843,12 @@ fn build_selected_patch(diff: &str, selections: &[SelectedHunk]) -> GitResult<St
 }
 
 fn parse_patch(diff: &str) -> GitResult<ParsedPatch> {
-    let mut lines = diff.lines();
+    let lines = diff.lines();
     let mut header_lines = Vec::new();
     let mut hunks = Vec::new();
     let mut current_hunk: Option<(SelectedHunk, String)> = None;
 
-    while let Some(line) = lines.next() {
+    for line in lines {
         if let Some(selection) = parse_hunk_header(line)? {
             if let Some((selection, raw)) = current_hunk.take() {
                 hunks.push(ParsedHunk { selection, raw });

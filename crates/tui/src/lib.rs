@@ -172,7 +172,8 @@ impl TuiApp {
     }
 
     fn route_key(&self, key: KeyPress) -> Option<Action> {
-        let normalized = key.key.trim().to_ascii_lowercase();
+        let trimmed = key.key.trim();
+        let normalized = trimmed.to_ascii_lowercase();
 
         if !self.state.modal_stack.is_empty() {
             return match normalized.as_str() {
@@ -198,7 +199,7 @@ impl TuiApp {
 
         match self.state.mode {
             AppMode::Workspace => self.route_workspace_key(&normalized),
-            AppMode::Repository => self.route_repo_key(&normalized),
+            AppMode::Repository => self.route_repo_key(trimmed, &normalized),
         }
     }
 
@@ -219,10 +220,14 @@ impl TuiApp {
         }
     }
 
-    fn route_repo_key(&self, key: &str) -> Option<Action> {
-        match key {
-            "h" | "left" => Some(Action::SetFocusedPane(PaneId::RepoStatus)),
-            "l" | "right" => Some(Action::SetFocusedPane(PaneId::RepoDetail)),
+    fn route_repo_key(&self, raw: &str, normalized: &str) -> Option<Action> {
+        if raw == "P" {
+            return Some(Action::PushCurrentBranch);
+        }
+
+        match normalized {
+            "h" | "left" => self.repo_focus_left_action(),
+            "l" | "right" => self.repo_focus_right_action(),
             "1" => Some(Action::SwitchRepoSubview(RepoSubview::Status)),
             "2" => Some(Action::SwitchRepoSubview(RepoSubview::Branches)),
             "3" => Some(Action::SwitchRepoSubview(RepoSubview::Commits)),
@@ -232,7 +237,6 @@ impl TuiApp {
             "r" => Some(Action::RefreshSelectedRepo),
             "f" => Some(Action::FetchSelectedRepo),
             "p" => Some(Action::PullCurrentBranch),
-            "P" => Some(Action::PushCurrentBranch),
             _ => None,
         }
     }
@@ -243,15 +247,47 @@ impl TuiApp {
                 PaneId::WorkspaceList => PaneId::WorkspacePreview,
                 _ => PaneId::WorkspaceList,
             })),
-            AppMode::Repository => Some(Action::SetFocusedPane(match self.state.focused_pane {
-                PaneId::RepoStatus => PaneId::RepoDetail,
-                _ => PaneId::RepoStatus,
-            })),
+            AppMode::Repository => Some(Action::SetFocusedPane(self.next_repo_pane())),
         }
     }
 
     fn previous_focus_action(&self) -> Option<Action> {
-        self.next_focus_action()
+        match self.state.mode {
+            AppMode::Workspace => self.next_focus_action(),
+            AppMode::Repository => Some(Action::SetFocusedPane(self.previous_repo_pane())),
+        }
+    }
+
+    fn next_repo_pane(&self) -> PaneId {
+        match self.state.focused_pane {
+            PaneId::RepoUnstaged => PaneId::RepoStaged,
+            PaneId::RepoStaged => PaneId::RepoDetail,
+            _ => PaneId::RepoUnstaged,
+        }
+    }
+
+    fn previous_repo_pane(&self) -> PaneId {
+        match self.state.focused_pane {
+            PaneId::RepoDetail => PaneId::RepoStaged,
+            PaneId::RepoStaged => PaneId::RepoUnstaged,
+            _ => PaneId::RepoDetail,
+        }
+    }
+
+    fn repo_focus_left_action(&self) -> Option<Action> {
+        Some(Action::SetFocusedPane(match self.state.focused_pane {
+            PaneId::RepoDetail => PaneId::RepoStaged,
+            PaneId::RepoStaged => PaneId::RepoUnstaged,
+            _ => PaneId::RepoUnstaged,
+        }))
+    }
+
+    fn repo_focus_right_action(&self) -> Option<Action> {
+        Some(Action::SetFocusedPane(match self.state.focused_pane {
+            PaneId::RepoUnstaged => PaneId::RepoStaged,
+            PaneId::RepoStaged => PaneId::RepoDetail,
+            _ => PaneId::RepoDetail,
+        }))
     }
 
     fn render_mode(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
@@ -268,9 +304,47 @@ impl TuiApp {
     }
 
     fn render_repo_shell(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
-        let panes = split_two_columns(area);
-        self.render_repo_status(panes[0], buffer, theme);
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(3)])
+            .split(area);
+        self.render_repo_header(layout[0], buffer, theme);
+
+        let panes = split_repo_columns(layout[1]);
+        let left = split_repo_left_column(panes[0]);
+        self.render_repo_unstaged(left[0], buffer, theme);
+        self.render_repo_staged(left[1], buffer, theme);
         self.render_repo_detail(panes[1], buffer, theme);
+    }
+
+    fn render_repo_header(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
+        let Some(repo_mode) = &self.state.repo_mode else {
+            return;
+        };
+
+        let title = self
+            .selected_summary()
+            .map(|summary| summary.display_name.as_str())
+            .unwrap_or(repo_mode.current_repo_id.0.as_str());
+        let lines = vec![
+            Line::from(format!(
+                "Repo: {}  Branch: {}",
+                title,
+                self.selected_summary()
+                    .and_then(|summary| summary.branch.as_deref())
+                    .unwrap_or("detached")
+            )),
+            Line::from(repo_subview_tabs(repo_mode.active_subview)),
+        ];
+
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title("Repository shell")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.muted)),
+            )
+            .render(area, buffer);
     }
 
     fn render_workspace_list(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
@@ -288,7 +362,7 @@ impl TuiApp {
                     .as_ref()
                     .is_some_and(|selected| selected == repo_id);
                 let summary = self.state.workspace.repo_summaries.get(repo_id);
-                lines.push(Line::from(repo_line(repo_id, summary, is_selected)));
+                lines.push(repo_line(repo_id, summary, is_selected));
             }
         }
 
@@ -322,54 +396,68 @@ impl TuiApp {
             .render(area, buffer);
     }
 
-    fn render_repo_status(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
+    fn render_repo_unstaged(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let Some(repo_mode) = &self.state.repo_mode else {
             Paragraph::new("Enter repo mode to inspect repository details.")
                 .block(
                     Block::default()
-                        .title("Repository")
+                        .title("Working tree")
                         .borders(Borders::ALL)
-                        .border_style(self.pane_style(PaneId::RepoStatus, theme)),
+                        .border_style(self.pane_style(PaneId::RepoUnstaged, theme)),
                 )
                 .render(area, buffer);
             return;
         };
 
-        let summary = self.selected_summary();
-        let mut lines = vec![
-            Line::from(format!("Repo: {}", repo_mode.current_repo_id.0)),
-            Line::from(format!("Subview: {:?}", repo_mode.active_subview)),
-            Line::from(format!("Focus: {:?}", self.state.focused_pane)),
-        ];
-        if let Some(summary) = summary {
-            lines.extend(workspace_preview_lines(summary));
-        }
-        lines.push(Line::from(format!(
-            "Progress: {}",
-            operation_progress_label(&repo_mode.operation_progress)
-        )));
+        let lines = repo_unstaged_lines(
+            self.selected_summary(),
+            self.state.focused_pane == PaneId::RepoUnstaged,
+            &repo_mode.operation_progress,
+        );
 
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Repo status")
+                    .title("Working tree")
                     .borders(Borders::ALL)
-                    .border_style(self.pane_style(PaneId::RepoStatus, theme)),
+                    .border_style(self.pane_style(PaneId::RepoUnstaged, theme)),
+            )
+            .render(area, buffer);
+    }
+
+    fn render_repo_staged(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
+        let lines = repo_staged_lines(
+            self.selected_summary(),
+            self.state.focused_pane == PaneId::RepoStaged,
+        );
+
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title("Staged changes")
+                    .borders(Borders::ALL)
+                    .border_style(self.pane_style(PaneId::RepoStaged, theme)),
             )
             .render(area, buffer);
     }
 
     fn render_repo_detail(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
-        let lines = if let Some(repo_mode) = &self.state.repo_mode {
-            repo_detail_lines(repo_mode.active_subview, repo_mode.detail.as_ref())
+        let (title, lines) = if let Some(repo_mode) = &self.state.repo_mode {
+            (
+                format!("Detail: {}", repo_subview_label(repo_mode.active_subview)),
+                repo_detail_lines(repo_mode.active_subview, repo_mode.detail.as_ref()),
+            )
         } else {
-            vec![Line::from("Repository detail will appear here.")]
+            (
+                "Detail".to_string(),
+                vec![Line::from("Repository detail will appear here.")],
+            )
         };
 
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Repo detail")
+                    .title(title)
                     .borders(Borders::ALL)
                     .border_style(self.pane_style(PaneId::RepoDetail, theme)),
             )
@@ -456,12 +544,24 @@ impl Theme {
 }
 
 fn split_two_columns(area: Rect) -> std::rc::Rc<[Rect]> {
-    std::rc::Rc::from(
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(area),
-    )
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(area)
+}
+
+fn split_repo_columns(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(area)
+}
+
+fn split_repo_left_column(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area)
 }
 
 fn centered_rect(area: Rect, width_percent: u16, height_percent: u16) -> Rect {
@@ -538,30 +638,49 @@ fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
 
 fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<Line<'static>> {
     match subview {
-        RepoSubview::Status => vec![Line::from(format!(
-            "Files: {}",
-            detail.map_or(0, |detail| detail.file_tree.len())
-        ))],
-        RepoSubview::Branches => vec![Line::from(format!(
-            "Branches: {}",
-            detail.map_or(0, |detail| detail.branches.len())
-        ))],
-        RepoSubview::Commits => vec![Line::from(format!(
-            "Commits: {}",
-            detail.map_or(0, |detail| detail.commits.len())
-        ))],
-        RepoSubview::Stash => vec![Line::from(format!(
-            "Stashes: {}",
-            detail.map_or(0, |detail| detail.stashes.len())
-        ))],
-        RepoSubview::Reflog => vec![Line::from(format!(
-            "Reflog entries: {}",
-            detail.map_or(0, |detail| detail.reflog_items.len())
-        ))],
-        RepoSubview::Worktrees => vec![Line::from(format!(
-            "Worktrees: {}",
-            detail.map_or(0, |detail| detail.worktrees.len())
-        ))],
+        RepoSubview::Status => vec![
+            Line::from(format!(
+                "Files: {}",
+                detail.map_or(0, |detail| detail.file_tree.len())
+            )),
+            Line::from("Diff viewer and tree interactions land in the next repo-mode beads."),
+            Line::from("Focus here for status details."),
+        ],
+        RepoSubview::Branches => vec![
+            Line::from(format!(
+                "Branches: {}",
+                detail.map_or(0, |detail| detail.branches.len())
+            )),
+            Line::from("Checkout and branch management land after the shell bead."),
+        ],
+        RepoSubview::Commits => vec![
+            Line::from(format!(
+                "Commits: {}",
+                detail.map_or(0, |detail| detail.commits.len())
+            )),
+            Line::from("Commit history preview plugs into this pane next."),
+        ],
+        RepoSubview::Stash => vec![
+            Line::from(format!(
+                "Stashes: {}",
+                detail.map_or(0, |detail| detail.stashes.len())
+            )),
+            Line::from("Stash flows are staged behind this shell scaffold."),
+        ],
+        RepoSubview::Reflog => vec![
+            Line::from(format!(
+                "Reflog entries: {}",
+                detail.map_or(0, |detail| detail.reflog_items.len())
+            )),
+            Line::from("Recovery-oriented navigation lands in later beads."),
+        ],
+        RepoSubview::Worktrees => vec![
+            Line::from(format!(
+                "Worktrees: {}",
+                detail.map_or(0, |detail| detail.worktrees.len())
+            )),
+            Line::from("Worktree creation and removal reuse this detail shell."),
+        ],
     }
 }
 
@@ -595,7 +714,7 @@ fn status_text(state: &AppState) -> String {
                 .back()
                 .map(|notification| notification.text.clone())
         })
-        .unwrap_or_else(|| "Ready".to_string())
+        .unwrap_or_else(|| default_status_text(state))
 }
 
 fn help_text(state: &AppState) -> String {
@@ -607,10 +726,142 @@ fn help_text(state: &AppState) -> String {
         AppMode::Workspace => {
             "j/k move  Enter open repo  Tab swap pane  ? help  r refresh".to_string()
         }
-        AppMode::Repository => {
-            "h/l focus  1-6 subviews  f fetch  p pull  P push  Esc workspace  Tab swap pane  ? help"
-                .to_string()
+        AppMode::Repository => repo_help_text(state),
+    }
+}
+
+fn repo_unstaged_lines(
+    summary: Option<&RepoSummary>,
+    is_focused: bool,
+    progress: &super_lazygit_core::OperationProgress,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(if is_focused {
+        "Focus here for status-tree navigation."
+    } else {
+        "Move focus here to inspect working tree changes."
+    })];
+
+    if let Some(summary) = summary {
+        lines.push(Line::from(format!("Modified: {}", summary.unstaged_count)));
+        lines.push(Line::from(format!(
+            "Untracked: {}",
+            summary.untracked_count
+        )));
+        lines.push(Line::from(format!(
+            "Conflicts: {}",
+            if summary.conflicted { "yes" } else { "no" }
+        )));
+        lines.push(Line::from(format!(
+            "Progress: {}",
+            operation_progress_label(progress)
+        )));
+    } else {
+        lines.push(Line::from("Summary pending..."));
+    }
+
+    lines
+}
+
+fn repo_staged_lines(summary: Option<&RepoSummary>, is_focused: bool) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(if is_focused {
+        "Focus here for staging and commit prep."
+    } else {
+        "Move focus here to prep staged work."
+    })];
+
+    if let Some(summary) = summary {
+        lines.push(Line::from(format!("Staged: {}", summary.staged_count)));
+        lines.push(Line::from(format!(
+            "Branch: {}",
+            summary.branch.as_deref().unwrap_or("detached")
+        )));
+        lines.push(Line::from(format!(
+            "Remote delta: +{} / -{}",
+            summary.ahead_count, summary.behind_count
+        )));
+    } else {
+        lines.push(Line::from("Summary pending..."));
+    }
+
+    lines
+}
+
+fn repo_subview_label(subview: RepoSubview) -> &'static str {
+    match subview {
+        RepoSubview::Status => "Status",
+        RepoSubview::Branches => "Branches",
+        RepoSubview::Commits => "Commits",
+        RepoSubview::Stash => "Stash",
+        RepoSubview::Reflog => "Reflog",
+        RepoSubview::Worktrees => "Worktrees",
+    }
+}
+
+fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
+    let all = [
+        (RepoSubview::Status, "1 Status"),
+        (RepoSubview::Branches, "2 Branches"),
+        (RepoSubview::Commits, "3 Commits"),
+        (RepoSubview::Stash, "4 Stash"),
+        (RepoSubview::Reflog, "5 Reflog"),
+        (RepoSubview::Worktrees, "6 Worktrees"),
+    ];
+
+    let mut spans = Vec::with_capacity(all.len() * 2);
+    for (index, (subview, label)) in all.iter().enumerate() {
+        let rendered = if *subview == active {
+            format!("[{label}]")
+        } else {
+            label.to_string()
+        };
+        spans.push(Span::raw(rendered));
+        if index + 1 < all.len() {
+            spans.push(Span::raw("  "));
         }
+    }
+    spans
+}
+
+fn default_status_text(state: &AppState) -> String {
+    match state.mode {
+        AppMode::Workspace => "Select a repository and press Enter to open repo mode.".to_string(),
+        AppMode::Repository => match state.focused_pane {
+            PaneId::RepoUnstaged => {
+                "Working tree focus; file actions attach here in the next beads.".to_string()
+            }
+            PaneId::RepoStaged => {
+                "Staged focus; commit and amend flows attach to this pane.".to_string()
+            }
+            PaneId::RepoDetail => format!(
+                "{} detail focus; deeper interactions are staged behind the shell bead.",
+                state
+                    .repo_mode
+                    .as_ref()
+                    .map(|repo_mode| repo_subview_label(repo_mode.active_subview))
+                    .unwrap_or("Repo")
+            ),
+            _ => "Repository shell ready.".to_string(),
+        },
+    }
+}
+
+fn repo_help_text(state: &AppState) -> String {
+    match state.focused_pane {
+        PaneId::RepoUnstaged => {
+            "Working tree pane  l next pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+        }
+        PaneId::RepoStaged => {
+            "Staged pane  h/l change pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+        }
+        PaneId::RepoDetail => format!(
+            "{} detail pane  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
+            state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_subview_label(repo_mode.active_subview))
+                .unwrap_or("Repo")
+        ),
+        _ => "Repository shell".to_string(),
     }
 }
 
@@ -708,7 +959,7 @@ mod tests {
         })));
 
         assert_eq!(result.state.mode, AppMode::Repository);
-        assert_eq!(result.state.focused_pane, PaneId::RepoStatus);
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
         assert!(result.state.repo_mode.is_some());
     }
 
@@ -754,7 +1005,7 @@ mod tests {
     fn repo_mode_routes_subviews_and_focus() {
         let state = AppState {
             mode: AppMode::Repository,
-            focused_pane: PaneId::RepoStatus,
+            focused_pane: PaneId::RepoUnstaged,
             repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
             ..Default::default()
         };
@@ -772,6 +1023,52 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_cycles_focus_across_three_panes() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let staged = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "tab".to_string(),
+        })));
+        assert_eq!(staged.state.focused_pane, PaneId::RepoStaged);
+
+        let detail = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "tab".to_string(),
+        })));
+        assert_eq!(detail.state.focused_pane, PaneId::RepoDetail);
+
+        let back = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "shift+tab".to_string(),
+        })));
+        assert_eq!(back.state.focused_pane, PaneId::RepoStaged);
+    }
+
+    #[test]
+    fn repo_mode_routes_uppercase_push() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "P".to_string(),
+        })));
+
+        assert!(result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunGitCommand(_))));
+    }
+
+    #[test]
     fn diagnostics_snapshot_includes_render_samples() {
         let mut app = TuiApp::new(AppState::default(), AppConfig::default());
 
@@ -781,14 +1078,24 @@ mod tests {
     }
 
     #[test]
-    fn render_repo_detail_uses_loaded_detail_counts() {
-        let state = AppState {
+    fn render_repo_shell_shows_three_pane_scaffold() {
+        let mut state = AppState {
             mode: AppMode::Repository,
-            focused_pane: PaneId::RepoDetail,
+            focused_pane: PaneId::RepoUnstaged,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
             repo_mode: Some(RepoModeState {
                 current_repo_id: RepoId::new("repo-1"),
-                active_subview: RepoSubview::Branches,
+                active_subview: RepoSubview::Status,
                 detail: Some(RepoDetail {
+                    file_tree: vec![Default::default()],
                     branches: vec![Default::default(), Default::default()],
                     ..Default::default()
                 }),
@@ -796,11 +1103,30 @@ mod tests {
             }),
             ..Default::default()
         };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                staged_count: 2,
+                unstaged_count: 3,
+                untracked_count: 1,
+                ahead_count: 1,
+                behind_count: 0,
+                ..Default::default()
+            },
+        );
         let mut app = TuiApp::new(state, AppConfig::default());
         app.resize(80, 20);
 
         let rendered = app.render_to_string();
 
-        assert!(rendered.contains("Branches: 2"));
+        assert!(rendered.contains("Working tree"));
+        assert!(rendered.contains("Staged changes"));
+        assert!(rendered.contains("Detail: Status"));
+        assert!(rendered.contains("Modified: 3"));
+        assert!(rendered.contains("Repository shell"));
     }
 }

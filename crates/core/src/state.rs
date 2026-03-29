@@ -29,7 +29,8 @@ pub enum PaneId {
     #[default]
     WorkspaceList,
     WorkspacePreview,
-    RepoStatus,
+    RepoUnstaged,
+    RepoStaged,
     RepoDetail,
     Modal,
 }
@@ -391,17 +392,12 @@ pub struct WorktreeItem {
     pub branch: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MergeState {
+    #[default]
     None,
     MergeInProgress,
     RebaseInProgress,
-}
-
-impl Default for MergeState {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
