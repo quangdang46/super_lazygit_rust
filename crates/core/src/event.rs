@@ -26,6 +26,10 @@ pub struct KeyPress {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkerEvent {
+    RepoScanFailed {
+        root: Option<std::path::PathBuf>,
+        error: String,
+    },
     RepoScanCompleted {
         root: Option<std::path::PathBuf>,
         repo_ids: Vec<RepoId>,

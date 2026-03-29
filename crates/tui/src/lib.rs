@@ -542,6 +542,8 @@ impl TuiApp {
     fn render_workspace_preview(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let lines = if let Some(summary) = self.selected_summary() {
             workspace_preview_lines(summary)
+        } else if let Some(repo_id) = self.state.workspace.selected_repo_id.as_ref() {
+            workspace_pending_preview_lines(repo_id, &self.state)
         } else if self.state.workspace.visible_repo_ids().is_empty() {
             workspace_empty_preview_lines(&self.state)
         } else {
@@ -1041,6 +1043,9 @@ fn workspace_repo_line(
 }
 
 fn workspace_dirty_cell(summary: &RepoSummary, compact: bool) -> String {
+    if summary.last_error.is_some() {
+        return "error".to_string();
+    }
     if summary.conflicted {
         return "conflict".to_string();
     }
@@ -1093,6 +1098,9 @@ fn workspace_fetch_age(summary: &RepoSummary) -> String {
 
 fn workspace_dirty_style(summary: Option<&RepoSummary>, theme: Theme) -> Style {
     match summary {
+        Some(summary) if summary.last_error.is_some() => Style::default()
+            .fg(theme.danger)
+            .add_modifier(Modifier::BOLD),
         Some(summary) if summary.conflicted => Style::default()
             .fg(theme.danger)
             .add_modifier(Modifier::BOLD),
@@ -1167,7 +1175,7 @@ fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
         })
         .unwrap_or_else(|| "never".to_string());
 
-    vec![
+    let mut lines = vec![
         Line::from(format!("Path: {}", summary.display_path)),
         Line::from(format!(
             "Branch: {}",
@@ -1187,12 +1195,51 @@ fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
             remote, summary.ahead_count, summary.behind_count, summary.conflicted
         )),
         Line::from(format!("Fetch age: {}", fetch_age)),
+    ];
+    if let Some(error) = summary.last_error.as_deref() {
+        lines.push(Line::from(format!("Last error: {error}")));
+    }
+    lines
+}
+
+fn workspace_pending_preview_lines(repo_id: &RepoId, state: &AppState) -> Vec<Line<'static>> {
+    vec![
+        Line::from("Preview"),
+        Line::from(format!("Repo: {}", repo_id.0)),
+        Line::from("State: waiting for repository summary"),
+        Line::from(format!(
+            "Scan: {}",
+            workspace_scan_label(&state.workspace.scan_status)
+        )),
+        Line::from("Refresh this workspace with r if the row stays pending."),
     ]
 }
 
 fn workspace_empty_list_lines(state: &AppState) -> Vec<Line<'static>> {
+    match &state.workspace.scan_status {
+        super_lazygit_core::ScanStatus::Scanning
+            if state.workspace.discovered_repo_ids.is_empty() =>
+        {
+            return vec![
+                Line::from("Scanning workspace for repositories..."),
+                Line::from("The table will populate as soon as the scan completes."),
+            ];
+        }
+        super_lazygit_core::ScanStatus::Failed { message } => {
+            return vec![
+                Line::from("Workspace scan failed."),
+                Line::from(format!("Reason: {message}")),
+                Line::from("Press r to retry the scan."),
+            ];
+        }
+        _ => {}
+    }
+
     if state.workspace.discovered_repo_ids.is_empty() {
-        return vec![Line::from("No repositories discovered yet.")];
+        return vec![
+            Line::from("No repositories were found under the current workspace root."),
+            Line::from("Press r to rescan after changing the workspace contents."),
+        ];
     }
 
     vec![
@@ -1211,23 +1258,40 @@ fn workspace_empty_list_lines(state: &AppState) -> Vec<Line<'static>> {
 }
 
 fn workspace_empty_preview_lines(state: &AppState) -> Vec<Line<'static>> {
-    vec![
-        Line::from("Preview"),
-        Line::from("No repositories are currently visible."),
-        Line::from(format!(
-            "Filter: {}  Sort: {}",
-            state.workspace.filter_mode.label(),
-            state.workspace.sort_mode.label()
-        )),
-        Line::from(format!(
-            "Search: {}",
-            if state.workspace.search_query.is_empty() {
-                "-".to_string()
-            } else {
-                state.workspace.search_query.clone()
-            }
-        )),
-    ]
+    match &state.workspace.scan_status {
+        super_lazygit_core::ScanStatus::Scanning
+            if state.workspace.discovered_repo_ids.is_empty() =>
+        {
+            vec![
+                Line::from("Preview"),
+                Line::from("Workspace scan in progress."),
+                Line::from("A repository preview will appear when the first summary arrives."),
+            ]
+        }
+        super_lazygit_core::ScanStatus::Failed { message } => vec![
+            Line::from("Preview"),
+            Line::from("Workspace scan failed."),
+            Line::from(format!("Reason: {message}")),
+            Line::from("Press r to retry."),
+        ],
+        _ => vec![
+            Line::from("Preview"),
+            Line::from("No repositories are currently visible."),
+            Line::from(format!(
+                "Filter: {}  Sort: {}",
+                state.workspace.filter_mode.label(),
+                state.workspace.sort_mode.label()
+            )),
+            Line::from(format!(
+                "Search: {}",
+                if state.workspace.search_query.is_empty() {
+                    "-".to_string()
+                } else {
+                    state.workspace.search_query.clone()
+                }
+            )),
+        ],
+    }
 }
 
 fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<Line<'static>> {
@@ -1934,16 +1998,8 @@ fn repo_help_text(state: &AppState) -> String {
 }
 
 fn workspace_status_line(state: &AppState, visible_count: usize, theme: Theme) -> Line<'static> {
-    let scan = match &state.workspace.scan_status {
-        super_lazygit_core::ScanStatus::Idle => "idle".to_string(),
-        super_lazygit_core::ScanStatus::Scanning => "scanning".to_string(),
-        super_lazygit_core::ScanStatus::Complete { scanned_repos } => {
-            format!("ready:{scanned_repos}")
-        }
-        super_lazygit_core::ScanStatus::Failed { message } => {
-            format!("failed:{message}")
-        }
-    };
+    let scan = workspace_scan_label(&state.workspace.scan_status);
+    let issues = workspace_repo_issue_count(state);
 
     let search = if state.workspace.search_query.is_empty() {
         "-".to_string()
@@ -1993,8 +2049,47 @@ fn workspace_status_line(state: &AppState, visible_count: usize, theme: Theme) -
             workspace_watch_style(&state.workspace.watcher_health, theme),
         ),
         Span::raw("  "),
+        Span::styled(
+            format!("issues={issues}"),
+            if issues == 0 {
+                Style::default().fg(theme.muted)
+            } else {
+                Style::default()
+                    .fg(theme.danger)
+                    .add_modifier(Modifier::BOLD)
+            },
+        ),
+        Span::raw("  "),
         Span::styled(format!("scan={scan}"), Style::default().fg(theme.muted)),
     ])
+}
+
+fn workspace_scan_label(scan_status: &super_lazygit_core::ScanStatus) -> String {
+    match scan_status {
+        super_lazygit_core::ScanStatus::Idle => "idle".to_string(),
+        super_lazygit_core::ScanStatus::Scanning => "scanning".to_string(),
+        super_lazygit_core::ScanStatus::Complete { scanned_repos } => {
+            format!("ready:{scanned_repos}")
+        }
+        super_lazygit_core::ScanStatus::Failed { message } => {
+            format!("failed:{}", truncate_cell(message, 18))
+        }
+    }
+}
+
+fn workspace_repo_issue_count(state: &AppState) -> usize {
+    state
+        .workspace
+        .discovered_repo_ids
+        .iter()
+        .filter(|repo_id| {
+            state
+                .workspace
+                .repo_summaries
+                .get(*repo_id)
+                .is_none_or(|summary| summary.last_error.is_some())
+        })
+        .count()
 }
 
 fn watcher_health_label(health: &super_lazygit_core::WatcherHealth) -> &'static str {
@@ -2357,6 +2452,7 @@ mod tests {
         assert!(rendered.contains("filter=behind"));
         assert!(rendered.contains("sort=attention"));
         assert!(rendered.contains("search=bta"));
+        assert!(rendered.contains("issues=0"));
         assert!(rendered.contains("beta"));
         assert!(!rendered.contains("gamma"));
         assert!(rendered.contains("Attention:"));
@@ -2386,6 +2482,145 @@ mod tests {
 
         assert!(rendered.contains("watch=polling"));
         assert!(rendered.contains("Watcher: Stale"));
+    }
+
+    #[test]
+    fn render_workspace_shell_shows_scanning_pending_preview() {
+        let repo_id = RepoId::new("/tmp/repo-pending");
+        let state = AppState {
+            workspace: WorkspaceState {
+                current_root: Some(PathBuf::from("/tmp/workspace")),
+                discovered_repo_ids: vec![repo_id.clone()],
+                selected_repo_id: Some(repo_id),
+                scan_status: super_lazygit_core::ScanStatus::Scanning,
+                ..WorkspaceState::default()
+            },
+            ..AppState::default()
+        };
+        let theme = Theme::from_config(&AppConfig::default());
+        let status_line = workspace_status_line(&state, 1, theme);
+        let status_text = status_line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let preview_lines = workspace_pending_preview_lines(
+            state
+                .workspace
+                .selected_repo_id
+                .as_ref()
+                .expect("selected repo"),
+            &state,
+        );
+        let preview_text = preview_lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(status_text.contains("scan=scanning"));
+        assert!(status_text.contains("issues=1"));
+        assert!(preview_text.contains("State: waiting for repository summary"));
+    }
+
+    #[test]
+    fn render_workspace_shell_shows_scan_failure_empty_state() {
+        let state = AppState {
+            workspace: WorkspaceState {
+                current_root: Some(PathBuf::from("/tmp/workspace")),
+                scan_status: super_lazygit_core::ScanStatus::Failed {
+                    message: "permission denied".to_string(),
+                },
+                ..WorkspaceState::default()
+            },
+            ..AppState::default()
+        };
+        let theme = Theme::from_config(&AppConfig::default());
+        let status_line = workspace_status_line(&state, 0, theme);
+        let status_text = status_line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let empty_text = workspace_empty_list_lines(&state)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(empty_text.contains("Workspace scan failed."));
+        assert!(empty_text.contains("Reason: permission denied"));
+        assert!(status_text.contains("scan=failed:permission denied"));
+    }
+
+    #[test]
+    fn render_workspace_preview_surfaces_summary_errors() {
+        let repo_id = RepoId::new("/tmp/repo-error");
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                selected_repo_id: Some(repo_id.clone()),
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id,
+                        display_name: "repo-error".to_string(),
+                        display_path: "/tmp/repo-error".to_string(),
+                        real_path: PathBuf::from("/tmp/repo-error"),
+                        last_error: Some("summary refresh failed".to_string()),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                scan_status: super_lazygit_core::ScanStatus::Complete { scanned_repos: 1 },
+                ..WorkspaceState::default()
+            },
+            ..AppState::default()
+        };
+        let theme = Theme::from_config(&AppConfig::default());
+        let status_line = workspace_status_line(&state, 1, theme);
+        let status_text = status_line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let preview_text = workspace_preview_lines(
+            state
+                .workspace
+                .repo_summaries
+                .get(&RepoId::new("/tmp/repo-error"))
+                .expect("summary"),
+        )
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+        let dirty = workspace_dirty_cell(
+            state
+                .workspace
+                .repo_summaries
+                .get(&RepoId::new("/tmp/repo-error"))
+                .expect("summary"),
+            false,
+        );
+
+        assert!(preview_text.contains("Last error: summary refresh failed"));
+        assert!(status_text.contains("issues=1"));
+        assert_eq!(dirty, "error");
     }
 
     #[test]

@@ -226,6 +226,8 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::RefreshVisibleRepos => {
+            state.workspace.scan_status = ScanStatus::Scanning;
+            effects.push(Effect::ScheduleRender);
             effects.push(Effect::StartRepoScan);
         }
         Action::StageSelection => {
@@ -402,6 +404,21 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
 
 fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut Vec<Effect>) {
     match event {
+        WorkerEvent::RepoScanFailed { root, error } => {
+            if let Some(root) = root {
+                state.workspace.current_root = Some(root);
+            }
+            state.workspace.scan_status = ScanStatus::Failed {
+                message: error.clone(),
+            };
+            state.notifications.push_back(Notification {
+                id: 0,
+                level: MessageLevel::Error,
+                text: format!("Workspace scan failed: {error}"),
+                expires_at: None,
+            });
+            effects.push(Effect::ScheduleRender);
+        }
         WorkerEvent::RepoScanCompleted {
             root,
             repo_ids,
@@ -456,9 +473,12 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     error: error.clone(),
                 },
             );
-            if let Some(summary) = state.workspace.repo_summaries.get_mut(&repo_id) {
-                summary.last_error = Some(error.clone());
-            }
+            let summary = state
+                .workspace
+                .repo_summaries
+                .entry(repo_id.clone())
+                .or_insert_with(|| repo_summary_placeholder(&repo_id));
+            summary.last_error = Some(error.clone());
             state.notifications.push_back(Notification {
                 id: 0,
                 level: MessageLevel::Error,
@@ -982,6 +1002,23 @@ fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> E
     }
 }
 
+fn repo_summary_placeholder(repo_id: &crate::state::RepoId) -> crate::state::RepoSummary {
+    let display_name = std::path::Path::new(&repo_id.0)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(repo_id.0.as_str())
+        .to_string();
+    crate::state::RepoSummary {
+        repo_id: repo_id.clone(),
+        display_name,
+        real_path: std::path::PathBuf::from(&repo_id.0),
+        display_path: repo_id.0.clone(),
+        watcher_freshness: crate::state::WatcherFreshness::Stale,
+        ..crate::state::RepoSummary::default()
+    }
+}
+
 fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequest {
     let job_id = JobId::new(format!("git:{}:{}", repo_id.0, job_suffix(&command)));
     GitCommandRequest {
@@ -1123,8 +1160,8 @@ mod tests {
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
         CommitItem, ComparisonTarget, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
         DiffModel, DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind,
-        PaneId, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, SelectedHunk,
-        Timestamp, WatcherHealth, WorkspaceFilterMode,
+        PaneId, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, ScanStatus,
+        SelectedHunk, Timestamp, WatcherHealth, WorkspaceFilterMode,
     };
 
     use super::reduce;
@@ -1651,13 +1688,70 @@ mod tests {
     }
 
     #[test]
-    fn refresh_visible_repos_emits_scan_effect() {
+    fn refresh_visible_repos_marks_workspace_scanning_and_emits_scan_effect() {
         let result = reduce(
             AppState::default(),
             Event::Action(Action::RefreshVisibleRepos),
         );
 
-        assert_eq!(result.effects, vec![Effect::StartRepoScan]);
+        assert_eq!(result.state.workspace.scan_status, ScanStatus::Scanning);
+        assert_eq!(
+            result.effects,
+            vec![Effect::ScheduleRender, Effect::StartRepoScan]
+        );
+    }
+
+    #[test]
+    fn repo_scan_failed_marks_workspace_failed_and_keeps_existing_rows() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let mut state = AppState::default();
+        state.workspace.current_root = Some(std::path::PathBuf::from("/tmp/workspace"));
+        state.workspace.discovered_repo_ids = vec![repo_id.clone()];
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_id.clone(), workspace_summary(&repo_id.0));
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::RepoScanFailed {
+                root: Some(std::path::PathBuf::from("/tmp/workspace")),
+                error: "permission denied".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            result.state.workspace.scan_status,
+            ScanStatus::Failed {
+                message: "permission denied".to_string(),
+            }
+        );
+        assert_eq!(result.state.workspace.discovered_repo_ids, vec![repo_id]);
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn repo_summary_refresh_failed_creates_placeholder_summary_for_missing_repo() {
+        let repo_id = RepoId::new("/tmp/missing-summary");
+        let job_id = JobId::new("summary-refresh:/tmp/missing-summary");
+
+        let result = reduce(
+            AppState::default(),
+            Event::Worker(WorkerEvent::RepoSummaryRefreshFailed {
+                job_id,
+                repo_id: repo_id.clone(),
+                error: "repo summary failed".to_string(),
+            }),
+        );
+
+        let summary = result
+            .state
+            .workspace
+            .repo_summaries
+            .get(&repo_id)
+            .expect("placeholder summary");
+        assert_eq!(summary.display_path, repo_id.0);
+        assert_eq!(summary.last_error.as_deref(), Some("repo summary failed"));
     }
 
     #[test]

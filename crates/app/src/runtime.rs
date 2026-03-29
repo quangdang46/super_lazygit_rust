@@ -153,12 +153,10 @@ impl AppRuntime {
                         Err(error) => {
                             self.git.record_operation("scan_workspace_failed", false);
                             self.diagnostics.extend_snapshot(self.git.diagnostics());
-                            follow_up_events.push(Event::Worker(WorkerEvent::RepoScanCompleted {
+                            follow_up_events.push(Event::Worker(WorkerEvent::RepoScanFailed {
                                 root: self.workspace.root().cloned(),
-                                repo_ids: Vec::new(),
-                                scanned_at: current_timestamp(),
+                                error: error.to_string(),
                             }));
-                            let _ = error;
                         }
                     }
                 }
