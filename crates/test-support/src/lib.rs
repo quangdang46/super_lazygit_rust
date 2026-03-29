@@ -119,6 +119,25 @@ pub fn worktree_repo() -> io::Result<TempRepo> {
     Ok(repo)
 }
 
+pub fn rebase_in_progress_repo() -> io::Result<TempRepo> {
+    let repo = TempRepo::new()?;
+
+    repo.write_file("rebase.txt", "base\n")?;
+    repo.commit_all("initial")?;
+
+    repo.checkout_new_branch("feature")?;
+    repo.write_file("rebase.txt", "feature\n")?;
+    repo.commit_all("feature change")?;
+
+    repo.checkout("main")?;
+    repo.write_file("rebase.txt", "main\n")?;
+    repo.commit_all("main change")?;
+
+    repo.checkout("feature")?;
+    repo.git_expect_failure(["rebase", "main"])?;
+    Ok(repo)
+}
+
 #[derive(Debug)]
 pub struct TempRepo {
     root: TempDir,

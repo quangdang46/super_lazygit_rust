@@ -586,25 +586,7 @@ fn collect_git_repos(root: &Path, repos: &mut Vec<PathBuf>) -> GitResult<()> {
 }
 
 fn is_git_repo(path: &Path) -> bool {
-    path.join(".git").exists()
-}
-
-fn tracking_remote(repo_path: &Path) -> GitResult<(Option<String>, Option<String>)> {
-    let upstream = git_stdout_allow_failure(
-        repo_path,
-        [
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            "@{upstream}",
-        ],
-    )?;
-    if upstream.is_empty() {
-        return Ok((None, None));
-    }
-
-    let remote_name = upstream.split('/').next().map(str::to_owned);
-    Ok((remote_name, Some(upstream)))
+    git_stdout(path, ["rev-parse", "--show-toplevel"]).is_ok()
 }
 
 fn repo_path(repo_id: &RepoId) -> GitResult<PathBuf> {
@@ -768,10 +750,6 @@ fn path_string(path: &Path) -> String {
     path.display().to_string()
 }
 
-fn non_empty(value: String) -> Option<String> {
-    (!value.is_empty()).then_some(value)
-}
-
 fn unix_timestamp_now() -> Timestamp {
     system_time_to_timestamp(SystemTime::now())
 }
@@ -869,7 +847,9 @@ fn parse_branch_header(header: &str, parsed: &mut ParsedStatus) {
     parsed.head_kind = HeadKind::Branch;
     let (branch_part, counts_part) = header
         .split_once(" [")
-        .map_or((header, None), |(left, right)| (left, Some(right.trim_end_matches(']'))));
+        .map_or((header, None), |(left, right)| {
+            (left, Some(right.trim_end_matches(']')))
+        });
 
     if let Some((branch, upstream)) = branch_part.split_once("...") {
         parsed.branch = Some(branch.to_string());
@@ -892,11 +872,11 @@ fn parse_branch_header(header: &str, parsed: &mut ParsedStatus) {
 }
 
 fn status_path(raw: &str) -> PathBuf {
-    let path = raw
-        .trim()
-        .split(" -> ")
-        .next_back()
-        .unwrap_or(raw.trim())
+    let trimmed = raw.trim();
+    let path = trimmed
+        .rsplit(" -> ")
+        .next()
+        .unwrap_or(trimmed)
         .trim_matches('"');
     PathBuf::from(path)
 }
@@ -1033,7 +1013,9 @@ fn read_worktrees(repo_path: &Path) -> Vec<WorktreeItem> {
 fn read_merge_state(repo_path: &Path) -> MergeState {
     if git_path_exists(repo_path, "MERGE_HEAD") {
         MergeState::MergeInProgress
-    } else if git_path_exists(repo_path, "rebase-merge") || git_path_exists(repo_path, "rebase-apply") {
+    } else if git_path_exists(repo_path, "rebase-merge")
+        || git_path_exists(repo_path, "rebase-apply")
+    {
         MergeState::RebaseInProgress
     } else {
         MergeState::None
@@ -1043,7 +1025,13 @@ fn read_merge_state(repo_path: &Path) -> MergeState {
 fn git_path_exists(repo_path: &Path, git_path: &str) -> bool {
     git_stdout(repo_path, ["rev-parse", "--git-path", git_path])
         .map(PathBuf::from)
-        .is_ok_and(|path| path.exists())
+        .is_ok_and(|path| {
+            if path.is_absolute() {
+                path.exists()
+            } else {
+                repo_path.join(path).exists()
+            }
+        })
 }
 
 fn is_conflict_code(index: char, worktree: char) -> bool {
@@ -1058,7 +1046,8 @@ mod tests {
     use super::*;
     use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, RepoId};
     use super_lazygit_test_support::{
-        clean_repo, conflicted_repo, staged_and_unstaged_repo, upstream_diverged_repo,
+        clean_repo, conflicted_repo, detached_head_repo, dirty_repo, rebase_in_progress_repo,
+        staged_and_unstaged_repo, stashed_repo, upstream_diverged_repo, worktree_repo,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -1185,6 +1174,48 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_reads_clean_unborn_repo_summary() {
+        let repo = clean_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let summary = backend
+            .read_repo_summary(RepoSummaryRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("summary succeeds");
+
+        assert_eq!(summary.branch.as_deref(), Some("main"));
+        assert_eq!(summary.head_kind, HeadKind::Unborn);
+        assert!(!summary.dirty);
+        assert_eq!(summary.staged_count, 0);
+        assert_eq!(summary.unstaged_count, 0);
+        assert_eq!(summary.untracked_count, 0);
+        assert_eq!(summary.ahead_count, 0);
+        assert_eq!(summary.behind_count, 0);
+        assert!(!summary.conflicted);
+    }
+
+    #[test]
+    fn cli_backend_reads_dirty_untracked_repo_summary() {
+        let repo = dirty_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let summary = backend
+            .read_repo_summary(RepoSummaryRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("summary succeeds");
+
+        assert_eq!(summary.branch.as_deref(), Some("main"));
+        assert_eq!(summary.head_kind, HeadKind::Unborn);
+        assert!(summary.dirty);
+        assert_eq!(summary.staged_count, 0);
+        assert_eq!(summary.unstaged_count, 0);
+        assert_eq!(summary.untracked_count, 1);
+        assert!(!summary.conflicted);
+    }
+
+    #[test]
     fn cli_backend_reads_staged_unstaged_and_untracked_counts() {
         let repo = staged_and_unstaged_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -1239,5 +1270,102 @@ mod tests {
 
         assert!(summary.conflicted);
         assert!(summary.dirty);
+    }
+
+    #[test]
+    fn cli_backend_reads_merge_state_for_conflicted_repo() {
+        let repo = conflicted_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::MergeInProgress);
+        assert!(detail
+            .file_tree
+            .iter()
+            .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
+    fn cli_backend_reads_detail_lists() {
+        let repo = stashed_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("detail should load");
+
+        assert!(!detail.branches.is_empty());
+        assert!(!detail.commits.is_empty());
+        assert!(!detail.stashes.is_empty());
+        assert!(!detail.reflog_items.is_empty());
+    }
+
+    #[test]
+    fn cli_backend_marks_detached_head() {
+        let repo = detached_head_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let summary = backend
+            .read_repo_summary(RepoSummaryRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("summary should load");
+
+        assert_eq!(summary.head_kind, HeadKind::Detached);
+    }
+
+    #[test]
+    fn cli_backend_reads_worktrees_and_diff_selection() {
+        let repo = worktree_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("detail should load");
+        let diff = backend
+            .read_diff(DiffRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                comparison_target: None,
+                selected_path: None,
+            })
+            .expect("diff should load");
+
+        assert_eq!(detail.worktrees.len(), 2);
+        assert!(detail
+            .worktrees
+            .iter()
+            .any(|item| item.branch.as_deref() == Some("main")));
+        assert!(detail
+            .worktrees
+            .iter()
+            .any(|item| item.branch.as_deref() == Some("feature")));
+        assert!(diff.selected_path.is_none());
+    }
+
+    #[test]
+    fn cli_backend_reads_rebase_in_progress_state() {
+        let repo = rebase_in_progress_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::RebaseInProgress);
+        assert!(detail
+            .file_tree
+            .iter()
+            .any(|item| item.kind == FileStatusKind::Conflicted));
     }
 }
