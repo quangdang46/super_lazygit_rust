@@ -230,6 +230,9 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 state.workspace.selected_repo_id =
                     state.workspace.discovered_repo_ids.first().cloned();
             }
+            effects.push(Effect::ConfigureWatcher {
+                repo_ids: state.workspace.discovered_repo_ids.clone(),
+            });
             effects.push(Effect::RefreshRepoSummaries {
                 repo_ids: state.workspace.discovered_repo_ids.clone(),
             });
@@ -643,6 +646,9 @@ mod tests {
         assert_eq!(
             result.effects,
             vec![
+                Effect::ConfigureWatcher {
+                    repo_ids: vec![RepoId::new("repo-1"), RepoId::new("repo-2")],
+                },
                 Effect::RefreshRepoSummaries {
                     repo_ids: vec![RepoId::new("repo-1"), RepoId::new("repo-2")],
                 },
@@ -1283,6 +1289,35 @@ mod tests {
         );
 
         assert_eq!(result.effects, vec![Effect::RefreshRepoSummary { repo_id }]);
+    }
+
+    #[test]
+    fn repo_scan_completed_requests_watcher_configuration() {
+        let repo_id = RepoId::new("repo-1");
+
+        let result = reduce(
+            AppState::default(),
+            Event::Worker(WorkerEvent::RepoScanCompleted {
+                root: Some(std::path::PathBuf::from("/tmp/workspace")),
+                repo_ids: vec![repo_id.clone()],
+                scanned_at: Timestamp(7),
+            }),
+        );
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::ConfigureWatcher {
+                    repo_ids: vec![repo_id.clone()],
+                },
+                Effect::RefreshRepoSummaries {
+                    repo_ids: vec![repo_id.clone()],
+                },
+                Effect::PersistCache,
+                Effect::ScheduleRender,
+            ]
+        );
+        assert_eq!(result.state.workspace.selected_repo_id, Some(repo_id));
     }
 
     #[test]

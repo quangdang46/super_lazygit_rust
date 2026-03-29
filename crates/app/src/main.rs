@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 
 mod runtime;
+mod watcher;
 
 use runtime::AppRuntime;
 use super_lazygit_config::AppConfig;
@@ -60,10 +61,11 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
 
+    use super::watcher::{ScriptedWatcherBackend, ScriptedWatcherHandle};
     use super::*;
     use super_lazygit_core::{
-        AppMode, BackgroundJobState, Event, RepoId, RepoSummary, ScanStatus, Timestamp,
-        WorkerEvent, WorkspaceState,
+        AppMode, AppWatcherEvent, BackgroundJobState, Event, RepoId, RepoSummary, ScanStatus,
+        Timestamp, WatcherHealth, WorkerEvent, WorkspaceState,
     };
     use super_lazygit_test_support::clean_repo;
 
@@ -175,5 +177,140 @@ mod tests {
             job.target_repo.as_ref() == Some(&invalid_repo_id)
                 && matches!(job.state, BackgroundJobState::Failed { .. })
         }));
+    }
+
+    #[test]
+    fn runtime_configures_watcher_and_marks_health_healthy() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let handle = ScriptedWatcherHandle::new();
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime = AppRuntime::with_watcher(
+            app,
+            workspace,
+            git,
+            ScriptedWatcherBackend::new(handle.clone()),
+        );
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![repo_id.clone()],
+            scanned_at: Timestamp(7),
+        })]);
+
+        assert_eq!(
+            runtime.app().state().workspace.watcher_health,
+            WatcherHealth::Healthy
+        );
+        assert_eq!(
+            handle.registrations(),
+            vec![watcher::WatchRegistration {
+                repo_id,
+                path: repo.path().to_path_buf(),
+            }]
+        );
+    }
+
+    #[test]
+    fn runtime_marks_watcher_health_degraded_when_configuration_fails() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let handle = ScriptedWatcherHandle::new();
+        handle.set_configure_error("watch backend unavailable");
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime =
+            AppRuntime::with_watcher(app, workspace, git, ScriptedWatcherBackend::new(handle));
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![repo_id],
+            scanned_at: Timestamp(7),
+        })]);
+
+        assert_eq!(
+            runtime.app().state().workspace.watcher_health,
+            WatcherHealth::Degraded {
+                message: "watch backend unavailable".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_drains_repo_invalidations_from_watcher_backend() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let handle = ScriptedWatcherHandle::new();
+        handle.push_event(AppWatcherEvent::RepoInvalidated {
+            repo_id: repo_id.clone(),
+        });
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime =
+            AppRuntime::with_watcher(app, workspace, git, ScriptedWatcherBackend::new(handle));
+
+        runtime.run([Event::Action(Action::EnterRepoMode {
+            repo_id: repo_id.clone(),
+        })]);
+
+        let state = runtime.app().state();
+        assert!(state.workspace.repo_summaries.contains_key(&repo_id));
+        assert!(state
+            .repo_mode
+            .as_ref()
+            .and_then(|repo_mode| repo_mode.detail.as_ref())
+            .is_some());
+        assert!(state.background_jobs.values().any(|job| {
+            job.target_repo.as_ref() == Some(&repo_id)
+                && matches!(job.state, BackgroundJobState::Succeeded)
+        }));
+    }
+
+    #[test]
+    fn runtime_drains_health_events_from_watcher_backend() {
+        let handle = ScriptedWatcherHandle::new();
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(None);
+        let git = GitFacade::default();
+        let mut runtime = AppRuntime::with_watcher(
+            app,
+            workspace,
+            git,
+            ScriptedWatcherBackend::new(handle.clone()),
+        );
+
+        handle.push_event(AppWatcherEvent::WatcherDegraded {
+            message: "watch lag".to_string(),
+        });
+        runtime.run(std::iter::empty());
+        assert_eq!(
+            runtime.app().state().workspace.watcher_health,
+            WatcherHealth::Degraded {
+                message: "watch lag".to_string(),
+            }
+        );
+
+        handle.push_event(AppWatcherEvent::WatcherRecovered);
+        runtime.run(std::iter::empty());
+        assert_eq!(
+            runtime.app().state().workspace.watcher_health,
+            WatcherHealth::Healthy
+        );
     }
 }

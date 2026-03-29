@@ -1,12 +1,14 @@
 use std::cmp;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::watcher::{NullWatcherBackend, WatchRegistration, WatcherBackend};
 use super_lazygit_core::{
-    Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId, RepoId, RepoSummary,
-    Timestamp, WorkerEvent,
+    AppWatcherEvent, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId, RepoId,
+    RepoSummary, Timestamp, WorkerEvent,
 };
 use super_lazygit_git::{
     GitFacade, GitResult, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest,
@@ -22,25 +24,37 @@ pub struct AppRuntime {
     workspace: WorkspaceRegistry,
     git: GitFacade,
     diagnostics: Diagnostics,
+    watcher: Box<dyn WatcherBackend>,
 }
 
 impl AppRuntime {
     #[must_use]
     pub fn new(app: TuiApp, workspace: WorkspaceRegistry, git: GitFacade) -> Self {
+        Self::with_watcher(app, workspace, git, NullWatcherBackend::default())
+    }
+
+    #[must_use]
+    pub fn with_watcher<W>(
+        app: TuiApp,
+        workspace: WorkspaceRegistry,
+        git: GitFacade,
+        watcher: W,
+    ) -> Self
+    where
+        W: WatcherBackend + 'static,
+    {
         Self {
             app,
             workspace,
             git,
             diagnostics: Diagnostics::default(),
+            watcher: Box::new(watcher),
         }
     }
 
     pub fn bootstrap(&mut self) -> std::io::Result<DiagnosticsSnapshot> {
         let started_at = Instant::now();
 
-        self.workspace
-            .mark_watcher_started(usize::from(self.workspace.root().is_some()));
-        self.workspace.record_watcher_refresh(1);
         if let Some(cached_workspace) = self.workspace.load_cache() {
             let _ = self.app.dispatch(Event::Action(
                 super_lazygit_core::Action::ApplyWorkspaceScan(cached_workspace),
@@ -65,11 +79,15 @@ impl AppRuntime {
         I: IntoIterator<Item = Event>,
     {
         let mut queue = VecDeque::from_iter(seed_events);
+        queue.extend(self.drain_watcher_events());
 
         while let Some(event) = queue.pop_front() {
             let result = self.app.dispatch(event);
             for follow_up in self.apply_effects(&result.effects) {
                 queue.push_back(follow_up);
+            }
+            for watcher_event in self.drain_watcher_events() {
+                queue.push_back(watcher_event);
             }
         }
     }
@@ -124,6 +142,9 @@ impl AppRuntime {
                             let _ = error;
                         }
                     }
+                }
+                Effect::ConfigureWatcher { repo_ids } => {
+                    follow_up_events.extend(self.configure_watcher(repo_ids));
                 }
                 Effect::RefreshRepoSummaries { repo_ids } => {
                     follow_up_events.extend(self.refresh_repo_summaries(repo_ids.clone()));
@@ -184,6 +205,58 @@ impl AppRuntime {
         }
 
         follow_up_events
+    }
+
+    fn configure_watcher(&mut self, repo_ids: &[RepoId]) -> Vec<Event> {
+        let registrations = match self.watch_registrations(repo_ids) {
+            Ok(registrations) => registrations,
+            Err(message) => {
+                return vec![Event::Watcher(AppWatcherEvent::WatcherDegraded { message })];
+            }
+        };
+
+        match self.watcher.configure(registrations) {
+            Ok(path_count) => {
+                self.workspace.mark_watcher_started(path_count);
+                self.diagnostics
+                    .extend_snapshot(self.workspace.diagnostics());
+                vec![Event::Watcher(AppWatcherEvent::WatcherRecovered)]
+            }
+            Err(message) => vec![Event::Watcher(AppWatcherEvent::WatcherDegraded { message })],
+        }
+    }
+
+    fn watch_registrations(&self, repo_ids: &[RepoId]) -> Result<Vec<WatchRegistration>, String> {
+        repo_ids
+            .iter()
+            .map(|repo_id| {
+                let path = self
+                    .workspace
+                    .repo_path(repo_id)
+                    .cloned()
+                    .unwrap_or_else(|| PathBuf::from(&repo_id.0));
+                Ok(WatchRegistration {
+                    repo_id: repo_id.clone(),
+                    path,
+                })
+            })
+            .collect()
+    }
+
+    fn drain_watcher_events(&mut self) -> Vec<Event> {
+        let events = self.watcher.drain();
+        let invalidation_count = events
+            .iter()
+            .filter(|event| matches!(event, AppWatcherEvent::RepoInvalidated { .. }))
+            .count();
+
+        if invalidation_count > 0 {
+            self.workspace.record_watcher_refresh(invalidation_count);
+            self.diagnostics
+                .extend_snapshot(self.workspace.diagnostics());
+        }
+
+        events.into_iter().map(Event::Watcher).collect()
     }
 
     fn refresh_repo_summaries(&mut self, repo_ids: Vec<RepoId>) -> Vec<Event> {
