@@ -212,6 +212,44 @@ impl WorkspaceState {
         Some(next_repo)
     }
 
+    #[must_use]
+    pub fn prioritized_repo_ids(
+        &self,
+        repo_ids: &[RepoId],
+        active_repo_id: Option<&RepoId>,
+    ) -> Vec<RepoId> {
+        let mut ordered = Vec::new();
+        if let Some(active_repo_id) = active_repo_id
+            .filter(|active_repo_id| repo_ids.iter().any(|repo_id| repo_id == *active_repo_id))
+        {
+            ordered.push(active_repo_id.clone());
+        }
+
+        for repo_id in self.visible_repo_ids() {
+            if repo_ids.iter().any(|candidate| candidate == &repo_id)
+                && !ordered.iter().any(|candidate| candidate == &repo_id)
+            {
+                ordered.push(repo_id);
+            }
+        }
+
+        for repo_id in &self.discovered_repo_ids {
+            if repo_ids.iter().any(|candidate| candidate == repo_id)
+                && !ordered.iter().any(|candidate| candidate == repo_id)
+            {
+                ordered.push(repo_id.clone());
+            }
+        }
+
+        for repo_id in repo_ids {
+            if !ordered.iter().any(|candidate| candidate == repo_id) {
+                ordered.push(repo_id.clone());
+            }
+        }
+
+        ordered
+    }
+
     pub fn select_next(&mut self) -> Option<RepoId> {
         self.select_with_step(1)
     }
@@ -1101,5 +1139,39 @@ mod tests {
             workspace_attention_score(Some(&conflict)) > workspace_attention_score(Some(&behind))
         );
         assert!(workspace_attention_score(Some(&behind)) > workspace_attention_score(Some(&clean)));
+    }
+
+    #[test]
+    fn prioritized_repo_ids_orders_active_then_visible_then_hidden() {
+        let repo_active = RepoId::new("/tmp/active");
+        let repo_visible = RepoId::new("/tmp/visible");
+        let repo_hidden = RepoId::new("/tmp/hidden");
+        let mut visible = summary(&repo_visible.0, "visible");
+        visible.dirty = true;
+        let workspace = WorkspaceState {
+            discovered_repo_ids: vec![
+                repo_hidden.clone(),
+                repo_visible.clone(),
+                repo_active.clone(),
+            ],
+            repo_summaries: BTreeMap::from([
+                (repo_active.clone(), summary(&repo_active.0, "active")),
+                (repo_visible.clone(), visible),
+                (repo_hidden.clone(), summary(&repo_hidden.0, "hidden")),
+            ]),
+            filter_mode: WorkspaceFilterMode::DirtyOnly,
+            ..WorkspaceState::default()
+        };
+
+        let ordered = workspace.prioritized_repo_ids(
+            &[
+                repo_hidden.clone(),
+                repo_visible.clone(),
+                repo_active.clone(),
+            ],
+            Some(&repo_active),
+        );
+
+        assert_eq!(ordered, vec![repo_active, repo_visible, repo_hidden]);
     }
 }

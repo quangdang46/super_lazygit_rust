@@ -594,12 +594,19 @@ fn reduce_timer_event(state: &mut AppState, event: TimerEvent, effects: &mut Vec
         }
         TimerEvent::PeriodicFetchTick => {}
         TimerEvent::WatcherDebounceFlush => {
-            let repo_ids = state
+            let pending_repo_ids = state
                 .workspace
                 .pending_watcher_invalidations
                 .keys()
                 .cloned()
                 .collect::<Vec<_>>();
+            let active_repo_id = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| &repo_mode.current_repo_id);
+            let repo_ids = state
+                .workspace
+                .prioritized_repo_ids(&pending_repo_ids, active_repo_id);
             state.workspace.pending_watcher_invalidations.clear();
             state.workspace.watcher_debounce_pending = false;
 
@@ -2513,6 +2520,115 @@ mod tests {
         let result = reduce(state, Event::Timer(TimerEvent::WatcherDebounceFlush));
 
         assert_eq!(result.effects, vec![Effect::RefreshRepoSummary { repo_id }]);
+    }
+
+    #[test]
+    fn watcher_debounce_flush_prioritizes_visible_repos_over_hidden_ones() {
+        let repo_visible = RepoId::new("/tmp/visible");
+        let repo_hidden = RepoId::new("/tmp/hidden");
+        let mut visible = workspace_summary(&repo_visible.0);
+        visible.dirty = true;
+        let mut state = AppState::default();
+        state.workspace.discovered_repo_ids = vec![repo_hidden.clone(), repo_visible.clone()];
+        state.workspace.filter_mode = WorkspaceFilterMode::DirtyOnly;
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_visible.clone(), visible);
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_hidden.clone(), workspace_summary(&repo_hidden.0));
+        state
+            .workspace
+            .pending_watcher_invalidations
+            .insert(repo_hidden.clone(), 1);
+        state
+            .workspace
+            .pending_watcher_invalidations
+            .insert(repo_visible.clone(), 1);
+        state.workspace.watcher_debounce_pending = true;
+
+        let result = reduce(state, Event::Timer(TimerEvent::WatcherDebounceFlush));
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_visible,
+                },
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_hidden,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn watcher_debounce_flush_prioritizes_active_repo_before_visible_and_hidden() {
+        let repo_active = RepoId::new("/tmp/active");
+        let repo_visible = RepoId::new("/tmp/visible");
+        let repo_hidden = RepoId::new("/tmp/hidden");
+        let mut visible = workspace_summary(&repo_visible.0);
+        visible.dirty = true;
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(repo_active.clone())),
+            ..AppState::default()
+        };
+        state.workspace.discovered_repo_ids = vec![
+            repo_hidden.clone(),
+            repo_visible.clone(),
+            repo_active.clone(),
+        ];
+        state.workspace.filter_mode = WorkspaceFilterMode::DirtyOnly;
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_active.clone(), workspace_summary(&repo_active.0));
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_visible.clone(), visible);
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_hidden.clone(), workspace_summary(&repo_hidden.0));
+        state
+            .workspace
+            .pending_watcher_invalidations
+            .insert(repo_hidden.clone(), 1);
+        state
+            .workspace
+            .pending_watcher_invalidations
+            .insert(repo_visible.clone(), 1);
+        state
+            .workspace
+            .pending_watcher_invalidations
+            .insert(repo_active.clone(), 1);
+        state.workspace.watcher_debounce_pending = true;
+
+        let result = reduce(state, Event::Timer(TimerEvent::WatcherDebounceFlush));
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_active.clone(),
+                },
+                Effect::LoadRepoDetail {
+                    repo_id: repo_active,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_visible,
+                },
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_hidden,
+                },
+            ]
+        );
     }
 
     #[test]
