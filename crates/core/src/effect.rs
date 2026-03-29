@@ -64,6 +64,12 @@ pub enum GitCommand {
     DeleteBranch {
         branch_name: String,
     },
+    ApplyStash {
+        stash_ref: String,
+    },
+    DropStash {
+        stash_ref: String,
+    },
     SetBranchUpstream {
         branch_name: String,
         upstream_ref: String,

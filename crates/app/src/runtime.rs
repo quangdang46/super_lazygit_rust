@@ -425,6 +425,8 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::ApplyStash { .. } => "apply_stash",
+        GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",

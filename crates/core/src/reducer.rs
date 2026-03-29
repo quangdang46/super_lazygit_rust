@@ -164,6 +164,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextStash => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_stash_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousStash => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_stash_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::ScrollRepoDetailUp => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.diff_scroll = repo_mode.diff_scroll.saturating_sub(1);
@@ -425,6 +439,30 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::ApplySelectedStash => {
+            if let Some((repo_id, stash_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_stash_item(repo_mode)
+                    .map(|stash| (repo_mode.current_repo_id.clone(), stash.stash_ref.clone()))
+            }) {
+                let summary = format!("Apply stash {stash_ref}");
+                let job = git_job(repo_id, GitCommand::ApplyStash { stash_ref });
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::DropSelectedStash => {
+            if let Some((repo_id, stash_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_stash_item(repo_mode)
+                    .map(|stash| (repo_mode.current_repo_id.clone(), stash.stash_ref.clone()))
+            }) {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::DropStash { stash_ref },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::FetchSelectedRepo => {
             if let Some(repo_id) = state
                 .repo_mode
@@ -467,6 +505,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
                 if matches!(subview, crate::state::RepoSubview::Commits) {
                     sync_commit_selection(repo_mode);
+                }
+                if matches!(subview, crate::state::RepoSubview::Stash) {
+                    sync_stash_selection(repo_mode);
                 }
                 state.focused_pane = PaneId::RepoDetail;
                 effects.push(Effect::ScheduleRender);
@@ -583,6 +624,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_status_selection(repo_mode);
                     sync_branch_selection(repo_mode);
                     sync_commit_selection(repo_mode);
+                    sync_stash_selection(repo_mode);
                     sync_diff_selection(repo_mode);
                     repo_mode.operation_progress = OperationProgress::Idle;
                 }
@@ -943,6 +985,7 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::DeleteBranch { branch_name } => {
             format!("Delete branch {branch_name}")
         }
+        ConfirmableOperation::DropStash { stash_ref } => format!("Drop stash {stash_ref}"),
     }
 }
 
@@ -965,6 +1008,12 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 branch_name: branch_name.clone(),
             },
             "Delete branch",
+        ),
+        ConfirmableOperation::DropStash { stash_ref } => (
+            GitCommand::DropStash {
+                stash_ref: stash_ref.clone(),
+            },
+            "Drop stash",
         ),
     };
     let job = git_job(pending.repo_id, command);
@@ -1096,6 +1145,15 @@ fn sync_commit_selection(repo_mode: &mut RepoModeState) {
     });
 }
 
+fn sync_stash_selection(repo_mode: &mut RepoModeState) {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.stash_view.selected_index = None;
+        return;
+    };
+
+    repo_mode.stash_view.ensure_selection(detail.stashes.len());
+}
+
 fn sync_status_selection(repo_mode: &mut RepoModeState) {
     let Some(detail) = repo_mode.detail.as_ref() else {
         repo_mode.status_view.selected_index = None;
@@ -1184,6 +1242,16 @@ fn selected_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::Bran
     detail.branches.get(selected_index)
 }
 
+fn selected_stash_item(repo_mode: &RepoModeState) -> Option<&crate::state::StashItem> {
+    let detail = repo_mode.detail.as_ref()?;
+    let selected_index = repo_mode
+        .stash_view
+        .selected_index
+        .filter(|index| *index < detail.stashes.len())
+        .unwrap_or(0);
+    detail.stashes.get(selected_index)
+}
+
 fn step_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     let Some(detail) = repo_mode.detail.as_ref() else {
         repo_mode.branches_view.selected_index = None;
@@ -1194,6 +1262,19 @@ fn step_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     let after = repo_mode
         .branches_view
         .select_with_step(detail.branches.len(), step);
+    after.is_some() && after != before
+}
+
+fn step_stash_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.stash_view.selected_index = None;
+        return false;
+    };
+
+    let before = repo_mode.stash_view.selected_index;
+    let after = repo_mode
+        .stash_view
+        .select_with_step(detail.stashes.len(), step);
     after.is_some() && after != before
 }
 
@@ -1315,6 +1396,8 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
         GitCommand::RenameBranch { .. } => "rename-branch",
         GitCommand::DeleteBranch { .. } => "delete-branch",
+        GitCommand::ApplyStash { .. } => "apply-stash",
+        GitCommand::DropStash { .. } => "drop-stash",
         GitCommand::SetBranchUpstream { .. } => "set-branch-upstream",
         GitCommand::FetchSelectedRepo => "fetch-selected-repo",
         GitCommand::PullCurrentBranch => "pull-current-branch",
@@ -1385,7 +1468,7 @@ mod tests {
         CommitItem, ComparisonTarget, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
         DiffModel, DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind,
         PaneId, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, ScanStatus,
-        SelectedHunk, Timestamp, WatcherHealth, WorkspaceFilterMode,
+        SelectedHunk, StashItem, Timestamp, WatcherHealth, WorkspaceFilterMode,
     };
 
     use super::reduce;
@@ -1689,6 +1772,143 @@ mod tests {
     }
 
     #[test]
+    fn select_next_stash_advances_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Stash,
+                detail: Some(RepoDetail {
+                    stashes: vec![
+                        StashItem {
+                            stash_ref: "stash@{0}".to_string(),
+                            label: "stash@{0}: latest".to_string(),
+                        },
+                        StashItem {
+                            stash_ref: "stash@{1}".to_string(),
+                            label: "stash@{1}: older".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                stash_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SelectNextStash));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn apply_selected_stash_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Stash,
+                detail: Some(RepoDetail {
+                    stashes: vec![StashItem {
+                        stash_ref: "stash@{0}".to_string(),
+                        label: "stash@{0}: latest".to_string(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                stash_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ApplySelectedStash));
+        let job_id = JobId::new("git:repo-1:apply-stash");
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::ApplyStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn drop_selected_stash_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Stash,
+                detail: Some(RepoDetail {
+                    stashes: vec![StashItem {
+                        stash_ref: "stash@{0}".to_string(),
+                        label: "stash@{0}: latest".to_string(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                stash_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DropSelectedStash));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::DropStash {
+                    stash_ref: "stash@{0}".to_string()
+                }
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .modal_stack
+                .last()
+                .map(|modal| (&modal.kind, modal.title.as_str())),
+            Some((&ModalKind::Confirm, "Drop stash stash@{0}"))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
     fn submit_branch_create_prompt_queues_git_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -1768,6 +1988,52 @@ mod tests {
                 job_id,
                 repo_id,
                 command: GitCommand::PushCurrentBranch,
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_drop_stash_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Drop stash stash@{0}",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::DropStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:drop-stash");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::DropStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
             })]
         );
     }

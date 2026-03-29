@@ -74,6 +74,7 @@ pub enum ConfirmableOperation {
     Pull,
     Push,
     DeleteBranch { branch_name: String },
+    DropStash { stash_ref: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -667,6 +668,7 @@ pub struct CommitFileItem {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashItem {
+    pub stash_ref: String,
     pub label: String,
 }
 

@@ -583,6 +583,14 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
                 format!("Deleted {branch_name}")
             }
+            GitCommand::ApplyStash { stash_ref } => {
+                git(&repo_path, ["stash", "apply", stash_ref.as_str()])?;
+                format!("Applied {stash_ref}")
+            }
+            GitCommand::DropStash { stash_ref } => {
+                git(&repo_path, ["stash", "drop", stash_ref.as_str()])?;
+                format!("Dropped {stash_ref}")
+            }
             GitCommand::SetBranchUpstream {
                 branch_name,
                 upstream_ref,
@@ -681,6 +689,8 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::ApplyStash { .. } => "apply_stash",
+        GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
@@ -1614,11 +1624,11 @@ fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
             output
                 .lines()
                 .map(|line| {
-                    let label = line.split_once('\0').map_or_else(
-                        || line.to_string(),
-                        |(name, summary)| format!("{name}: {summary}"),
+                    let (stash_ref, label) = line.split_once('\0').map_or_else(
+                        || (line.to_string(), line.to_string()),
+                        |(name, summary)| (name.to_string(), format!("{name}: {summary}")),
                     );
-                    StashItem { label }
+                    StashItem { stash_ref, label }
                 })
                 .collect()
         })
@@ -2275,6 +2285,50 @@ mod tests {
         assert!(!detail.commits.is_empty());
         assert!(!detail.stashes.is_empty());
         assert!(!detail.reflog_items.is_empty());
+    }
+
+    #[test]
+    fn cli_backend_applies_and_drops_stash_entries() {
+        let repo = stashed_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let applied = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-apply-stash"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::ApplyStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
+            })
+            .expect("stash apply should succeed");
+        assert_eq!(applied.summary, "Applied stash@{0}");
+        assert!(repo
+            .stash_list()
+            .expect("stash list")
+            .contains("fixture stash"));
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("stash.txt")).expect("read stash.txt"),
+            "base\nstashed\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("stash-untracked.txt"))
+                .expect("read stash-untracked.txt"),
+            "untracked\n"
+        );
+
+        let dropped = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-drop-stash"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::DropStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
+            })
+            .expect("stash drop should succeed");
+        assert_eq!(dropped.repo_id, repo_id);
+        assert_eq!(dropped.summary, "Dropped stash@{0}");
+        assert!(repo.stash_list().expect("stash list").trim().is_empty());
     }
 
     #[test]
