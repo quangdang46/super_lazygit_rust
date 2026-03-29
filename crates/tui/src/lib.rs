@@ -2348,6 +2348,8 @@ mod tests {
         assert!(rendered.contains("repo-1"));
         assert!(rendered.contains("1/2/3 +4/-1"));
         assert!(rendered.contains("2m"));
+        assert!(rendered.contains("Path: /tmp/repo-1"));
+        assert!(rendered.contains("Branch: main"));
     }
 
     #[test]
@@ -2642,6 +2644,62 @@ mod tests {
         assert_eq!(result.state.mode, AppMode::Repository);
         assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
         assert!(result.state.repo_mode.is_some());
+    }
+
+    #[test]
+    fn route_repository_escape_returns_to_workspace_context() {
+        let repo_alpha = RepoId::new("/tmp/alpha");
+        let repo_beta = RepoId::new("/tmp/beta");
+        let mut beta_summary = workspace_repo_summary(&repo_beta.0, "beta");
+        beta_summary.dirty = true;
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_alpha.clone(), repo_beta.clone()],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (
+                        repo_alpha.clone(),
+                        workspace_repo_summary(&repo_alpha.0, "alpha"),
+                    ),
+                    (repo_beta.clone(), beta_summary),
+                ]),
+                selected_repo_id: Some(repo_beta.clone()),
+                filter_mode: WorkspaceFilterMode::DirtyOnly,
+                search_query: "beta".to_string(),
+                search_focused: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let entered = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(entered.state.mode, AppMode::Repository);
+        assert_eq!(
+            entered.state.workspace.selected_repo_id,
+            Some(repo_beta.clone())
+        );
+        assert_eq!(
+            entered.state.workspace.filter_mode,
+            WorkspaceFilterMode::DirtyOnly
+        );
+        assert_eq!(entered.state.workspace.search_query, "beta");
+        assert!(!entered.state.workspace.search_focused);
+
+        let returned = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "esc".to_string(),
+        })));
+        assert_eq!(returned.state.mode, AppMode::Workspace);
+        assert_eq!(returned.state.focused_pane, PaneId::WorkspaceList);
+        assert_eq!(returned.state.workspace.selected_repo_id, Some(repo_beta));
+        assert_eq!(
+            returned.state.workspace.filter_mode,
+            WorkspaceFilterMode::DirtyOnly
+        );
+        assert_eq!(returned.state.workspace.search_query, "beta");
+        assert!(!returned.state.workspace.search_focused);
+        assert!(returned.state.repo_mode.is_none());
     }
 
     #[test]

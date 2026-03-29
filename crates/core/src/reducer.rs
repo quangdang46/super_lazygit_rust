@@ -1225,6 +1225,53 @@ mod tests {
     }
 
     #[test]
+    fn leave_repo_mode_preserves_workspace_context() {
+        let repo_alpha = RepoId::new("repo-alpha");
+        let repo_beta = RepoId::new("repo-beta");
+        let mut state = AppState::default();
+        state.workspace.discovered_repo_ids = vec![repo_alpha.clone(), repo_beta.clone()];
+        state.workspace.selected_repo_id = Some(repo_beta.clone());
+        state.workspace.filter_mode = WorkspaceFilterMode::DirtyOnly;
+        state.workspace.search_query = "beta".to_string();
+        state.workspace.search_focused = true;
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_alpha.clone(), workspace_summary(&repo_alpha.0));
+        state
+            .workspace
+            .repo_summaries
+            .insert(repo_beta.clone(), workspace_summary(&repo_beta.0));
+
+        let entered = reduce(
+            state,
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_beta.clone(),
+            }),
+        )
+        .state;
+
+        assert_eq!(entered.workspace.selected_repo_id, Some(repo_beta.clone()));
+        assert_eq!(
+            entered.workspace.filter_mode,
+            WorkspaceFilterMode::DirtyOnly
+        );
+        assert_eq!(entered.workspace.search_query, "beta");
+        assert!(!entered.workspace.search_focused);
+
+        let left = reduce(entered, Event::Action(Action::LeaveRepoMode)).state;
+
+        assert_eq!(left.mode, AppMode::Workspace);
+        assert_eq!(left.focused_pane, PaneId::WorkspaceList);
+        assert_eq!(left.workspace.selected_repo_id, Some(repo_beta));
+        assert_eq!(left.workspace.filter_mode, WorkspaceFilterMode::DirtyOnly);
+        assert_eq!(left.workspace.search_query, "beta");
+        assert!(!left.workspace.search_focused);
+        assert_eq!(left.workspace.discovered_repo_ids.len(), 2);
+        assert!(left.repo_mode.is_none());
+    }
+
+    #[test]
     fn selection_changes_wrap_across_repos() {
         let mut state = AppState::default();
         state.workspace.discovered_repo_ids = vec![RepoId::new("a"), RepoId::new("b")];
