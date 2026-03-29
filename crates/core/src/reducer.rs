@@ -6,8 +6,8 @@ use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
     ComparisonTarget, ConfirmableOperation, DiffPresentation, InputPromptOperation, JobId,
-    MessageLevel, Notification, OperationProgress, PaneId, PendingInputPrompt, RepoModeState,
-    ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
+    MergeState, MessageLevel, Notification, OperationProgress, PaneId, PendingInputPrompt,
+    RepoModeState, ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +163,77 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     effects.push(Effect::ScheduleRender);
                 }
             }
+        }
+        Action::StartInteractiveRebase => {
+            let operation = state.repo_mode.as_ref().and_then(|repo_mode| {
+                let detail = repo_mode.detail.as_ref()?;
+                if detail.merge_state == MergeState::RebaseInProgress {
+                    return None;
+                }
+                let selected_index = repo_mode
+                    .commits_view
+                    .selected_index
+                    .filter(|index| *index < detail.commits.len())
+                    .unwrap_or(0);
+                if selected_index == 0 {
+                    return Some(Err(
+                        "Select an older commit before starting an interactive rebase.".to_string(),
+                    ));
+                }
+                detail.commits.get(selected_index).map(|commit| {
+                    Ok(ConfirmableOperation::StartInteractiveRebase {
+                        commit: commit.oid.clone(),
+                        summary: format!("{} {}", commit.short_oid, commit.summary),
+                    })
+                })
+            });
+            match operation {
+                Some(Ok(operation)) => {
+                    let repo_id = state
+                        .repo_mode
+                        .as_ref()
+                        .expect("repo mode exists")
+                        .current_repo_id
+                        .clone();
+                    open_confirmation_modal(state, repo_id, operation);
+                }
+                Some(Err(message)) => push_warning(state, message),
+                None => push_warning(state, "A rebase is already in progress."),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::ContinueRebase => {
+            if let Some(job) =
+                queue_rebase_job(state, GitCommand::ContinueRebase, "Continue rebase")
+            {
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::AbortRebase => {
+            if ensure_rebase_active(state) {
+                let repo_id = state
+                    .repo_mode
+                    .as_ref()
+                    .expect("repo mode exists")
+                    .current_repo_id
+                    .clone();
+                open_confirmation_modal(state, repo_id, ConfirmableOperation::AbortRebase);
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::SkipRebase => {
+            if ensure_rebase_active(state) {
+                let repo_id = state
+                    .repo_mode
+                    .as_ref()
+                    .expect("repo mode exists")
+                    .current_repo_id
+                    .clone();
+                open_confirmation_modal(state, repo_id, ConfirmableOperation::SkipRebase);
+            }
+            effects.push(Effect::ScheduleRender);
         }
         Action::SelectNextStash => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
@@ -572,6 +643,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 if matches!(subview, crate::state::RepoSubview::Commits) {
                     sync_commit_selection(repo_mode);
                 }
+                if matches!(subview, crate::state::RepoSubview::Rebase) {
+                    repo_mode.diff_scroll = 0;
+                }
                 if matches!(subview, crate::state::RepoSubview::Stash) {
                     sync_stash_selection(repo_mode);
                 }
@@ -716,6 +790,20 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_worktree_selection(repo_mode);
                     sync_diff_selection(repo_mode);
                     repo_mode.operation_progress = OperationProgress::Idle;
+                    let rebase_in_progress = repo_mode
+                        .detail
+                        .as_ref()
+                        .is_some_and(repo_detail_has_rebase);
+                    if rebase_in_progress {
+                        repo_mode.active_subview = crate::state::RepoSubview::Rebase;
+                        repo_mode.diff_scroll = 0;
+                        close_commit_box(repo_mode);
+                        state.focused_pane = PaneId::RepoDetail;
+                    } else if repo_mode.active_subview == crate::state::RepoSubview::Rebase {
+                        repo_mode.active_subview = crate::state::RepoSubview::Commits;
+                        repo_mode.diff_scroll = 0;
+                        state.focused_pane = PaneId::RepoDetail;
+                    }
                     if repo_mode.active_subview == crate::state::RepoSubview::Compare
                         && repo_mode.comparison_base.is_some()
                         && repo_mode.comparison_target.is_some()
@@ -1106,6 +1194,11 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::Fetch => "Confirm fetch".to_string(),
         ConfirmableOperation::Pull => "Confirm pull".to_string(),
         ConfirmableOperation::Push => "Confirm push".to_string(),
+        ConfirmableOperation::StartInteractiveRebase { summary, .. } => {
+            format!("Start interactive rebase at {summary}")
+        }
+        ConfirmableOperation::AbortRebase => "Abort rebase".to_string(),
+        ConfirmableOperation::SkipRebase => "Skip rebase step".to_string(),
         ConfirmableOperation::DeleteBranch { branch_name } => {
             format!("Delete branch {branch_name}")
         }
@@ -1130,6 +1223,12 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
         ConfirmableOperation::Fetch => (GitCommand::FetchSelectedRepo, "Fetch remote updates"),
         ConfirmableOperation::Pull => (GitCommand::PullCurrentBranch, "Pull current branch"),
         ConfirmableOperation::Push => (GitCommand::PushCurrentBranch, "Push current branch"),
+        ConfirmableOperation::StartInteractiveRebase { commit, .. } => (
+            GitCommand::StartInteractiveRebase { commit },
+            "Start interactive rebase",
+        ),
+        ConfirmableOperation::AbortRebase => (GitCommand::AbortRebase, "Abort rebase"),
+        ConfirmableOperation::SkipRebase => (GitCommand::SkipRebase, "Skip rebase step"),
         ConfirmableOperation::DeleteBranch { branch_name } => (
             GitCommand::DeleteBranch {
                 branch_name: branch_name.clone(),
@@ -1255,6 +1354,38 @@ fn parse_create_worktree_input(value: &str) -> Option<(std::path::PathBuf, Strin
         return None;
     }
     Some((std::path::PathBuf::from(path), branch_ref.to_string()))
+}
+
+fn ensure_rebase_active(state: &mut AppState) -> bool {
+    if state
+        .repo_mode
+        .as_ref()
+        .and_then(|repo_mode| repo_mode.detail.as_ref())
+        .is_some_and(repo_detail_has_rebase)
+    {
+        true
+    } else {
+        push_warning(state, "No rebase is currently in progress.");
+        false
+    }
+}
+
+fn queue_rebase_job(
+    state: &mut AppState,
+    command: GitCommand,
+    summary: &str,
+) -> Option<GitCommandRequest> {
+    if !ensure_rebase_active(state) {
+        return None;
+    }
+    let repo_id = state.repo_mode.as_ref()?.current_repo_id.clone();
+    let job = git_job(repo_id, command);
+    enqueue_git_job(state, &job, summary);
+    Some(job)
+}
+
+fn repo_detail_has_rebase(detail: &crate::state::RepoDetail) -> bool {
+    detail.merge_state == MergeState::RebaseInProgress && detail.rebase_state.is_some()
 }
 
 fn sync_branch_selection(repo_mode: &mut RepoModeState) {
@@ -1703,6 +1834,10 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::UnstageFile { .. } => "unstage-file",
         GitCommand::CommitStaged { .. } => "commit-staged",
         GitCommand::AmendHead { .. } => "amend-head",
+        GitCommand::StartInteractiveRebase { .. } => "start-interactive-rebase",
+        GitCommand::ContinueRebase => "continue-rebase",
+        GitCommand::AbortRebase => "abort-rebase",
+        GitCommand::SkipRebase => "skip-rebase",
         GitCommand::CreateBranch { .. } => "create-branch",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
         GitCommand::RenameBranch { .. } => "rename-branch",
@@ -1779,10 +1914,10 @@ mod tests {
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
         CommitItem, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind, DiffModel,
-        DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId, MessageLevel,
-        ModalKind, PaneId, ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
-        ScanStatus, SelectedHunk, StashItem, Timestamp, WatcherHealth, WorkspaceFilterMode,
-        WorktreeItem,
+        DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId, MergeState,
+        MessageLevel, ModalKind, PaneId, RebaseKind, RebaseState, ReflogItem, RepoDetail, RepoId,
+        RepoModeState, RepoSubview, RepoSummary, ScanStatus, SelectedHunk, StashItem, Timestamp,
+        WatcherHealth, WorkspaceFilterMode, WorktreeItem,
     };
 
     use super::reduce;
@@ -3829,6 +3964,244 @@ mod tests {
             Some(&crate::state::OperationProgress::Idle)
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn start_interactive_rebase_requires_older_commit_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "older".to_string(),
+                            summary: "older".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StartInteractiveRebase));
+
+        assert!(result.effects.contains(&Effect::ScheduleRender));
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select an older commit before starting an interactive rebase.")
+        );
+    }
+
+    #[test]
+    fn start_interactive_rebase_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StartInteractiveRebase));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::StartInteractiveRebase {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn repo_detail_loaded_switches_into_rebase_view_when_rebase_is_active() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "head".to_string(),
+                        short_oid: "head".to_string(),
+                        summary: "HEAD".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+        let detail = RepoDetail {
+            merge_state: MergeState::RebaseInProgress,
+            rebase_state: Some(RebaseState {
+                kind: RebaseKind::Interactive,
+                step: 1,
+                total: 2,
+                current_commit: Some("older".to_string()),
+                current_summary: Some("older commit".to_string()),
+                ..RebaseState::default()
+            }),
+            commits: vec![CommitItem {
+                oid: "older".to_string(),
+                short_oid: "old1234".to_string(),
+                summary: "older commit".to_string(),
+                ..CommitItem::default()
+            }],
+            ..RepoDetail::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::RepoDetailLoaded { repo_id, detail }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Rebase)
+        );
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+    }
+
+    #[test]
+    fn repo_detail_loaded_returns_to_commits_when_rebase_finishes() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Rebase,
+                detail: Some(RepoDetail {
+                    merge_state: MergeState::RebaseInProgress,
+                    rebase_state: Some(RebaseState {
+                        kind: RebaseKind::Interactive,
+                        step: 1,
+                        total: 2,
+                        ..RebaseState::default()
+                    }),
+                    commits: vec![CommitItem {
+                        oid: "older".to_string(),
+                        short_oid: "old1234".to_string(),
+                        summary: "older commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+        let detail = RepoDetail {
+            commits: vec![CommitItem {
+                oid: "head".to_string(),
+                short_oid: "head".to_string(),
+                summary: "HEAD".to_string(),
+                ..CommitItem::default()
+            }],
+            ..RepoDetail::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::RepoDetailLoaded { repo_id, detail }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+    }
+
+    #[test]
+    fn continue_rebase_enqueues_git_command() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Rebase,
+                detail: Some(RepoDetail {
+                    merge_state: MergeState::RebaseInProgress,
+                    rebase_state: Some(RebaseState {
+                        kind: RebaseKind::Interactive,
+                        step: 1,
+                        total: 2,
+                        ..RebaseState::default()
+                    }),
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ContinueRebase));
+
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RunGitCommand(GitCommandRequest {
+                command: GitCommand::ContinueRebase,
+                ..
+            })
+        )));
     }
 
     #[test]

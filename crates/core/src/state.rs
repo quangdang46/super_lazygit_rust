@@ -73,6 +73,9 @@ pub enum ConfirmableOperation {
     Fetch,
     Pull,
     Push,
+    StartInteractiveRebase { commit: String, summary: String },
+    AbortRebase,
+    SkipRebase,
     DeleteBranch { branch_name: String },
     DropStash { stash_ref: String },
     RemoveWorktree { path: PathBuf },
@@ -461,6 +464,7 @@ pub enum RepoSubview {
     Branches,
     Commits,
     Compare,
+    Rebase,
     Stash,
     Reflog,
     Worktrees,
@@ -576,11 +580,31 @@ pub struct RepoDetail {
     pub diff: DiffModel,
     pub branches: Vec<BranchItem>,
     pub commits: Vec<CommitItem>,
+    pub rebase_state: Option<RebaseState>,
     pub stashes: Vec<StashItem>,
     pub reflog_items: Vec<ReflogItem>,
     pub worktrees: Vec<WorktreeItem>,
     pub commit_input: String,
     pub merge_state: MergeState,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RebaseKind {
+    #[default]
+    Interactive,
+    Apply,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebaseState {
+    pub kind: RebaseKind,
+    pub step: usize,
+    pub total: usize,
+    pub head_name: Option<String>,
+    pub onto: Option<String>,
+    pub current_commit: Option<String>,
+    pub current_summary: Option<String>,
+    pub todo_preview: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

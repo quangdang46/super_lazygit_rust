@@ -9,8 +9,8 @@ publish = false
 
 [dependencies]
 super-lazygit-core = { path = "../core" }
+tempfile.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 super-lazygit-test-support = { path = "../test-support" }
-tempfile.workspace = true

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::Action;
 use crate::state::{DiffModel, JobId, RepoDetail, RepoId, RepoSummary, Timestamp};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
     Input(InputEvent),

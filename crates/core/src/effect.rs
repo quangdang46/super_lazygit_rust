@@ -58,6 +58,12 @@ pub enum GitCommand {
     AmendHead {
         message: Option<String>,
     },
+    StartInteractiveRebase {
+        commit: String,
+    },
+    ContinueRebase,
+    AbortRebase,
+    SkipRebase,
     CreateBranch {
         branch_name: String,
     },

@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Arc;
@@ -10,9 +12,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use super_lazygit_core::{
     BranchItem, CommitFileItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
     DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
-    GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode, ReflogItem,
-    RemoteSummary, RepoDetail, RepoId, RepoSummary, SelectedHunk, StashItem, Timestamp,
-    WatcherFreshness, WorktreeItem,
+    GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode, RebaseKind,
+    RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, SelectedHunk,
+    StashItem, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -506,6 +508,7 @@ impl GitBackend for CliGitBackend {
             diff,
             branches: read_branches(&repo_path),
             commits,
+            rebase_state: read_rebase_state(&repo_path),
             stashes: read_stashes(&repo_path),
             reflog_items: read_reflog(&repo_path),
             worktrees: read_worktrees(&repo_path),
@@ -554,6 +557,32 @@ impl GitBackend for CliGitBackend {
                     None => git(&repo_path, ["commit", "--amend", "--no-edit"])?,
                 }
                 "Amended HEAD commit".to_string()
+            }
+            GitCommand::StartInteractiveRebase { commit } => {
+                start_interactive_rebase(&repo_path, commit)?;
+                let summary = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!("Started interactive rebase at {summary}")
+            }
+            GitCommand::ContinueRebase => {
+                git_with_env(
+                    &repo_path,
+                    ["rebase", "--continue"],
+                    &[("GIT_EDITOR", OsStr::new(":"))],
+                )?;
+                "Continued rebase".to_string()
+            }
+            GitCommand::AbortRebase => {
+                git(&repo_path, ["rebase", "--abort"])?;
+                "Aborted rebase".to_string()
+            }
+            GitCommand::SkipRebase => {
+                git_with_env(
+                    &repo_path,
+                    ["rebase", "--skip"],
+                    &[("GIT_EDITOR", OsStr::new(":"))],
+                )?;
+                "Skipped current rebase step".to_string()
             }
             GitCommand::CreateBranch { branch_name } => {
                 git(&repo_path, ["checkout", "-b", branch_name.as_str()])?;
@@ -710,6 +739,10 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::StartInteractiveRebase { .. } => "start_interactive_rebase",
+        GitCommand::ContinueRebase => "continue_rebase",
+        GitCommand::AbortRebase => "abort_rebase",
+        GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::RenameBranch { .. } => "rename_branch",
@@ -1267,8 +1300,21 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    git_output_with_env(repo_path, args, &[])
+}
+
+fn git_output_with_env<I, S>(
+    repo_path: &Path,
+    args: I,
+    envs: &[(&str, &OsStr)],
+) -> GitResult<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     Command::new("git")
         .args(args)
+        .envs(envs.iter().copied())
         .current_dir(repo_path)
         .output()
         .map_err(io_error)
@@ -1337,6 +1383,51 @@ fn command_failure(output: Output) -> GitError {
             output.status, stdout, stderr
         ),
     }
+}
+
+fn git_with_env<I, S>(repo_path: &Path, args: I, envs: &[(&str, &OsStr)]) -> GitResult<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = git_output_with_env(repo_path, args, envs)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    Ok(())
+}
+
+fn start_interactive_rebase(repo_path: &Path, commit: &str) -> GitResult<()> {
+    let tempdir = tempfile::tempdir().map_err(io_error)?;
+    let script_path = tempdir.path().join("sequence-editor.sh");
+    fs::write(
+        &script_path,
+        "#!/bin/sh\nset -eu\nfile=\"$1\"\ntmp=\"$1.tmp\"\nawk 'BEGIN{done=0} { if (!done && $1 == \"pick\") { sub(/^pick /, \"edit \"); done=1 } print }' \"$file\" > \"$tmp\"\nmv \"$tmp\" \"$file\"\n",
+    )
+    .map_err(io_error)?;
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&script_path).map_err(io_error)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).map_err(io_error)?;
+    }
+
+    let parent = git_stdout(repo_path, ["rev-parse", &format!("{commit}^")]).ok();
+    let mut args = vec!["rebase".to_string(), "-i".to_string()];
+    if let Some(parent) = parent {
+        args.push(parent);
+    } else {
+        args.push("--root".to_string());
+    }
+
+    git_with_env(
+        repo_path,
+        args.iter().map(String::as_str),
+        &[
+            ("GIT_SEQUENCE_EDITOR", script_path.as_os_str()),
+            ("GIT_EDITOR", OsStr::new(":")),
+        ],
+    )
 }
 
 fn unstage_path(repo_path: &Path, path: &Path) -> GitResult<()> {
@@ -1727,6 +1818,52 @@ fn read_worktrees(repo_path: &Path) -> Vec<WorktreeItem> {
     items
 }
 
+fn read_rebase_state(repo_path: &Path) -> Option<RebaseState> {
+    let merge_dir = resolve_git_path(repo_path, "rebase-merge").filter(|path| path.exists());
+    let apply_dir = resolve_git_path(repo_path, "rebase-apply").filter(|path| path.exists());
+    let (dir, kind) = if let Some(dir) = merge_dir {
+        let interactive = dir.join("interactive").exists();
+        (
+            dir,
+            if interactive {
+                RebaseKind::Interactive
+            } else {
+                RebaseKind::Apply
+            },
+        )
+    } else if let Some(dir) = apply_dir {
+        (dir, RebaseKind::Apply)
+    } else {
+        return None;
+    };
+
+    let step = read_usize_file(&dir.join("msgnum"))
+        .or_else(|| read_usize_file(&dir.join("next")))
+        .unwrap_or(0);
+    let total = read_usize_file(&dir.join("end"))
+        .or_else(|| read_usize_file(&dir.join("last")))
+        .unwrap_or(step);
+    let head_name = read_trimmed_file(&dir.join("head-name")).map(normalize_head_name);
+    let onto = read_trimmed_file(&dir.join("onto"));
+    let current_commit = git_stdout(repo_path, ["rev-parse", "--verify", "REBASE_HEAD"])
+        .ok()
+        .or_else(|| read_trimmed_file(&dir.join("stopped-sha")));
+    let current_summary = current_commit
+        .as_deref()
+        .and_then(|commit| git_stdout(repo_path, ["show", "-s", "--format=%s", commit]).ok());
+
+    Some(RebaseState {
+        kind,
+        step,
+        total,
+        head_name,
+        onto,
+        current_commit,
+        current_summary,
+        todo_preview: read_rebase_todo_preview(&dir),
+    })
+}
+
 fn read_merge_state(repo_path: &Path) -> MergeState {
     if git_path_exists(repo_path, "MERGE_HEAD") {
         MergeState::MergeInProgress
@@ -1740,15 +1877,53 @@ fn read_merge_state(repo_path: &Path) -> MergeState {
 }
 
 fn git_path_exists(repo_path: &Path, git_path: &str) -> bool {
+    resolve_git_path(repo_path, git_path).is_some_and(|path| path.exists())
+}
+
+fn resolve_git_path(repo_path: &Path, git_path: &str) -> Option<PathBuf> {
     git_stdout(repo_path, ["rev-parse", "--git-path", git_path])
+        .ok()
         .map(PathBuf::from)
-        .is_ok_and(|path| {
+        .map(|path| {
             if path.is_absolute() {
-                path.exists()
+                path
             } else {
-                repo_path.join(path).exists()
+                repo_path.join(path)
             }
         })
+}
+
+fn read_trimmed_file(path: &Path) -> Option<String> {
+    fs::read_to_string(path)
+        .ok()
+        .map(|contents| contents.trim().to_string())
+        .filter(|contents| !contents.is_empty())
+}
+
+fn read_usize_file(path: &Path) -> Option<usize> {
+    read_trimmed_file(path)?.parse().ok()
+}
+
+fn normalize_head_name(value: String) -> String {
+    value
+        .strip_prefix("refs/heads/")
+        .or_else(|| value.strip_prefix("refs/remotes/"))
+        .unwrap_or(value.as_str())
+        .to_string()
+}
+
+fn read_rebase_todo_preview(dir: &Path) -> Vec<String> {
+    read_trimmed_file(&dir.join("git-rebase-todo"))
+        .map(|contents| {
+            contents
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .take(3)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn is_conflict_code(index: char, worktree: char) -> bool {
@@ -1773,7 +1948,7 @@ struct ParsedHunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, JobId, RepoId};
+    use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, JobId, RebaseKind, RepoId};
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
         rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, temp_repo,
@@ -2575,10 +2750,188 @@ mod tests {
             .expect("detail should load");
 
         assert_eq!(detail.merge_state, MergeState::RebaseInProgress);
+        assert_eq!(
+            detail.rebase_state.as_ref().map(|state| state.kind),
+            Some(RebaseKind::Interactive)
+        );
+        assert_eq!(
+            detail
+                .rebase_state
+                .as_ref()
+                .and_then(|state| state.current_summary.as_deref()),
+            Some("feature change")
+        );
         assert!(detail
             .file_tree
             .iter()
             .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
+    fn cli_backend_starts_interactive_rebase_at_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+        let original_head = repo.rev_parse("HEAD").expect("original head");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-interactive-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartInteractiveRebase {
+                    commit: target.clone(),
+                },
+            })
+            .expect("interactive rebase should start");
+
+        assert!(outcome.summary.contains("second"));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::RebaseInProgress);
+        assert_eq!(
+            detail.rebase_state.as_ref().map(|state| state.kind),
+            Some(RebaseKind::Interactive)
+        );
+        assert_eq!(
+            detail
+                .rebase_state
+                .as_ref()
+                .and_then(|state| state.current_commit.as_deref()),
+            Some(target.as_str())
+        );
+        assert_eq!(
+            detail
+                .rebase_state
+                .as_ref()
+                .and_then(|state| state.current_summary.as_deref()),
+            Some("second")
+        );
+        assert!(detail.rebase_state.as_ref().is_some_and(|state| state
+            .todo_preview
+            .iter()
+            .any(|line| line.contains("add lib"))));
+        assert_ne!(
+            repo.rev_parse("HEAD").expect("head during rebase"),
+            original_head
+        );
+    }
+
+    #[test]
+    fn cli_backend_continues_interactive_rebase_after_edit_stop() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+        let original_head = repo.rev_parse("HEAD").expect("original head");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-interactive-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartInteractiveRebase { commit: target },
+            })
+            .expect("interactive rebase should start");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:continue-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::ContinueRebase,
+            })
+            .expect("rebase should continue");
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+        assert!(detail.rebase_state.is_none());
+        assert_eq!(repo.rev_parse("HEAD").expect("final head"), original_head);
+    }
+
+    #[test]
+    fn cli_backend_aborts_interactive_rebase() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+        let original_head = repo.rev_parse("HEAD").expect("original head");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-interactive-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartInteractiveRebase { commit: target },
+            })
+            .expect("interactive rebase should start");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:abort-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::AbortRebase,
+            })
+            .expect("rebase abort should succeed");
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+        assert!(detail.rebase_state.is_none());
+        assert_eq!(
+            repo.rev_parse("HEAD").expect("head after abort"),
+            original_head
+        );
+    }
+
+    #[test]
+    fn cli_backend_skips_conflicting_rebase_step() {
+        let repo = rebase_in_progress_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:skip-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::SkipRebase,
+            })
+            .expect("rebase skip should succeed");
+
+        assert_eq!(outcome.summary, "Skipped current rebase step");
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+        assert!(detail.rebase_state.is_none());
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("rebase.txt")).expect("read rebase.txt"),
+            "main\n"
+        );
+        assert_eq!(repo.current_branch().expect("current branch"), "feature");
     }
 
     #[test]

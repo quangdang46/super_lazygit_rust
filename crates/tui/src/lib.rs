@@ -320,6 +320,7 @@ impl TuiApp {
                         | RepoSubview::Branches
                         | RepoSubview::Commits
                         | RepoSubview::Compare
+                        | RepoSubview::Rebase
                         | RepoSubview::Stash
                         | RepoSubview::Reflog
                         | RepoSubview::Worktrees
@@ -409,11 +410,29 @@ impl TuiApp {
                     (RepoSubview::Commits, _, "k" | "up") => {
                         return Some(Action::SelectPreviousCommit);
                     }
+                    (RepoSubview::Commits, _, "i") => {
+                        return Some(Action::StartInteractiveRebase);
+                    }
                     (RepoSubview::Compare, _, "j" | "down") => {
                         return Some(Action::ScrollRepoDetailDown);
                     }
                     (RepoSubview::Compare, _, "k" | "up") => {
                         return Some(Action::ScrollRepoDetailUp);
+                    }
+                    (RepoSubview::Rebase, _, "j" | "down") => {
+                        return Some(Action::ScrollRepoDetailDown);
+                    }
+                    (RepoSubview::Rebase, _, "k" | "up") => {
+                        return Some(Action::ScrollRepoDetailUp);
+                    }
+                    (RepoSubview::Rebase, _, "c") => {
+                        return Some(Action::ContinueRebase);
+                    }
+                    (RepoSubview::Rebase, _, "s") => {
+                        return Some(Action::SkipRebase);
+                    }
+                    (RepoSubview::Rebase, "A", _) => {
+                        return Some(Action::AbortRebase);
                     }
                     (RepoSubview::Stash, _, "j" | "down") => {
                         return Some(Action::SelectNextStash);
@@ -457,9 +476,10 @@ impl TuiApp {
             "2" => Some(Action::SwitchRepoSubview(RepoSubview::Branches)),
             "3" => Some(Action::SwitchRepoSubview(RepoSubview::Commits)),
             "4" => Some(Action::SwitchRepoSubview(RepoSubview::Compare)),
-            "5" => Some(Action::SwitchRepoSubview(RepoSubview::Stash)),
-            "6" => Some(Action::SwitchRepoSubview(RepoSubview::Reflog)),
-            "7" => Some(Action::SwitchRepoSubview(RepoSubview::Worktrees)),
+            "5" => Some(Action::SwitchRepoSubview(RepoSubview::Rebase)),
+            "6" => Some(Action::SwitchRepoSubview(RepoSubview::Stash)),
+            "7" => Some(Action::SwitchRepoSubview(RepoSubview::Reflog)),
+            "8" => Some(Action::SwitchRepoSubview(RepoSubview::Worktrees)),
             "r" => Some(Action::RefreshSelectedRepo),
             "f" => Some(Action::FetchSelectedRepo),
             "p" => Some(Action::PullCurrentBranch),
@@ -793,6 +813,12 @@ impl TuiApp {
                     repo_mode.detail.as_ref(),
                     repo_mode.comparison_base.as_ref(),
                     repo_mode.comparison_target.as_ref(),
+                    repo_mode.diff_scroll,
+                    usize::from(area.height.saturating_sub(2)),
+                    theme,
+                ),
+                RepoSubview::Rebase => repo_rebase_lines(
+                    repo_mode.detail.as_ref(),
                     repo_mode.diff_scroll,
                     usize::from(area.height.saturating_sub(2)),
                     theme,
@@ -1914,6 +1940,102 @@ fn repo_compare_lines(
     lines
 }
 
+fn repo_rebase_lines(
+    detail: Option<&RepoDetail>,
+    scroll: usize,
+    viewport_lines: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Rebase",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    let Some(rebase) = detail.rebase_state.as_ref() else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Rebase",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("No rebase is currently active."),
+            Line::from("Use i from Commits to start an interactive rebase."),
+        ];
+    };
+
+    let mut body = vec![
+        Line::from(format!(
+            "Mode: {}  Step: {}/{}",
+            rebase_kind_label(rebase.kind),
+            rebase.step.max(1),
+            rebase.total.max(rebase.step.max(1))
+        )),
+        Line::from(format!(
+            "Branch: {}  Onto: {}",
+            rebase.head_name.as_deref().unwrap_or("detached"),
+            rebase.onto.as_deref().unwrap_or("-")
+        )),
+        Line::from(format!(
+            "Current: {}  {}",
+            rebase.current_commit.as_deref().unwrap_or("-"),
+            rebase
+                .current_summary
+                .as_deref()
+                .unwrap_or("waiting for git metadata")
+        )),
+        Line::from("c continue  s skip  A abort  j/k scroll"),
+    ];
+
+    if rebase.todo_preview.is_empty() {
+        body.push(Line::from("Todo: no queued rebase commands remain."));
+    } else {
+        body.push(Line::from("Upcoming commands:"));
+        body.extend(
+            rebase
+                .todo_preview
+                .iter()
+                .map(|line| Line::from(format!("  {line}"))),
+        );
+    }
+
+    if detail.diff.lines.is_empty() {
+        body.push(Line::from(
+            "Diff preview: no working tree diff for the current rebase step.",
+        ));
+    } else {
+        body.push(Line::from("Diff preview:"));
+        body.extend(
+            detail
+                .diff
+                .lines
+                .iter()
+                .take(8)
+                .map(|line| render_diff_line(line.kind, &line.content, theme, false)),
+        );
+    }
+
+    let mut lines = vec![Line::from(vec![Span::styled(
+        "Interactive rebase control",
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )])];
+    let visible_capacity = viewport_lines.saturating_sub(lines.len()).max(1);
+    let max_scroll = body.len().saturating_sub(visible_capacity);
+    let scroll = scroll.min(max_scroll);
+    lines.extend(body.into_iter().skip(scroll).take(visible_capacity));
+    lines.truncate(viewport_lines.max(1));
+    lines
+}
+
 fn repo_diff_lines(
     detail: Option<&RepoDetail>,
     scroll: usize,
@@ -2104,6 +2226,17 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         }
         super_lazygit_core::ConfirmableOperation::Push => {
             "Push the current branch to its configured upstream?".to_string()
+        }
+        super_lazygit_core::ConfirmableOperation::StartInteractiveRebase { summary, .. } => {
+            format!(
+                "Start an interactive rebase at {summary}? The selected commit will be marked edit."
+            )
+        }
+        super_lazygit_core::ConfirmableOperation::AbortRebase => {
+            "Abort the current rebase and restore the branch to its pre-rebase state?".to_string()
+        }
+        super_lazygit_core::ConfirmableOperation::SkipRebase => {
+            "Skip the current rebase step? Git will drop the commit being replayed.".to_string()
         }
         super_lazygit_core::ConfirmableOperation::DeleteBranch { branch_name } => {
             format!(
@@ -2368,6 +2501,7 @@ fn repo_subview_label(subview: RepoSubview) -> &'static str {
         RepoSubview::Branches => "Branches",
         RepoSubview::Commits => "Commits",
         RepoSubview::Compare => "Compare",
+        RepoSubview::Rebase => "Rebase",
         RepoSubview::Stash => "Stash",
         RepoSubview::Reflog => "Reflog",
         RepoSubview::Worktrees => "Worktrees",
@@ -2380,9 +2514,10 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
         (RepoSubview::Branches, "2 Branches"),
         (RepoSubview::Commits, "3 Commits"),
         (RepoSubview::Compare, "4 Compare"),
-        (RepoSubview::Stash, "5 Stash"),
-        (RepoSubview::Reflog, "6 Reflog"),
-        (RepoSubview::Worktrees, "7 Worktrees"),
+        (RepoSubview::Rebase, "5 Rebase"),
+        (RepoSubview::Stash, "6 Stash"),
+        (RepoSubview::Reflog, "7 Reflog"),
+        (RepoSubview::Worktrees, "8 Worktrees"),
     ];
 
     let mut spans = Vec::with_capacity(all.len() * 2);
@@ -2451,10 +2586,13 @@ fn default_status_text(state: &AppState) -> String {
                         "Branches detail focus; j/k move, v compares refs, x clears compare, Enter checks out, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; j/k browse history, v compares commits, and x clears compare."
+                        "Commits detail focus; j/k browse history, i starts an interactive rebase, v compares commits, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff and x clears compare."
+                            .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Rebase {
+                        "Rebase detail focus; c continues, s skips, A aborts, and j/k scroll the active step."
                             .to_string()
                     } else {
                         format!(
@@ -2488,31 +2626,40 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  l next pane  1-7 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  c commit  A amend HEAD  h/l change pane  1-7 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  v compare  x clear compare  Enter checkout  c create  R rename  d delete  u upstream  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  v compare  x clear compare  Enter checkout  c create  R rename  d delete  u upstream  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  v compare  x clear compare  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  i start rebase  v compare  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
-                    "Compare pane  j/k scroll diff  x clear compare  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Compare pane  j/k scroll diff  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Rebase {
+                    "Rebase pane  c continue  s skip  A abort  j/k scroll  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
-                        "{} detail pane  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
+                        "{} detail pane  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
                         repo_subview_label(repo_mode.active_subview)
                     )
                 }
             },
         ),
         _ => "Repository shell".to_string(),
+    }
+}
+
+fn rebase_kind_label(kind: super_lazygit_core::RebaseKind) -> &'static str {
+    match kind {
+        super_lazygit_core::RebaseKind::Interactive => "interactive",
+        super_lazygit_core::RebaseKind::Apply => "apply",
     }
 }
 
@@ -2662,8 +2809,8 @@ mod tests {
     use super::*;
     use super_lazygit_core::{
         BranchItem, CommitFileItem, CommitItem, ComparisonTarget, DiffLine, DiffLineKind,
-        DiffModel, FileStatus, FileStatusKind, ModalKind, RepoModeState, StatusMessage, Timestamp,
-        WorkspaceFilterMode, WorkspaceState,
+        DiffModel, FileStatus, FileStatusKind, ModalKind, RebaseKind, RebaseState, RepoModeState,
+        StatusMessage, Timestamp, WorkspaceFilterMode, WorkspaceState,
     };
 
     fn sample_repo_detail() -> RepoDetail {
@@ -3409,6 +3556,111 @@ mod tests {
         assert_eq!(
             result.state.repo_mode.expect("repo mode").active_subview,
             RepoSubview::Branches
+        );
+    }
+
+    #[test]
+    fn repo_mode_commit_detail_routes_interactive_rebase_start() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "i".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::StartInteractiveRebase {
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn repo_mode_rebase_detail_routes_continue_skip_and_abort() {
+        let mut detail = sample_repo_detail();
+        detail.merge_state = super_lazygit_core::MergeState::RebaseInProgress;
+        detail.rebase_state = Some(RebaseState {
+            kind: RebaseKind::Interactive,
+            step: 1,
+            total: 2,
+            head_name: Some("main".to_string()),
+            onto: Some("1234567".to_string()),
+            current_commit: Some("1234567890abcdef".to_string()),
+            current_summary: Some("second".to_string()),
+            todo_preview: vec!["pick abcdef1 add lib".to_string()],
+        });
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Rebase,
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
+
+        let continue_result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "c".to_string(),
+        })));
+        assert!(continue_result.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::ContinueRebase,
+                ..
+            })
+        )));
+
+        let mut skip_app = TuiApp::new(state.clone(), AppConfig::default());
+        let skip_result = skip_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "s".to_string(),
+        })));
+        assert_eq!(skip_result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            skip_result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::SkipRebase)
+        );
+
+        let mut abort_app = TuiApp::new(state, AppConfig::default());
+        let abort_result = abort_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "A".to_string(),
+        })));
+        assert_eq!(abort_result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            abort_result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::AbortRebase)
         );
     }
 
@@ -4259,6 +4511,53 @@ mod tests {
         assert!(rendered.contains("> abcdef1 add lib"));
         assert!(rendered.contains("A src/lib.rs"));
         assert!(rendered.contains("+pub fn answer() -> u32 {"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_rebase_view() {
+        let mut detail = sample_repo_detail();
+        detail.merge_state = super_lazygit_core::MergeState::RebaseInProgress;
+        detail.rebase_state = Some(RebaseState {
+            kind: RebaseKind::Interactive,
+            step: 1,
+            total: 2,
+            head_name: Some("main".to_string()),
+            onto: Some("1234567".to_string()),
+            current_commit: Some("1234567890abcdef".to_string()),
+            current_summary: Some("second".to_string()),
+            todo_preview: vec!["pick abcdef1 add lib".to_string()],
+        });
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Rebase,
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Rebase"));
+        assert!(rendered.contains("Interactive rebase control"));
+        assert!(rendered.contains("Mode: interactive"));
+        assert!(rendered.contains("c continue  s skip  A abort"));
+        assert!(rendered.contains("pick abcdef1 add lib"));
     }
 
     #[test]
