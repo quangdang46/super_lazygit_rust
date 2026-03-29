@@ -422,6 +422,15 @@ impl TuiApp {
                     (RepoSubview::Commits, _, "i") => {
                         return Some(Action::StartInteractiveRebase);
                     }
+                    (RepoSubview::Commits, "A", _) => {
+                        return Some(Action::AmendSelectedCommit);
+                    }
+                    (RepoSubview::Commits, "F", _) => {
+                        return Some(Action::FixupSelectedCommit);
+                    }
+                    (RepoSubview::Commits, "R", _) => {
+                        return Some(Action::RewordSelectedCommit);
+                    }
                     (RepoSubview::Commits, "C", _) => {
                         return Some(Action::CherryPickSelectedCommit);
                     }
@@ -1878,7 +1887,8 @@ fn repo_commit_lines(
             comparison_source,
         )),
         Line::from(history_operation_state_line(&detail.merge_state)),
-        Line::from("Actions: i rebase  C cherry-pick  V revert  S soft  M mixed  H hard"),
+        Line::from("Actions: i rebase  A amend  F fixup  R reword"),
+        Line::from("         C cherry-pick  V revert  S soft  M mixed  H hard"),
         Line::from("History:"),
     ];
 
@@ -2018,6 +2028,7 @@ fn repo_rebase_lines(
                 .unwrap_or("waiting for git metadata")
         )),
         Line::from("c continue  s skip  A abort  j/k scroll"),
+        Line::from("Older-commit amend: switch to Status, press A to amend, then continue."),
     ];
 
     if rebase.todo_preview.is_empty() {
@@ -2264,6 +2275,16 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Start an interactive rebase at {summary}? The selected commit will be marked edit."
             )
         }
+        super_lazygit_core::ConfirmableOperation::AmendCommit { summary, .. } => {
+            format!(
+                "Start older-commit amend for {summary}? Git will pause on that commit so you can stage changes, amend it from Status, and continue from Rebase."
+            )
+        }
+        super_lazygit_core::ConfirmableOperation::FixupCommit { summary, .. } => {
+            format!(
+                "Create a fixup commit for {summary} from the currently staged changes and autosquash it with rebase?"
+            )
+        }
         super_lazygit_core::ConfirmableOperation::CherryPickCommit { summary, .. } => {
             format!("Cherry-pick {summary} onto the current HEAD?")
         }
@@ -2336,6 +2357,11 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         super_lazygit_core::InputPromptOperation::CreateWorktree => {
             "Enter worktree details as: <path> <branch>. Example: ../repo-feature feature."
                 .to_string()
+        }
+        super_lazygit_core::InputPromptOperation::RewordCommit { summary, .. } => {
+            format!(
+                "Enter a replacement subject line for {summary}. This rewrites the selected commit message via rebase."
+            )
         }
     }
 }
@@ -3615,6 +3641,14 @@ mod tests {
 
     #[test]
     fn confirm_modal_renders_history_operation_copy() {
+        let amend = confirmation_copy(&super_lazygit_core::ConfirmableOperation::AmendCommit {
+            commit: "1234567890abcdef".to_string(),
+            summary: "1234567 second".to_string(),
+        });
+        let fixup = confirmation_copy(&super_lazygit_core::ConfirmableOperation::FixupCommit {
+            commit: "1234567890abcdef".to_string(),
+            summary: "1234567 second".to_string(),
+        });
         let cherry_pick = confirmation_copy(
             &super_lazygit_core::ConfirmableOperation::CherryPickCommit {
                 commit: "1234567890abcdef".to_string(),
@@ -3626,6 +3660,8 @@ mod tests {
             summary: "1234567 second".to_string(),
         });
 
+        assert!(amend.contains("older-commit amend"));
+        assert!(fixup.contains("fixup commit"));
         assert!(cherry_pick.contains("Cherry-pick 1234567 second"));
         assert!(revert.contains("Revert 1234567 second"));
     }
@@ -3757,7 +3793,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_mode_commit_detail_routes_cherry_pick_and_revert_shortcuts() {
+    fn repo_mode_commit_detail_routes_history_shortcuts() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
@@ -3787,6 +3823,55 @@ mod tests {
             Some(super_lazygit_core::ConfirmableOperation::CherryPickCommit {
                 commit: "1234567890abcdef".to_string(),
                 summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut amend_app = TuiApp::new(state.clone(), AppConfig::default());
+        let amend = amend_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "A".to_string(),
+        })));
+        assert_eq!(
+            amend
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::AmendCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut fixup_app = TuiApp::new(state.clone(), AppConfig::default());
+        let fixup = fixup_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "F".to_string(),
+        })));
+        assert_eq!(
+            fixup
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::FixupCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut reword_app = TuiApp::new(state.clone(), AppConfig::default());
+        let reword = reword_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "R".to_string(),
+        })));
+        assert_eq!(
+            reword
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.operation.clone()),
+            Some(super_lazygit_core::InputPromptOperation::RewordCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+                initial_message: "second".to_string(),
             })
         );
 
@@ -4773,6 +4858,9 @@ mod tests {
         assert!(rendered.contains("Compare base: abcdef1234567890"));
         assert!(rendered.contains("State: idle"));
         assert!(rendered.contains("> abcdef1 add lib"));
+        assert!(rendered.contains("A amend"));
+        assert!(rendered.contains("F fixup"));
+        assert!(rendered.contains("R reword"));
         assert!(rendered.contains("C cherry-pick"));
         assert!(rendered.contains("V revert"));
         assert!(rendered.contains("S soft"));

@@ -453,7 +453,12 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
-        GitCommand::StartInteractiveRebase { .. } => "start_interactive_rebase",
+        GitCommand::StartCommitRebase { mode, .. } => match mode {
+            super_lazygit_core::RebaseStartMode::Interactive => "start_interactive_rebase",
+            super_lazygit_core::RebaseStartMode::Amend => "start_amend_rebase",
+            super_lazygit_core::RebaseStartMode::Fixup => "start_fixup_rebase",
+            super_lazygit_core::RebaseStartMode::Reword { .. } => "start_reword_rebase",
+        },
         GitCommand::CherryPickCommit { .. } => "cherry_pick_commit",
         GitCommand::RevertCommit { .. } => "revert_commit",
         GitCommand::ResetToCommit { mode, .. } => match mode {

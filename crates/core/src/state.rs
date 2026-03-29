@@ -107,6 +107,14 @@ pub enum ConfirmableOperation {
         commit: String,
         summary: String,
     },
+    AmendCommit {
+        commit: String,
+        summary: String,
+    },
+    FixupCommit {
+        commit: String,
+        summary: String,
+    },
     CherryPickCommit {
         commit: String,
         summary: String,
@@ -144,9 +152,18 @@ pub struct PendingInputPrompt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputPromptOperation {
     CreateBranch,
-    RenameBranch { current_name: String },
-    SetBranchUpstream { branch_name: String },
+    RenameBranch {
+        current_name: String,
+    },
+    SetBranchUpstream {
+        branch_name: String,
+    },
     CreateWorktree,
+    RewordCommit {
+        commit: String,
+        summary: String,
+        initial_message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -44,6 +44,14 @@ pub struct GitCommandRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RebaseStartMode {
+    Interactive,
+    Amend,
+    Fixup,
+    Reword { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GitCommand {
     StageSelection,
     StageFile {
@@ -61,8 +69,9 @@ pub enum GitCommand {
     AmendHead {
         message: Option<String>,
     },
-    StartInteractiveRebase {
+    StartCommitRebase {
         commit: String,
+        mode: RebaseStartMode,
     },
     CherryPickCommit {
         commit: String,

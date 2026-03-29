@@ -1,6 +1,6 @@
 use crate::action::Action;
 use crate::effect::{
-    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob,
+    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob, RebaseStartMode,
 };
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
@@ -165,7 +165,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::StartInteractiveRebase => {
-            match pending_history_commit_operation(state, |commit, selected_index| {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
                 if selected_index == 0 {
                     return Err(
                         "Select an older commit before starting an interactive rebase.".to_string(),
@@ -187,8 +187,64 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::AmendSelectedCommit => {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before starting amend.".to_string());
+                }
+                Ok(ConfirmableOperation::AmendCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before starting amend."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::FixupSelectedCommit => {
+            match pending_history_commit_operation(state, |detail, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before starting fixup.".to_string());
+                }
+                if staged_file_count(detail) == 0 {
+                    return Err("Stage changes before starting fixup.".to_string());
+                }
+                Ok(ConfirmableOperation::FixupCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before starting fixup."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::RewordSelectedCommit => {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before starting reword.".to_string());
+                }
+                Ok(InputPromptOperation::RewordCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                    initial_message: commit.summary.clone(),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => open_input_prompt(state, repo_id, operation),
+                Ok(None) => push_warning(state, "Select a commit before starting reword."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::CherryPickSelectedCommit => {
-            match pending_history_commit_operation(state, |commit, _| {
+            match pending_history_commit_operation(state, |_, commit, _| {
                 Ok(ConfirmableOperation::CherryPickCommit {
                     commit: commit.oid.clone(),
                     summary: format!("{} {}", commit.short_oid, commit.summary),
@@ -203,7 +259,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::RevertSelectedCommit => {
-            match pending_history_commit_operation(state, |commit, _| {
+            match pending_history_commit_operation(state, |_, commit, _| {
                 Ok(ConfirmableOperation::RevertCommit {
                     commit: commit.oid.clone(),
                     summary: format!("{} {}", commit.short_oid, commit.summary),
@@ -1262,6 +1318,12 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::StartInteractiveRebase { summary, .. } => {
             format!("Start interactive rebase at {summary}")
         }
+        ConfirmableOperation::AmendCommit { summary, .. } => {
+            format!("Amend {summary}")
+        }
+        ConfirmableOperation::FixupCommit { summary, .. } => {
+            format!("Fixup {summary}")
+        }
         ConfirmableOperation::CherryPickCommit { summary, .. } => {
             format!("Cherry-pick {summary}")
         }
@@ -1303,8 +1365,25 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             "Discard file changes",
         ),
         ConfirmableOperation::StartInteractiveRebase { commit, .. } => (
-            GitCommand::StartInteractiveRebase { commit },
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::Interactive,
+            },
             "Start interactive rebase",
+        ),
+        ConfirmableOperation::AmendCommit { commit, .. } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::Amend,
+            },
+            "Start older-commit amend",
+        ),
+        ConfirmableOperation::FixupCommit { commit, .. } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::Fixup,
+            },
+            "Start fixup autosquash",
         ),
         ConfirmableOperation::CherryPickCommit { commit, .. } => (
             GitCommand::CherryPickCommit { commit },
@@ -1377,6 +1456,7 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
             format!("Set upstream for {branch_name}")
         }
         InputPromptOperation::CreateWorktree => "Create worktree".to_string(),
+        InputPromptOperation::RewordCommit { summary, .. } => format!("Reword {summary}"),
     }
 }
 
@@ -1386,6 +1466,9 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
         InputPromptOperation::CreateWorktree => String::new(),
+        InputPromptOperation::RewordCommit {
+            initial_message, ..
+        } => initial_message.clone(),
     }
 }
 
@@ -1437,6 +1520,17 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 format!("Create worktree {} from {branch_ref}", path.display()),
             )
         }
+        InputPromptOperation::RewordCommit {
+            commit, summary, ..
+        } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::Reword {
+                    message: value.clone(),
+                },
+            },
+            format!("Reword {summary}"),
+        ),
     };
     let job = git_job(pending.repo_id, command);
     enqueue_git_job(state, &job, &summary);
@@ -1669,12 +1763,12 @@ fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::Comm
     detail.commits.get(selected_index)
 }
 
-fn pending_history_commit_operation<F>(
+fn pending_history_commit_operation<T, F>(
     state: &AppState,
     build: F,
-) -> Result<Option<(crate::state::RepoId, ConfirmableOperation)>, String>
+) -> Result<Option<(crate::state::RepoId, T)>, String>
 where
-    F: FnOnce(&crate::state::CommitItem, usize) -> Result<ConfirmableOperation, String>,
+    F: FnOnce(&crate::state::RepoDetail, &crate::state::CommitItem, usize) -> Result<T, String>,
 {
     let Some(repo_mode) = state.repo_mode.as_ref() else {
         return Ok(None);
@@ -1695,7 +1789,7 @@ where
     };
     Ok(Some((
         repo_mode.current_repo_id.clone(),
-        build(commit, selected_index)?,
+        build(detail, commit, selected_index)?,
     )))
 }
 
@@ -2013,7 +2107,12 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::UnstageFile { .. } => "unstage-file",
         GitCommand::CommitStaged { .. } => "commit-staged",
         GitCommand::AmendHead { .. } => "amend-head",
-        GitCommand::StartInteractiveRebase { .. } => "start-interactive-rebase",
+        GitCommand::StartCommitRebase { mode, .. } => match mode {
+            RebaseStartMode::Interactive => "start-interactive-rebase",
+            RebaseStartMode::Amend => "start-amend-rebase",
+            RebaseStartMode::Fixup => "start-fixup-rebase",
+            RebaseStartMode::Reword { .. } => "start-reword-rebase",
+        },
         GitCommand::CherryPickCommit { .. } => "cherry-pick-commit",
         GitCommand::RevertCommit { .. } => "revert-commit",
         GitCommand::ResetToCommit { mode, .. } => match mode {
@@ -2096,7 +2195,7 @@ fn complete_job(state: &mut AppState, job_id: &JobId, next_state: BackgroundJobS
 #[cfg(test)]
 mod tests {
     use crate::action::Action;
-    use crate::effect::{Effect, GitCommand, GitCommandRequest};
+    use crate::effect::{Effect, GitCommand, GitCommandRequest, RebaseStartMode};
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
@@ -2829,6 +2928,49 @@ mod tests {
     }
 
     #[test]
+    fn submit_reword_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Reword old1234 older commit",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::RewordCommit {
+                    commit: "older".to_string(),
+                    summary: "old1234 older commit".to_string(),
+                    initial_message: "older commit".to_string(),
+                },
+                value: "reworded subject".to_string(),
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:start-reword-rebase");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::StartCommitRebase {
+                    commit: "older".to_string(),
+                    mode: RebaseStartMode::Reword {
+                        message: "reworded subject".to_string(),
+                    },
+                },
+            })]
+        );
+    }
+
+    #[test]
     fn confirm_pending_operation_queues_transport_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -2908,6 +3050,45 @@ mod tests {
                 repo_id,
                 command: GitCommand::DropStash {
                     stash_ref: "stash@{0}".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_fixup_rebase_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Fixup old1234 older commit",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::FixupCommit {
+                    commit: "older".to_string(),
+                    summary: "old1234 older commit".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:start-fixup-rebase");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::StartCommitRebase {
+                    commit: "older".to_string(),
+                    mode: RebaseStartMode::Fixup,
                 },
             })]
         );
@@ -4521,6 +4702,153 @@ mod tests {
             Some(ConfirmableOperation::StartInteractiveRebase {
                 commit: "older".to_string(),
                 summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn amend_selected_commit_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::AmendSelectedCommit));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::AmendCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn fixup_selected_commit_requires_staged_changes() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::FixupSelectedCommit));
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Stage changes before starting fixup.")
+        );
+    }
+
+    #[test]
+    fn reword_selected_commit_opens_prompt_with_selected_summary() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("tracked.txt"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: Some(FileStatusKind::Modified),
+                        unstaged_kind: None,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RewordSelectedCommit));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.operation.clone()),
+            Some(InputPromptOperation::RewordCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+                initial_message: "older commit".to_string(),
             })
         );
     }

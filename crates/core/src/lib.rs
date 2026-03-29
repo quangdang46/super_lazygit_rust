@@ -10,7 +10,9 @@ pub use diagnostics::{
     Diagnostics, DiagnosticsSnapshot, GitTiming, RenderTiming, ScanTiming, TimingSample,
     WatcherEvent, WatcherEventKind,
 };
-pub use effect::{Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob};
+pub use effect::{
+    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob, RebaseStartMode,
+};
 pub use event::{
     Event, InputEvent, KeyPress, TimerEvent, WatcherEvent as AppWatcherEvent, WorkerEvent,
 };

@@ -13,8 +13,8 @@ use super_lazygit_core::{
     BranchItem, CommitFileItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
     DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
     GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode, RebaseKind,
-    RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode,
-    SelectedHunk, StashItem, Timestamp, WatcherFreshness, WorktreeItem,
+    RebaseStartMode, RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary,
+    ResetMode, SelectedHunk, StashItem, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -562,11 +562,26 @@ impl GitBackend for CliGitBackend {
                 }
                 "Amended HEAD commit".to_string()
             }
-            GitCommand::StartInteractiveRebase { commit } => {
-                start_interactive_rebase(&repo_path, commit)?;
-                let summary = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+            GitCommand::StartCommitRebase { commit, mode } => {
+                start_commit_rebase(&repo_path, commit, mode)?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
                     .unwrap_or_else(|_| commit.clone());
-                format!("Started interactive rebase at {summary}")
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                match mode {
+                    RebaseStartMode::Interactive => {
+                        format!("Started interactive rebase at {short} {subject}")
+                    }
+                    RebaseStartMode::Amend => {
+                        format!("Started amend flow at {short} {subject}")
+                    }
+                    RebaseStartMode::Fixup => {
+                        format!("Started fixup autosquash for {short} {subject}")
+                    }
+                    RebaseStartMode::Reword { .. } => {
+                        format!("Reworded {short} {subject}")
+                    }
+                }
             }
             GitCommand::CherryPickCommit { commit } => {
                 cherry_pick_commit(&repo_path, commit)?;
@@ -772,7 +787,12 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
-        GitCommand::StartInteractiveRebase { .. } => "start_interactive_rebase",
+        GitCommand::StartCommitRebase { mode, .. } => match mode {
+            RebaseStartMode::Interactive => "start_interactive_rebase",
+            RebaseStartMode::Amend => "start_amend_rebase",
+            RebaseStartMode::Fixup => "start_fixup_rebase",
+            RebaseStartMode::Reword { .. } => "start_reword_rebase",
+        },
         GitCommand::CherryPickCommit { .. } => "cherry_pick_commit",
         GitCommand::RevertCommit { .. } => "revert_commit",
         GitCommand::ResetToCommit { mode, .. } => match mode {
@@ -1438,37 +1458,77 @@ where
     Ok(())
 }
 
-fn start_interactive_rebase(repo_path: &Path, commit: &str) -> GitResult<()> {
+fn start_commit_rebase(repo_path: &Path, commit: &str, mode: &RebaseStartMode) -> GitResult<()> {
+    match mode {
+        RebaseStartMode::Interactive | RebaseStartMode::Amend => {
+            run_scripted_rebase(repo_path, commit, "edit", None, false)
+        }
+        RebaseStartMode::Fixup => {
+            git(repo_path, ["commit", "--fixup", commit])?;
+            run_scripted_rebase(repo_path, commit, "pick", None, true)
+        }
+        RebaseStartMode::Reword { message } => {
+            run_scripted_rebase(repo_path, commit, "reword", Some(message.as_str()), false)
+        }
+    }
+}
+
+fn run_scripted_rebase(
+    repo_path: &Path,
+    commit: &str,
+    todo_verb: &str,
+    reword_message: Option<&str>,
+    autosquash: bool,
+) -> GitResult<()> {
     let tempdir = tempfile::tempdir().map_err(io_error)?;
-    let script_path = tempdir.path().join("sequence-editor.sh");
-    fs::write(
-        &script_path,
-        "#!/bin/sh\nset -eu\nfile=\"$1\"\ntmp=\"$1.tmp\"\nawk 'BEGIN{done=0} { if (!done && $1 == \"pick\") { sub(/^pick /, \"edit \"); done=1 } print }' \"$file\" > \"$tmp\"\nmv \"$tmp\" \"$file\"\n",
-    )
-    .map_err(io_error)?;
+    let sequence_editor = tempdir.path().join("sequence-editor.sh");
+    let sequence_script = if autosquash {
+        "#!/bin/sh\nset -eu\n:\n".to_string()
+    } else {
+        format!(
+            "#!/bin/sh\nset -eu\nfile=\"$1\"\ntmp=\"$1.tmp\"\nawk 'BEGIN{{done=0}} {{ if (!done && $1 == \"pick\") {{ sub(/^pick /, \"{todo_verb} \"); done=1 }} print }}' \"$file\" > \"$tmp\"\nmv \"$tmp\" \"$file\"\n"
+        )
+    };
+    write_executable_script(&sequence_editor, &sequence_script)?;
+
+    let editor_path = tempdir.path().join("git-editor.sh");
+    let mut envs: Vec<(&str, &OsStr)> = vec![("GIT_SEQUENCE_EDITOR", sequence_editor.as_os_str())];
+
+    if let Some(message) = reword_message {
+        write_executable_script(
+            &editor_path,
+            "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$SUPER_LAZYGIT_REWORD\" > \"$1\"\n",
+        )?;
+        envs.push(("GIT_EDITOR", editor_path.as_os_str()));
+        envs.push(("SUPER_LAZYGIT_REWORD", OsStr::new(message)));
+    } else {
+        envs.push(("GIT_EDITOR", OsStr::new(":")));
+    }
+
+    let mut args = vec!["rebase".to_string(), "-i".to_string()];
+    if autosquash {
+        args.push("--autosquash".to_string());
+    }
+    args.extend(rebase_base_args(repo_path, commit));
+
+    git_with_env(repo_path, args.iter().map(String::as_str), &envs)
+}
+
+fn write_executable_script(path: &Path, contents: &str) -> GitResult<()> {
+    fs::write(path, contents).map_err(io_error)?;
     #[cfg(unix)]
     {
-        let mut permissions = fs::metadata(&script_path).map_err(io_error)?.permissions();
+        let mut permissions = fs::metadata(path).map_err(io_error)?.permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&script_path, permissions).map_err(io_error)?;
+        fs::set_permissions(path, permissions).map_err(io_error)?;
     }
+    Ok(())
+}
 
-    let parent = git_stdout(repo_path, ["rev-parse", &format!("{commit}^")]).ok();
-    let mut args = vec!["rebase".to_string(), "-i".to_string()];
-    if let Some(parent) = parent {
-        args.push(parent);
-    } else {
-        args.push("--root".to_string());
-    }
-
-    git_with_env(
-        repo_path,
-        args.iter().map(String::as_str),
-        &[
-            ("GIT_SEQUENCE_EDITOR", script_path.as_os_str()),
-            ("GIT_EDITOR", OsStr::new(":")),
-        ],
-    )
+fn rebase_base_args(repo_path: &Path, commit: &str) -> Vec<String> {
+    git_stdout(repo_path, ["rev-parse", &format!("{commit}^")])
+        .map(|parent| vec![parent])
+        .unwrap_or_else(|_| vec!["--root".to_string()])
 }
 
 fn cherry_pick_commit(repo_path: &Path, commit: &str) -> GitResult<()> {
@@ -2050,7 +2110,8 @@ struct ParsedHunk {
 mod tests {
     use super::*;
     use super_lazygit_core::{
-        DiffModel, GitCommand, GitCommandRequest, JobId, RebaseKind, RepoId, ResetMode,
+        DiffModel, GitCommand, GitCommandRequest, JobId, RebaseKind, RebaseStartMode, RepoId,
+        ResetMode,
     };
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
@@ -2882,8 +2943,9 @@ mod tests {
             .run_command(GitCommandRequest {
                 job_id: JobId::new("git:start-interactive-rebase"),
                 repo_id: repo_id.clone(),
-                command: GitCommand::StartInteractiveRebase {
+                command: GitCommand::StartCommitRebase {
                     commit: target.clone(),
+                    mode: RebaseStartMode::Interactive,
                 },
             })
             .expect("interactive rebase should start");
@@ -2939,7 +3001,10 @@ mod tests {
             .run_command(GitCommandRequest {
                 job_id: JobId::new("git:start-interactive-rebase"),
                 repo_id: repo_id.clone(),
-                command: GitCommand::StartInteractiveRebase { commit: target },
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::Interactive,
+                },
             })
             .expect("interactive rebase should start");
 
@@ -2976,7 +3041,10 @@ mod tests {
             .run_command(GitCommandRequest {
                 job_id: JobId::new("git:start-interactive-rebase"),
                 repo_id: repo_id.clone(),
-                command: GitCommand::StartInteractiveRebase { commit: target },
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::Interactive,
+                },
             })
             .expect("interactive rebase should start");
 
@@ -3002,6 +3070,140 @@ mod tests {
             repo.rev_parse("HEAD").expect("head after abort"),
             original_head
         );
+    }
+
+    #[test]
+    fn cli_backend_starts_older_commit_amend_flow() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-amend-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartCommitRebase {
+                    commit: target.clone(),
+                    mode: RebaseStartMode::Amend,
+                },
+            })
+            .expect("amend flow should start");
+
+        assert!(outcome.summary.contains("amend flow"));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::RebaseInProgress);
+        assert_eq!(
+            detail
+                .rebase_state
+                .as_ref()
+                .and_then(|state| state.current_commit.as_deref()),
+            Some(target.as_str())
+        );
+    }
+
+    #[test]
+    fn cli_backend_fixups_selected_commit_with_autosquash() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.append_file("notes.md", "fixup line\n")
+            .expect("append staged fixup");
+        repo.stage("notes.md").expect("stage fixup file");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-fixup-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::Fixup,
+                },
+            })
+            .expect("fixup flow should succeed");
+
+        assert!(outcome.summary.contains("fixup autosquash"));
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "3"
+        );
+        assert!(!stdout_string(
+            repo.git_capture(["log", "--format=%s", "-n", "3"])
+                .expect("log")
+        )
+        .expect("log text")
+        .contains("fixup!"));
+        assert!(stdout_string(
+            repo.git_capture(["show", "HEAD~1:notes.md"])
+                .expect("show notes")
+        )
+        .expect("notes text")
+        .contains("fixup line"));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+    }
+
+    #[test]
+    fn cli_backend_rewords_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-reword-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::Reword {
+                        message: "second rewritten".to_string(),
+                    },
+                },
+            })
+            .expect("reword should succeed");
+
+        let log = stdout_string(
+            repo.git_capture(["log", "--format=%s", "-n", "3"])
+                .expect("log"),
+        )
+        .expect("log text");
+        assert!(log.contains("second rewritten"));
+        assert!(!log.contains("second\ninitial"));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+        assert!(detail.rebase_state.is_none());
     }
 
     #[test]
