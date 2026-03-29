@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, RepoDetail, Timestamp, WorkerEvent,
+    Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, Timestamp, WorkerEvent,
 };
-use super_lazygit_git::{GitFacade, RepoSummaryRequest, WorkspaceScanRequest};
+use super_lazygit_git::{GitFacade, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest};
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
 
@@ -120,12 +120,17 @@ impl AppRuntime {
                     }
                 }
                 Effect::LoadRepoDetail { repo_id } => {
-                    self.git.record_operation("load_repo_detail", true);
-                    self.diagnostics.extend_snapshot(self.git.diagnostics());
-                    follow_up_events.push(Event::Worker(WorkerEvent::RepoDetailLoaded {
+                    let result = self.git.read_repo_detail(RepoDetailRequest {
                         repo_id: repo_id.clone(),
-                        detail: RepoDetail::default(),
-                    }));
+                    });
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+
+                    if let Ok(detail) = result {
+                        follow_up_events.push(Event::Worker(WorkerEvent::RepoDetailLoaded {
+                            repo_id: repo_id.clone(),
+                            detail,
+                        }));
+                    }
                 }
                 Effect::RunGitCommand(request) => {
                     let summary = git_command_summary(&request.command);

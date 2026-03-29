@@ -230,6 +230,9 @@ impl TuiApp {
             "5" => Some(Action::SwitchRepoSubview(RepoSubview::Reflog)),
             "6" => Some(Action::SwitchRepoSubview(RepoSubview::Worktrees)),
             "r" => Some(Action::RefreshSelectedRepo),
+            "f" => Some(Action::FetchSelectedRepo),
+            "p" => Some(Action::PullCurrentBranch),
+            "P" => Some(Action::PushCurrentBranch),
             _ => None,
         }
     }
@@ -605,7 +608,8 @@ fn help_text(state: &AppState) -> String {
             "j/k move  Enter open repo  Tab swap pane  ? help  r refresh".to_string()
         }
         AppMode::Repository => {
-            "h/l focus  1-6 subviews  Esc workspace  Tab swap pane  ? help".to_string()
+            "h/l focus  1-6 subviews  f fetch  p pull  P push  Esc workspace  Tab swap pane  ? help"
+                .to_string()
         }
     }
 }

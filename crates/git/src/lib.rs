@@ -7,8 +7,10 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffModel, GitCommand, GitCommandRequest,
-    HeadKind, RemoteSummary, RepoDetail, RepoId, RepoSummary, Timestamp,
+    BranchItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffModel,
+    FileStatus, FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, ReflogItem,
+    RemoteSummary, RepoDetail, RepoId, RepoSummary, StashItem, Timestamp, WatcherFreshness,
+    WorktreeItem,
 };
 use thiserror::Error;
 
@@ -413,20 +415,7 @@ impl GitBackend for CliGitBackend {
             });
         }
 
-        let branch = git_stdout(&repo_path, ["branch", "--show-current"])?;
-        let symbolic_head =
-            git_stdout_allow_failure(&repo_path, ["symbolic-ref", "--quiet", "--short", "HEAD"])?;
-        let head_kind = if !branch.is_empty() {
-            HeadKind::Branch
-        } else if symbolic_head.trim().is_empty() {
-            HeadKind::Detached
-        } else {
-            HeadKind::Unborn
-        };
-
-        let status = git_stdout(&repo_path, ["status", "--porcelain", "--branch"])?;
-        let parsed = parse_status(&status);
-        let (remote_name, tracking_branch) = tracking_remote(&repo_path)?;
+        let parsed = read_status_snapshot(&repo_path)?;
         let last_fetch_at = fetch_head_timestamp(&repo_path)?;
 
         let display_name = repo_path
@@ -440,8 +429,8 @@ impl GitBackend for CliGitBackend {
             display_name,
             real_path: repo_path.clone(),
             display_path: path_string(&repo_path),
-            branch: non_empty(branch),
-            head_kind,
+            branch: parsed.branch.clone(),
+            head_kind: parsed.head_kind,
             dirty: parsed.staged_count > 0
                 || parsed.unstaged_count > 0
                 || parsed.untracked_count > 0
@@ -455,26 +444,43 @@ impl GitBackend for CliGitBackend {
             last_fetch_at,
             last_local_activity_at: Some(now),
             last_refresh_at: Some(now),
-            watcher_freshness: super_lazygit_core::WatcherFreshness::Fresh,
+            watcher_freshness: WatcherFreshness::Fresh,
             remote_summary: RemoteSummary {
-                tracking_branch,
-                remote_name,
+                tracking_branch: parsed.tracking_branch.clone(),
+                remote_name: parsed.remote_name.clone(),
             },
             last_error: None,
         })
     }
 
     fn read_repo_detail(&self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
-        Err(GitError::RepoNotFound {
-            repo_id: request.repo_id,
+        let repo_path = repo_path(&request.repo_id)?;
+        let status = read_status_snapshot(&repo_path)?;
+
+        Ok(RepoDetail {
+            file_tree: status.file_tree,
+            diff: DiffModel {
+                selected_path: status.first_path,
+            },
+            branches: read_branches(&repo_path),
+            commits: read_commits(&repo_path),
+            stashes: read_stashes(&repo_path),
+            reflog_items: read_reflog(&repo_path),
+            worktrees: read_worktrees(&repo_path),
+            commit_input: String::new(),
+            merge_state: read_merge_state(&repo_path),
+            comparison_target: None,
         })
     }
 
-    fn read_diff(&self, _request: DiffRequest) -> GitResult<DiffModel> {
-        Err(GitError::RouteUnavailable {
-            operation: GitOperationKind::ReadDiff.label(),
-            backend: self.kind().label(),
-        })
+    fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel> {
+        let repo_path = repo_path(&request.repo_id)?;
+        let selected_path = match request.selected_path {
+            Some(path) => Some(path),
+            None => read_status_snapshot(&repo_path)?.first_path,
+        };
+
+        Ok(DiffModel { selected_path })
     }
 
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
@@ -780,55 +786,100 @@ fn system_time_to_timestamp(time: SystemTime) -> Timestamp {
 
 #[derive(Debug, Default)]
 struct ParsedStatus {
+    branch: Option<String>,
+    head_kind: HeadKind,
+    tracking_branch: Option<String>,
+    remote_name: Option<String>,
     staged_count: u32,
     unstaged_count: u32,
     untracked_count: u32,
     ahead_count: u32,
     behind_count: u32,
     conflicted: bool,
+    file_tree: Vec<FileStatus>,
+    first_path: Option<PathBuf>,
+}
+
+fn read_status_snapshot(repo_path: &Path) -> GitResult<ParsedStatus> {
+    let status = git_stdout(repo_path, ["status", "--short", "--branch"])?;
+    Ok(parse_status(&status))
 }
 
 fn parse_status(status: &str) -> ParsedStatus {
     let mut parsed = ParsedStatus::default();
 
-    for line in status.lines() {
-        if let Some(branch_line) = line.strip_prefix("## ") {
-            parse_branch_header(branch_line, &mut parsed);
-            continue;
+    for (index, line) in status.lines().enumerate() {
+        if index == 0 {
+            if let Some(branch_line) = line.strip_prefix("## ") {
+                parse_branch_header(branch_line, &mut parsed);
+                continue;
+            }
         }
 
         let bytes = line.as_bytes();
-        if bytes.len() < 2 {
+        if bytes.len() < 3 {
             continue;
         }
-        let index = bytes[0] as char;
-        let worktree = bytes[1] as char;
+        let staged = bytes[0] as char;
+        let unstaged = bytes[1] as char;
+        let path = status_path(&line[3..]);
 
-        if index == '?' && worktree == '?' {
+        if staged == '?' && unstaged == '?' {
             parsed.untracked_count += 1;
+            parsed.file_tree.push(FileStatus {
+                path: path.clone(),
+                kind: FileStatusKind::Untracked,
+            });
+            parsed.first_path.get_or_insert(path);
             continue;
         }
 
-        if is_conflict_code(index, worktree) {
+        if is_conflict_code(staged, unstaged) {
             parsed.conflicted = true;
         }
-        if index != ' ' && index != '?' {
+        if staged != ' ' && staged != '?' {
             parsed.staged_count += 1;
         }
-        if worktree != ' ' && worktree != '?' {
+        if unstaged != ' ' && unstaged != '?' {
             parsed.unstaged_count += 1;
         }
+
+        parsed.file_tree.push(FileStatus {
+            path: path.clone(),
+            kind: status_kind(staged, unstaged),
+        });
+        parsed.first_path.get_or_insert(path);
     }
 
     parsed
 }
 
 fn parse_branch_header(header: &str, parsed: &mut ParsedStatus) {
-    if let Some(divergence) = header
-        .split('[')
-        .nth(1)
-        .and_then(|part| part.split(']').next())
-    {
+    if let Some(branch) = header.strip_prefix("No commits yet on ") {
+        parsed.branch = Some(branch.to_string());
+        parsed.head_kind = HeadKind::Unborn;
+        return;
+    }
+
+    if header.starts_with("HEAD ") {
+        parsed.head_kind = HeadKind::Detached;
+        return;
+    }
+
+    parsed.head_kind = HeadKind::Branch;
+    let (branch_part, counts_part) = header
+        .split_once(" [")
+        .map_or((header, None), |(left, right)| (left, Some(right.trim_end_matches(']'))));
+
+    if let Some((branch, upstream)) = branch_part.split_once("...") {
+        parsed.branch = Some(branch.to_string());
+        parsed.tracking_branch = Some(upstream.to_string());
+        parsed.remote_name = upstream.split('/').next().map(str::to_owned);
+    } else {
+        parsed.branch = Some(branch_part.to_string());
+    }
+
+    if let Some(divergence) = counts_part {
         for token in divergence.split(',').map(str::trim) {
             if let Some(count) = token.strip_prefix("ahead ") {
                 parsed.ahead_count = count.parse().unwrap_or(0);
@@ -838,6 +889,161 @@ fn parse_branch_header(header: &str, parsed: &mut ParsedStatus) {
             }
         }
     }
+}
+
+fn status_path(raw: &str) -> PathBuf {
+    let path = raw
+        .trim()
+        .split(" -> ")
+        .next_back()
+        .unwrap_or(raw.trim())
+        .trim_matches('"');
+    PathBuf::from(path)
+}
+
+fn status_kind(staged: char, unstaged: char) -> FileStatusKind {
+    if is_conflict_code(staged, unstaged) {
+        return FileStatusKind::Conflicted;
+    }
+
+    let code = if staged != ' ' && staged != '?' {
+        staged
+    } else {
+        unstaged
+    };
+
+    match code {
+        'A' => FileStatusKind::Added,
+        'D' => FileStatusKind::Deleted,
+        'R' => FileStatusKind::Renamed,
+        '?' => FileStatusKind::Untracked,
+        _ => FileStatusKind::Modified,
+    }
+}
+
+fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
+    git_stdout(repo_path, ["branch", "--all", "--no-color"])
+        .map(|output| {
+            output
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.contains(" -> ") {
+                        return None;
+                    }
+                    Some(BranchItem {
+                        name: trimmed.trim_start_matches('*').trim_start().to_string(),
+                        is_head: trimmed.starts_with('*'),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn read_commits(repo_path: &Path) -> Vec<CommitItem> {
+    git_stdout(repo_path, ["log", "--format=%H%x00%s", "-n", "64"])
+        .map(|output| {
+            output
+                .lines()
+                .filter_map(|line| {
+                    let (oid, summary) = line.split_once('\0')?;
+                    Some(CommitItem {
+                        oid: oid.to_string(),
+                        summary: summary.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
+    git_stdout(repo_path, ["stash", "list", "--format=%gd%x00%s"])
+        .map(|output| {
+            output
+                .lines()
+                .map(|line| {
+                    let label = line.split_once('\0').map_or_else(
+                        || line.to_string(),
+                        |(name, summary)| format!("{name}: {summary}"),
+                    );
+                    StashItem { label }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn read_reflog(repo_path: &Path) -> Vec<ReflogItem> {
+    git_stdout(repo_path, ["reflog", "--format=%gD%x00%gs", "-n", "64"])
+        .map(|output| {
+            output
+                .lines()
+                .map(|line| {
+                    let description = line.split_once('\0').map_or_else(
+                        || line.to_string(),
+                        |(name, summary)| format!("{name}: {summary}"),
+                    );
+                    ReflogItem { description }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn read_worktrees(repo_path: &Path) -> Vec<WorktreeItem> {
+    let output = match git_stdout(repo_path, ["worktree", "list", "--porcelain"]) {
+        Ok(output) => output,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut items = Vec::new();
+    let mut current_path: Option<PathBuf> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in output.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(path) = current_path.take() {
+                items.push(WorktreeItem {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+            current_path = Some(PathBuf::from(path));
+            current_branch = None;
+            continue;
+        }
+
+        if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            current_branch = Some(branch.to_string());
+        }
+    }
+
+    if let Some(path) = current_path {
+        items.push(WorktreeItem {
+            path,
+            branch: current_branch,
+        });
+    }
+
+    items
+}
+
+fn read_merge_state(repo_path: &Path) -> MergeState {
+    if git_path_exists(repo_path, "MERGE_HEAD") {
+        MergeState::MergeInProgress
+    } else if git_path_exists(repo_path, "rebase-merge") || git_path_exists(repo_path, "rebase-apply") {
+        MergeState::RebaseInProgress
+    } else {
+        MergeState::None
+    }
+}
+
+fn git_path_exists(repo_path: &Path, git_path: &str) -> bool {
+    git_stdout(repo_path, ["rev-parse", "--git-path", git_path])
+        .map(PathBuf::from)
+        .is_ok_and(|path| path.exists())
 }
 
 fn is_conflict_code(index: char, worktree: char) -> bool {
