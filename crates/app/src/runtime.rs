@@ -366,6 +366,8 @@ fn summary_refresh_job_id(repo_id: &RepoId) -> JobId {
 fn git_command_summary(command: &GitCommand) -> &'static str {
     match command {
         GitCommand::StageSelection => "stage_selection",
+        GitCommand::StageFile { .. } => "stage_file",
+        GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",

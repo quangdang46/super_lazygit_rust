@@ -55,6 +55,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::SelectNextStatusEntry => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_status_selection(repo_mode, state.focused_pane, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousStatusEntry => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_status_selection(repo_mode, state.focused_pane, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::SelectNextCommit => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_commit_selection(repo_mode, 1) {
@@ -127,6 +141,32 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 );
                 enqueue_git_job(state, &job, "Stage selection");
                 effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::StageSelectedFile => {
+            if let Some(repo_mode) = &state.repo_mode {
+                if let Some(path) = selected_status_path(repo_mode, PaneId::RepoUnstaged) {
+                    let summary = format!("Stage {}", path.display());
+                    let job = git_job(
+                        repo_mode.current_repo_id.clone(),
+                        GitCommand::StageFile { path },
+                    );
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+            }
+        }
+        Action::UnstageSelectedFile => {
+            if let Some(repo_mode) = &state.repo_mode {
+                if let Some(path) = selected_status_path(repo_mode, PaneId::RepoStaged) {
+                    let summary = format!("Unstage {}", path.display());
+                    let job = git_job(
+                        repo_mode.current_repo_id.clone(),
+                        GitCommand::UnstageFile { path },
+                    );
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
             }
         }
         Action::CommitStaged { message } => {
@@ -441,6 +481,23 @@ fn push_recent_repo(state: &mut AppState, repo_id: crate::state::RepoId) {
     state.recent_repo_stack.push(repo_id);
 }
 
+fn step_status_selection(repo_mode: &mut RepoModeState, focused_pane: PaneId, step: isize) -> bool {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return false;
+    };
+
+    let len = status_entries_len(detail, focused_pane);
+    if len == 0 {
+        return false;
+    }
+
+    match focused_pane {
+        PaneId::RepoUnstaged => repo_mode.status_view.select_with_step(len, step).is_some(),
+        PaneId::RepoStaged => repo_mode.staged_view.select_with_step(len, step).is_some(),
+        _ => false,
+    }
+}
+
 fn step_commit_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     let Some(detail) = repo_mode.detail.as_mut() else {
         return false;
@@ -486,19 +543,50 @@ fn sync_status_selection(repo_mode: &mut RepoModeState) {
         return;
     };
 
-    let unstaged_len = detail
-        .file_tree
-        .iter()
-        .filter(|item| item.unstaged_kind.is_some())
-        .count();
+    let unstaged_len = status_entries_len(detail, PaneId::RepoUnstaged);
     repo_mode.status_view.ensure_selection(unstaged_len);
 
-    let staged_len = detail
+    let staged_len = status_entries_len(detail, PaneId::RepoStaged);
+    repo_mode.staged_view.ensure_selection(staged_len);
+}
+
+fn status_entries_len(detail: &crate::state::RepoDetail, pane: PaneId) -> usize {
+    detail
         .file_tree
         .iter()
-        .filter(|item| item.staged_kind.is_some())
-        .count();
-    repo_mode.staged_view.ensure_selection(staged_len);
+        .filter(|item| match pane {
+            PaneId::RepoUnstaged => item.unstaged_kind.is_some(),
+            PaneId::RepoStaged => item.staged_kind.is_some(),
+            _ => false,
+        })
+        .count()
+}
+
+fn selected_status_path(repo_mode: &RepoModeState, pane: PaneId) -> Option<std::path::PathBuf> {
+    let detail = repo_mode.detail.as_ref()?;
+    let entries = detail
+        .file_tree
+        .iter()
+        .filter(|item| match pane {
+            PaneId::RepoUnstaged => item.unstaged_kind.is_some(),
+            PaneId::RepoStaged => item.staged_kind.is_some(),
+            _ => false,
+        })
+        .collect::<Vec<_>>();
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    let selected_index = match pane {
+        PaneId::RepoUnstaged => repo_mode.status_view.selected_index,
+        PaneId::RepoStaged => repo_mode.staged_view.selected_index,
+        _ => None,
+    }
+    .filter(|index| *index < entries.len())
+    .unwrap_or(0);
+
+    entries.get(selected_index).map(|item| item.path.clone())
 }
 
 fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequest {
@@ -513,6 +601,8 @@ fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequ
 fn job_suffix(command: &GitCommand) -> &'static str {
     match command {
         GitCommand::StageSelection => "stage-selection",
+        GitCommand::StageFile { .. } => "stage-file",
+        GitCommand::UnstageFile { .. } => "unstage-file",
         GitCommand::CommitStaged { .. } => "commit-staged",
         GitCommand::AmendHead { .. } => "amend-head",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
@@ -650,6 +740,32 @@ mod tests {
         assert!(closed.state.modal_stack.is_empty());
         assert_eq!(closed.state.focused_pane, PaneId::WorkspaceList);
         assert_eq!(closed.effects, vec![Effect::ScheduleRender]);
+    }
+
+    fn repo_detail_with_file_tree() -> RepoDetail {
+        RepoDetail {
+            file_tree: vec![
+                FileStatus {
+                    path: std::path::PathBuf::from("src/lib.rs"),
+                    kind: FileStatusKind::Modified,
+                    staged_kind: Some(FileStatusKind::Modified),
+                    unstaged_kind: Some(FileStatusKind::Modified),
+                },
+                FileStatus {
+                    path: std::path::PathBuf::from("README.md"),
+                    kind: FileStatusKind::Untracked,
+                    staged_kind: None,
+                    unstaged_kind: Some(FileStatusKind::Untracked),
+                },
+                FileStatus {
+                    path: std::path::PathBuf::from("Cargo.toml"),
+                    kind: FileStatusKind::Added,
+                    staged_kind: Some(FileStatusKind::Added),
+                    unstaged_kind: None,
+                },
+            ],
+            ..RepoDetail::default()
+        }
     }
 
     #[test]
@@ -1079,6 +1195,126 @@ mod tests {
                 repo_id,
                 command: GitCommand::StageSelection,
             })]
+        );
+    }
+
+    #[test]
+    fn status_selection_moves_with_focused_repo_pane() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                ..crate::state::RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let down = reduce(state, Event::Action(Action::SelectNextStatusEntry));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.status_view.selected_index),
+            Some(1)
+        );
+
+        let staged_state = AppState {
+            focused_pane: PaneId::RepoStaged,
+            ..down.state
+        };
+        let staged_down = reduce(staged_state, Event::Action(Action::SelectNextStatusEntry));
+        assert_eq!(
+            staged_down
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.staged_view.selected_index),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn stage_selected_file_queues_file_scoped_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                status_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StageSelectedFile));
+        let job_id = JobId::new("git:repo-1:stage-file");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: job_id.clone(),
+                repo_id,
+                command: GitCommand::StageFile {
+                    path: std::path::PathBuf::from("README.md"),
+                },
+            })]
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id,
+                summary: "Stage README.md".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn unstage_selected_file_queues_file_scoped_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                staged_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::UnstageSelectedFile));
+        let job_id = JobId::new("git:repo-1:unstage-file");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: job_id.clone(),
+                repo_id,
+                command: GitCommand::UnstageFile {
+                    path: std::path::PathBuf::from("Cargo.toml"),
+                },
+            })]
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id,
+                summary: "Unstage Cargo.toml".to_string(),
+            })
         );
     }
 

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use crate::state::{JobId, RepoId};
@@ -26,6 +28,8 @@ pub struct GitCommandRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GitCommand {
     StageSelection,
+    StageFile { path: PathBuf },
+    UnstageFile { path: PathBuf },
     CommitStaged { message: String },
     AmendHead { message: Option<String> },
     CheckoutBranch { branch_ref: String },

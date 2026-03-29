@@ -225,6 +225,18 @@ impl TuiApp {
             return Some(Action::PushCurrentBranch);
         }
 
+        match (self.state.focused_pane, normalized) {
+            (PaneId::RepoUnstaged | PaneId::RepoStaged, "j" | "down") => {
+                return Some(Action::SelectNextStatusEntry);
+            }
+            (PaneId::RepoUnstaged | PaneId::RepoStaged, "k" | "up") => {
+                return Some(Action::SelectPreviousStatusEntry);
+            }
+            (PaneId::RepoUnstaged, "enter") => return Some(Action::StageSelectedFile),
+            (PaneId::RepoStaged, "enter") => return Some(Action::UnstageSelectedFile),
+            _ => {}
+        }
+
         if self.state.focused_pane == PaneId::RepoDetail
             && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
                 matches!(
@@ -1396,7 +1408,7 @@ fn repo_status_section_lines(
     let (focus_text, empty_text) = match section {
         FileStatusSection::Unstaged => (
             if is_focused {
-                "Focus here for status-tree navigation."
+                "j/k move  Enter stage selected file."
             } else {
                 "Move focus here to inspect working tree changes."
             },
@@ -1404,7 +1416,7 @@ fn repo_status_section_lines(
         ),
         FileStatusSection::Staged => (
             if is_focused {
-                "Focus here for staging and commit prep."
+                "j/k move  Enter unstage selected file."
             } else {
                 "Move focus here to prep staged work."
             },
@@ -1493,10 +1505,10 @@ fn default_status_text(state: &AppState) -> String {
         AppMode::Workspace => "Select a repository and press Enter to open repo mode.".to_string(),
         AppMode::Repository => match state.focused_pane {
             PaneId::RepoUnstaged => {
-                "Working tree focus; file actions attach here in the next beads.".to_string()
+                "Working tree focus; j/k move and Enter stages the selected file.".to_string()
             }
             PaneId::RepoStaged => {
-                "Staged focus; commit and amend flows attach to this pane.".to_string()
+                "Staged focus; j/k move and Enter unstages the selected file.".to_string()
             }
             PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
                 || "Repository shell ready.".to_string(),
@@ -1523,10 +1535,10 @@ fn default_status_text(state: &AppState) -> String {
 fn repo_help_text(state: &AppState) -> String {
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  l next pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  l next pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  h/l change pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  h/l change pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
@@ -1973,6 +1985,73 @@ mod tests {
                 .and_then(|repo_mode| repo_mode.commits_view.selected_index),
             Some(0)
         );
+    }
+
+    #[test]
+    fn repo_mode_unstaged_pane_routes_status_navigation_and_stage_action() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                status_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.status_view.selected_index),
+            Some(1)
+        );
+
+        let enter = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert!(enter.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::StageFile { .. },
+                ..
+            })
+        )));
+    }
+
+    #[test]
+    fn repo_mode_staged_pane_routes_unstage_action() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                staged_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let enter = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert!(enter.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::UnstageFile { .. },
+                ..
+            })
+        )));
     }
 
     #[test]

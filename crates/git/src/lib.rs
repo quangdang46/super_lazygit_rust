@@ -542,6 +542,14 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["add", "."])?;
                 "Staged current selection".to_string()
             }
+            GitCommand::StageFile { path } => {
+                git_path(&repo_path, ["add"], path)?;
+                format!("Staged {}", path.display())
+            }
+            GitCommand::UnstageFile { path } => {
+                unstage_path(&repo_path, path)?;
+                format!("Unstaged {}", path.display())
+            }
             GitCommand::CommitStaged { message } => {
                 git(&repo_path, ["commit", "-m", message.as_str()])?;
                 format!("Committed staged changes: {message}")
@@ -636,6 +644,8 @@ fn prefer_backend(active_backend: GitBackendKind, preferred: GitBackendKind) -> 
 fn git_command_label(request: &GitCommandRequest) -> &'static str {
     match &request.command {
         GitCommand::StageSelection => "stage_selection",
+        GitCommand::StageFile { .. } => "stage_file",
+        GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
@@ -1143,6 +1153,38 @@ where
         .map_err(io_error)
 }
 
+fn git_path<I, S>(repo_path: &Path, args: I, path: &Path) -> GitResult<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = Command::new("git")
+        .args(args)
+        .arg("--")
+        .arg(path)
+        .current_dir(repo_path)
+        .output()
+        .map_err(io_error)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    Ok(())
+}
+
+fn git_path_output<I, S>(repo_path: &Path, args: I, path: &Path) -> GitResult<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    Command::new("git")
+        .args(args)
+        .arg("--")
+        .arg(path)
+        .current_dir(repo_path)
+        .output()
+        .map_err(io_error)
+}
+
 fn git_stdout_raw<I, S>(repo_path: &Path, args: I) -> GitResult<String>
 where
     I: IntoIterator<Item = S>,
@@ -1174,6 +1216,26 @@ fn command_failure(output: Output) -> GitError {
             output.status, stdout, stderr
         ),
     }
+}
+
+fn unstage_path(repo_path: &Path, path: &Path) -> GitResult<()> {
+    let restore = git_path_output(repo_path, ["restore", "--staged"], path)?;
+    if restore.status.success() {
+        return Ok(());
+    }
+
+    let rm_cached = git_path_output(repo_path, ["rm", "--cached"], path)?;
+    if rm_cached.status.success() {
+        return Ok(());
+    }
+
+    Err(GitError::OperationFailed {
+        message: format!(
+            "git restore --staged failed:\n{}\n\ngit rm --cached failed:\n{}",
+            command_failure(restore),
+            command_failure(rm_cached)
+        ),
+    })
 }
 
 fn io_error(error: std::io::Error) -> GitError {
@@ -2223,6 +2285,54 @@ mod tests {
             .file_tree
             .iter()
             .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
+    fn cli_backend_stages_single_selected_file() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-stage-file"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StageFile {
+                    path: PathBuf::from("untracked.txt"),
+                },
+            })
+            .expect("file staging should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Staged untracked.txt");
+        assert!(repo
+            .status_porcelain()
+            .expect("status")
+            .contains("A  untracked.txt"));
+    }
+
+    #[test]
+    fn cli_backend_unstages_single_selected_file() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-unstage-file"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::UnstageFile {
+                    path: PathBuf::from("staged.txt"),
+                },
+            })
+            .expect("file unstaging should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Unstaged staged.txt");
+        assert!(repo
+            .status_porcelain()
+            .expect("status")
+            .contains("?? staged.txt"));
     }
 
     #[test]
