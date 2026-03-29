@@ -178,6 +178,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextReflog => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_reflog_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousReflog => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_reflog_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::ScrollRepoDetailUp => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.diff_scroll = repo_mode.diff_scroll.saturating_sub(1);
@@ -509,6 +523,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 if matches!(subview, crate::state::RepoSubview::Stash) {
                     sync_stash_selection(repo_mode);
                 }
+                if matches!(subview, crate::state::RepoSubview::Reflog) {
+                    sync_reflog_selection(repo_mode);
+                }
                 state.focused_pane = PaneId::RepoDetail;
                 effects.push(Effect::ScheduleRender);
             }
@@ -625,6 +642,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_branch_selection(repo_mode);
                     sync_commit_selection(repo_mode);
                     sync_stash_selection(repo_mode);
+                    sync_reflog_selection(repo_mode);
                     sync_diff_selection(repo_mode);
                     repo_mode.operation_progress = OperationProgress::Idle;
                 }
@@ -1154,6 +1172,17 @@ fn sync_stash_selection(repo_mode: &mut RepoModeState) {
     repo_mode.stash_view.ensure_selection(detail.stashes.len());
 }
 
+fn sync_reflog_selection(repo_mode: &mut RepoModeState) {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.reflog_view.selected_index = None;
+        return;
+    };
+
+    repo_mode
+        .reflog_view
+        .ensure_selection(detail.reflog_items.len());
+}
+
 fn sync_status_selection(repo_mode: &mut RepoModeState) {
     let Some(detail) = repo_mode.detail.as_ref() else {
         repo_mode.status_view.selected_index = None;
@@ -1275,6 +1304,19 @@ fn step_stash_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     let after = repo_mode
         .stash_view
         .select_with_step(detail.stashes.len(), step);
+    after.is_some() && after != before
+}
+
+fn step_reflog_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.reflog_view.selected_index = None;
+        return false;
+    };
+
+    let before = repo_mode.reflog_view.selected_index;
+    let after = repo_mode
+        .reflog_view
+        .select_with_step(detail.reflog_items.len(), step);
     after.is_some() && after != before
 }
 
@@ -1467,8 +1509,8 @@ mod tests {
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
         CommitItem, ComparisonTarget, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
         DiffModel, DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind,
-        PaneId, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, ScanStatus,
-        SelectedHunk, StashItem, Timestamp, WatcherHealth, WorkspaceFilterMode,
+        PaneId, ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
+        ScanStatus, SelectedHunk, StashItem, Timestamp, WatcherHealth, WorkspaceFilterMode,
     };
 
     use super::reduce;
@@ -1807,6 +1849,45 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.stash_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn select_next_reflog_advances_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Reflog,
+                detail: Some(RepoDetail {
+                    reflog_items: vec![
+                        ReflogItem {
+                            description: "HEAD@{0}: checkout".to_string(),
+                        },
+                        ReflogItem {
+                            description: "HEAD@{1}: commit".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                reflog_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SelectNextReflog));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.reflog_view.selected_index),
             Some(1)
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
@@ -3051,6 +3132,9 @@ mod tests {
                 }],
                 diff: DiffModel::default(),
             }],
+            reflog_items: vec![ReflogItem {
+                description: "HEAD@{0}: commit: add lib".to_string(),
+            }],
             ..RepoDetail::default()
         };
 
@@ -3100,6 +3184,14 @@ mod tests {
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.branches_view.selected_index),
             Some(1)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.reflog_view.selected_index),
+            Some(0)
         );
         assert_eq!(
             result

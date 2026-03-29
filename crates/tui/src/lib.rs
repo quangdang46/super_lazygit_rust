@@ -320,6 +320,7 @@ impl TuiApp {
                         | RepoSubview::Branches
                         | RepoSubview::Commits
                         | RepoSubview::Stash
+                        | RepoSubview::Reflog
                 )
             })
         {
@@ -407,6 +408,12 @@ impl TuiApp {
                     }
                     (RepoSubview::Stash, _, "d") => {
                         return Some(Action::DropSelectedStash);
+                    }
+                    (RepoSubview::Reflog, _, "j" | "down") => {
+                        return Some(Action::SelectNextReflog);
+                    }
+                    (RepoSubview::Reflog, _, "k" | "up") => {
+                        return Some(Action::SelectPreviousReflog);
                     }
                     _ => {}
                 }
@@ -748,6 +755,12 @@ impl TuiApp {
                 RepoSubview::Stash => repo_stash_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.stash_view.selected_index,
+                    self.state.focused_pane == PaneId::RepoDetail,
+                    theme,
+                ),
+                RepoSubview::Reflog => repo_reflog_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.reflog_view.selected_index,
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
@@ -1621,6 +1634,72 @@ fn repo_stash_lines(
             }
         }
         lines.push(Line::from(Span::styled(stash.label.clone(), style)));
+    }
+
+    lines
+}
+
+fn repo_reflog_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Reflog",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    if detail.reflog_items.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Reflog",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("No reflog entries are available."),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| *index < detail.reflog_items.len())
+        .unwrap_or(0);
+    let selected_entry = &detail.reflog_items[selected_index];
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "Reflog",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!(
+            "Selected {}/{}",
+            selected_index + 1,
+            detail.reflog_items.len()
+        )),
+        Line::from(selected_entry.description.clone()),
+        Line::from("Use j/k to inspect recent HEAD and ref movement."),
+        Line::from(""),
+    ];
+
+    for (index, entry) in detail.reflog_items.iter().enumerate() {
+        let mut style = Style::default().fg(theme.foreground);
+        if index == selected_index {
+            style = style.add_modifier(Modifier::BOLD);
+            if is_focused {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+        }
+        lines.push(Line::from(Span::styled(entry.description.clone(), style)));
     }
 
     lines
@@ -2597,6 +2676,14 @@ mod tests {
                     label: "stash@{1}: On feature: prior experiment".to_string(),
                 },
             ],
+            reflog_items: vec![
+                super_lazygit_core::ReflogItem {
+                    description: "HEAD@{0}: checkout: moving from feature to main".to_string(),
+                },
+                super_lazygit_core::ReflogItem {
+                    description: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
+                },
+            ],
             ..Default::default()
         }
     }
@@ -3443,6 +3530,43 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_reflog_detail_routes_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Reflog,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.reflog_view.selected_index),
+            Some(1)
+        );
+
+        let up = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "k".to_string(),
+        })));
+        assert_eq!(
+            up.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.reflog_view.selected_index),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn repo_mode_unstaged_pane_routes_status_navigation_and_stage_action() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -3923,6 +4047,53 @@ mod tests {
         assert!(rendered.contains("Enter applies. d drops."));
         assert!(rendered.contains("stash@{0}: WIP on main: fixture stash"));
         assert!(rendered.contains("stash@{1}: On feature: prior experiment"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_reflog_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Reflog,
+                detail: Some(sample_repo_detail()),
+                reflog_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Reflog"));
+        assert!(rendered.contains("Selected 2/2"));
+        assert!(rendered.contains("Use j/k to inspect recent HEAD and ref movement."));
+        assert!(rendered.contains("HEAD@{0}: checkout: moving from feature to main"));
+        assert!(rendered.contains("HEAD@{1}: commit: add repo-mode stash flows"));
     }
 
     #[test]

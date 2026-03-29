@@ -23,6 +23,8 @@ pub enum Action {
     SelectPreviousCommit,
     SelectNextStash,
     SelectPreviousStash,
+    SelectNextReflog,
+    SelectPreviousReflog,
     ScrollRepoDetailUp,
     ScrollRepoDetailDown,
     SelectNextDiffHunk,
