@@ -11,7 +11,7 @@ use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
     reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, Diagnostics,
     DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event, InputEvent, KeyPress, PaneId,
-    ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
+    ReduceResult, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
 };
 
 #[derive(Debug)]
@@ -384,11 +384,20 @@ impl TuiApp {
                     ) if repo_mode.comparison_base.is_some() => {
                         return Some(Action::ClearComparison);
                     }
-                    (RepoSubview::Status, _, "j") => {
+                    (RepoSubview::Status, "J", _) => {
+                        return Some(Action::SelectNextDiffLine);
+                    }
+                    (RepoSubview::Status, "K", _) => {
+                        return Some(Action::SelectPreviousDiffLine);
+                    }
+                    (RepoSubview::Status, "j", _) => {
                         return Some(Action::SelectNextDiffHunk);
                     }
-                    (RepoSubview::Status, _, "k") => {
+                    (RepoSubview::Status, "k", _) => {
                         return Some(Action::SelectPreviousDiffHunk);
+                    }
+                    (RepoSubview::Status, _, "v") => {
+                        return Some(Action::ToggleDiffLineAnchor);
                     }
                     (RepoSubview::Status, _, "down") => {
                         return Some(Action::ScrollRepoDetailDown);
@@ -404,6 +413,17 @@ impl TuiApp {
                         {
                             Some(DiffPresentation::Unstaged) => Some(Action::StageSelectedHunk),
                             Some(DiffPresentation::Staged) => Some(Action::UnstageSelectedHunk),
+                            _ => None,
+                        };
+                    }
+                    (RepoSubview::Status, "L", _) => {
+                        return match repo_mode
+                            .detail
+                            .as_ref()
+                            .map(|detail| detail.diff.presentation)
+                        {
+                            Some(DiffPresentation::Unstaged) => Some(Action::StageSelectedLines),
+                            Some(DiffPresentation::Staged) => Some(Action::UnstageSelectedLines),
                             _ => None,
                         };
                     }
@@ -822,6 +842,7 @@ impl TuiApp {
         let (title, lines) = if let Some(repo_mode) = &self.state.repo_mode {
             let lines = match repo_mode.active_subview {
                 RepoSubview::Status => repo_diff_lines(
+                    Some(repo_mode),
                     repo_mode.detail.as_ref(),
                     repo_mode.diff_scroll,
                     usize::from(area.height.saturating_sub(2)),
@@ -1938,14 +1959,9 @@ fn repo_commit_lines(
         lines.push(Line::from("No patch preview available for this commit."));
     } else {
         let remaining = viewport_lines.saturating_sub(lines.len()).max(1);
-        lines.extend(
-            selected
-                .diff
-                .lines
-                .iter()
-                .take(remaining)
-                .map(|line| render_diff_line(line.kind, &line.content, theme, false)),
-        );
+        lines.extend(selected.diff.lines.iter().take(remaining).map(|line| {
+            render_diff_line(line.kind, &line.content, theme, false, false, false, false)
+        }));
     }
 
     lines.truncate(viewport_lines.max(1));
@@ -1976,7 +1992,7 @@ fn repo_compare_lines(
         Line::from("x clears compare and returns to history."),
     ];
     let remaining = viewport_lines.saturating_sub(lines.len()).max(1);
-    lines.extend(repo_diff_lines(detail, scroll, remaining, theme));
+    lines.extend(repo_diff_lines(None, detail, scroll, remaining, theme));
     lines.truncate(viewport_lines.max(1));
     lines
 }
@@ -2054,14 +2070,9 @@ fn repo_rebase_lines(
         ));
     } else {
         body.push(Line::from("Diff preview:"));
-        body.extend(
-            detail
-                .diff
-                .lines
-                .iter()
-                .take(8)
-                .map(|line| render_diff_line(line.kind, &line.content, theme, false)),
-        );
+        body.extend(detail.diff.lines.iter().take(8).map(|line| {
+            render_diff_line(line.kind, &line.content, theme, false, false, false, false)
+        }));
     }
 
     let mut lines = vec![Line::from(vec![Span::styled(
@@ -2079,11 +2090,13 @@ fn repo_rebase_lines(
 }
 
 fn repo_diff_lines(
+    repo_mode: Option<&RepoModeState>,
     detail: Option<&RepoDetail>,
     scroll: usize,
     viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
+    let detail = detail.or_else(|| repo_mode.and_then(|repo_mode| repo_mode.detail.as_ref()));
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
@@ -2115,7 +2128,7 @@ fn repo_diff_lines(
         ];
     }
 
-    let header_lines = 2;
+    let header_lines = 3;
     let visible_capacity = viewport_lines.saturating_sub(header_lines).max(1);
     let max_scroll = detail.diff.lines.len().saturating_sub(visible_capacity);
     let scroll = scroll.min(max_scroll);
@@ -2132,12 +2145,16 @@ fn repo_diff_lines(
                 .add_modifier(Modifier::BOLD),
         )]),
         Line::from(format!(
-            "Hunks: {}  Selected: {}  Lines: {}  Showing {}-{}",
+            "Hunks: {}  Selected: {}  Changed lines: {}  Showing {}-{}",
             detail.diff.hunk_count,
             selected_hunk_label(&detail.diff),
-            detail.diff.lines.len(),
+            selected_diff_line_label(repo_mode, &detail.diff),
             scroll + 1,
             end
+        )),
+        Line::from(format!(
+            "Line select: J/K cursor  v range  L apply lines  Enter whole hunk  Range: {}",
+            selected_diff_range_label(repo_mode, &detail.diff)
         )),
     ];
 
@@ -2154,12 +2171,31 @@ fn repo_diff_lines(
                 let is_selected_hunk_line = selected_hunk.is_some_and(|hunk| {
                     (hunk.start_line_index..hunk.end_line_index).contains(&absolute_index)
                 });
+                let is_selected_line = repo_mode
+                    .and_then(|repo_mode| repo_mode.diff_line_cursor)
+                    .is_some_and(|line_index| line_index == absolute_index);
+                let is_anchor_line = repo_mode
+                    .and_then(|repo_mode| repo_mode.diff_line_anchor)
+                    .is_some_and(|line_index| line_index == absolute_index);
+                let is_selected_range_line = repo_mode
+                    .and_then(|repo_mode| {
+                        repo_mode.diff_line_cursor.map(|cursor| {
+                            let anchor = repo_mode.diff_line_anchor.unwrap_or(cursor);
+                            let start = anchor.min(cursor);
+                            let end = anchor.max(cursor);
+                            (start..=end).contains(&absolute_index)
+                        })
+                    })
+                    .unwrap_or(false);
                 render_diff_line(
                     line.kind,
                     &line.content,
                     theme,
                     is_selected_hunk_line
                         && detail.diff.presentation != DiffPresentation::Comparison,
+                    is_selected_range_line,
+                    is_anchor_line,
+                    is_selected_line,
                 )
             }),
     );
@@ -2182,6 +2218,9 @@ fn render_diff_line(
     content: &str,
     theme: Theme,
     selected_hunk_line: bool,
+    selected_range_line: bool,
+    selected_anchor_line: bool,
+    selected_line: bool,
 ) -> Line<'static> {
     let style = match kind {
         DiffLineKind::Meta => Style::default().fg(theme.muted),
@@ -2194,6 +2233,21 @@ fn render_diff_line(
     };
     let style = if selected_hunk_line {
         style.add_modifier(Modifier::REVERSED)
+    } else {
+        style
+    };
+    let style = if selected_range_line {
+        style.add_modifier(Modifier::UNDERLINED)
+    } else {
+        style
+    };
+    let style = if selected_anchor_line {
+        style.add_modifier(Modifier::ITALIC)
+    } else {
+        style
+    };
+    let style = if selected_line {
+        style.add_modifier(Modifier::BOLD)
     } else {
         style
     };
@@ -2244,6 +2298,74 @@ fn selected_hunk_label(diff: &super_lazygit_core::DiffModel) -> String {
         (Some(index), len) if len > 0 => format!("{}/{}", index + 1, len),
         _ => "0/0".to_string(),
     }
+}
+
+fn selected_diff_line_label(
+    repo_mode: Option<&RepoModeState>,
+    diff: &super_lazygit_core::DiffModel,
+) -> String {
+    let Some(selected_hunk) = diff.selected_hunk.and_then(|index| diff.hunks.get(index)) else {
+        return "0/0".to_string();
+    };
+    let selectable = (selected_hunk.start_line_index + 1..selected_hunk.end_line_index)
+        .filter(|line_index| {
+            matches!(
+                diff.lines[*line_index].kind,
+                DiffLineKind::Addition | DiffLineKind::Removal
+            )
+        })
+        .collect::<Vec<_>>();
+    if selectable.is_empty() {
+        return "0/0".to_string();
+    }
+
+    let current = repo_mode
+        .and_then(|repo_mode| repo_mode.diff_line_cursor)
+        .and_then(|cursor| {
+            selectable
+                .iter()
+                .position(|line_index| *line_index == cursor)
+        })
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    format!("{current}/{}", selectable.len())
+}
+
+fn selected_diff_range_label(
+    repo_mode: Option<&RepoModeState>,
+    diff: &super_lazygit_core::DiffModel,
+) -> String {
+    let Some(repo_mode) = repo_mode else {
+        return "0 line(s)".to_string();
+    };
+    let Some(selected_hunk) = diff.selected_hunk.and_then(|index| diff.hunks.get(index)) else {
+        return "0 line(s)".to_string();
+    };
+    let selectable = (selected_hunk.start_line_index + 1..selected_hunk.end_line_index)
+        .filter(|line_index| {
+            matches!(
+                diff.lines[*line_index].kind,
+                DiffLineKind::Addition | DiffLineKind::Removal
+            )
+        })
+        .collect::<Vec<_>>();
+    let Some(cursor_index) = repo_mode.diff_line_cursor.and_then(|cursor| {
+        selectable
+            .iter()
+            .position(|line_index| *line_index == cursor)
+    }) else {
+        return "0 line(s)".to_string();
+    };
+    let count = repo_mode
+        .diff_line_anchor
+        .and_then(|anchor| {
+            selectable
+                .iter()
+                .position(|line_index| *line_index == anchor)
+        })
+        .map(|anchor_index| anchor_index.abs_diff(cursor_index) + 1)
+        .unwrap_or(1);
+    format!("{count} line(s)")
 }
 
 fn operation_progress_label(progress: &super_lazygit_core::OperationProgress) -> String {
@@ -2954,7 +3076,7 @@ mod tests {
                     },
                     DiffLine {
                         kind: DiffLineKind::HunkHeader,
-                        content: "@@ -1,1 +1,2 @@".to_string(),
+                        content: "@@ -1 +1 @@".to_string(),
                     },
                     DiffLine {
                         kind: DiffLineKind::Removal,
@@ -2966,12 +3088,12 @@ mod tests {
                     },
                 ],
                 hunks: vec![super_lazygit_core::DiffHunk {
-                    header: "@@ -1,1 +1,2 @@".to_string(),
+                    header: "@@ -1 +1 @@".to_string(),
                     selection: super_lazygit_core::SelectedHunk {
                         old_start: 1,
                         old_lines: 1,
                         new_start: 1,
-                        new_lines: 2,
+                        new_lines: 1,
                     },
                     start_line_index: 2,
                     end_line_index: 5,
@@ -3010,7 +3132,7 @@ mod tests {
                             },
                             DiffLine {
                                 kind: DiffLineKind::HunkHeader,
-                                content: "@@ -0,0 +1,3 @@".to_string(),
+                                content: "@@ -0,0 +1 @@".to_string(),
                             },
                             DiffLine {
                                 kind: DiffLineKind::Addition,
@@ -3018,12 +3140,12 @@ mod tests {
                             },
                         ],
                         hunks: vec![super_lazygit_core::DiffHunk {
-                            header: "@@ -0,0 +1,3 @@".to_string(),
+                            header: "@@ -0,0 +1 @@".to_string(),
                             selection: super_lazygit_core::SelectedHunk {
                                 old_start: 0,
                                 old_lines: 0,
                                 new_start: 1,
-                                new_lines: 3,
+                                new_lines: 1,
                             },
                             start_line_index: 1,
                             end_line_index: 3,
@@ -4751,14 +4873,15 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .map(|repo_mode| repo_mode.diff_scroll),
-            Some(2)
+            Some(3)
         );
 
         let repo_mode = app.state().repo_mode.as_ref().expect("repo mode");
         let visible_lines = repo_diff_lines(
-            repo_mode.detail.as_ref(),
+            Some(repo_mode),
+            None,
             repo_mode.diff_scroll,
-            3,
+            6,
             Theme::from_config(&AppConfig::default()),
         );
         let rendered_lines = visible_lines
@@ -4774,7 +4897,10 @@ mod tests {
         assert!(rendered_lines
             .iter()
             .any(|line| line.contains("Hunks: 1  Selected: 1/1")));
-        assert!(rendered_lines.contains(&"@@ -1,1 +1,2 @@".to_string()));
+        assert!(rendered_lines
+            .iter()
+            .any(|line| line.contains("Line select: J/K cursor")));
+        assert!(rendered_lines.contains(&"@@ -1 +1 @@".to_string()));
 
         let scroll_down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "down".to_string(),
@@ -4785,7 +4911,7 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .map(|repo_mode| repo_mode.diff_scroll),
-            Some(3)
+            Some(4)
         );
 
         let up = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
@@ -4796,8 +4922,64 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .map(|repo_mode| repo_mode.diff_scroll),
-            Some(2)
+            Some(3)
         );
+    }
+
+    #[test]
+    fn repo_mode_status_detail_routes_line_selection_keys() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                diff_line_cursor: Some(3),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let anchored = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "v".to_string(),
+        })));
+        assert_eq!(
+            anchored
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_line_anchor),
+            Some(Some(3))
+        );
+
+        let moved = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "J".to_string(),
+        })));
+        assert_eq!(
+            moved
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_line_cursor),
+            Some(Some(4))
+        );
+
+        let apply = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "L".to_string(),
+        })));
+        assert!(apply.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunPatchSelection(super_lazygit_core::PatchSelectionJob {
+                hunks,
+                ..
+            }) if hunks
+                == &vec![super_lazygit_core::SelectedHunk {
+                    old_start: 1,
+                    old_lines: 1,
+                    new_start: 1,
+                    new_lines: 1,
+                }]
+        )));
     }
 
     #[test]
@@ -4859,7 +5041,8 @@ mod tests {
         assert!(rendered.contains("A Cargo.toml"));
         assert!(rendered.contains("Path: src/lib.rs"));
         assert!(rendered.contains("Hunks: 1"));
-        assert!(rendered.contains("@@ -1,1 +1,2 @@"));
+        assert!(rendered.contains("Line select: J/K cursor"));
+        assert!(rendered.contains("@@ -1 +1 @@"));
         assert!(rendered.contains("+new line"));
         assert!(rendered.contains("Repository shell"));
         assert!(rendered.contains("Watch: unknown"));

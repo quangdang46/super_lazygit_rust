@@ -492,6 +492,8 @@ pub struct RepoModeState {
     pub current_repo_id: RepoId,
     pub active_subview: RepoSubview,
     pub diff_scroll: usize,
+    pub diff_line_cursor: Option<usize>,
+    pub diff_line_anchor: Option<usize>,
     pub status_view: ListViewState,
     pub staged_view: ListViewState,
     pub commit_box: CommitBoxState,
@@ -514,6 +516,8 @@ impl RepoModeState {
             current_repo_id,
             active_subview: RepoSubview::default(),
             diff_scroll: 0,
+            diff_line_cursor: None,
+            diff_line_anchor: None,
             status_view: ListViewState::default(),
             staged_view: ListViewState::default(),
             commit_box: CommitBoxState::default(),
@@ -1139,6 +1143,8 @@ mod tests {
         assert_eq!(state.current_repo_id, RepoId::new("repo-a"));
         assert_eq!(state.active_subview, RepoSubview::Status);
         assert_eq!(state.diff_scroll, 0);
+        assert_eq!(state.diff_line_cursor, None);
+        assert_eq!(state.diff_line_anchor, None);
         assert_eq!(state.operation_progress, OperationProgress::Idle);
         assert!(state.detail.is_none());
     }

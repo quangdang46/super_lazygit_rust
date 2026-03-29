@@ -5,8 +5,8 @@ use crate::effect::{
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
-    ComparisonTarget, ConfirmableOperation, DiffPresentation, InputPromptOperation, JobId,
-    MergeState, MessageLevel, Notification, OperationProgress, PaneId, PendingInputPrompt,
+    ComparisonTarget, ConfirmableOperation, DiffLineKind, DiffPresentation, InputPromptOperation,
+    JobId, MergeState, MessageLevel, Notification, OperationProgress, PaneId, PendingInputPrompt,
     RepoModeState, ResetMode, ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
 };
 
@@ -420,6 +420,27 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextDiffLine => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_diff_line_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousDiffLine => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_diff_line_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::ToggleDiffLineAnchor => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if toggle_diff_line_anchor(repo_mode) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::SetFocusedPane(pane) => {
             state.focused_pane = pane;
             effects.push(Effect::ScheduleRender);
@@ -564,6 +585,34 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 let summary = format!("Unstage hunk in {}", job.path.display());
                 enqueue_patch_job(state, &job, &summary);
                 effects.push(Effect::RunPatchSelection(job));
+            }
+        }
+        Action::StageSelectedLines => {
+            match selected_line_patch_job(state, PatchApplicationMode::Stage) {
+                Ok(Some(job)) => {
+                    let summary = format!("Stage selected lines in {}", job.path.display());
+                    enqueue_patch_job(state, &job, &summary);
+                    effects.push(Effect::RunPatchSelection(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::UnstageSelectedLines => {
+            match selected_line_patch_job(state, PatchApplicationMode::Unstage) {
+                Ok(Some(job)) => {
+                    let summary = format!("Unstage selected lines in {}", job.path.display());
+                    enqueue_patch_job(state, &job, &summary);
+                    effects.push(Effect::RunPatchSelection(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
             }
         }
         Action::OpenCommitBox { mode } => {
@@ -1203,13 +1252,60 @@ fn step_diff_hunk_selection(repo_mode: &mut RepoModeState, step: isize) -> bool 
     let current = diff.selected_hunk.filter(|index| *index < len).unwrap_or(0);
     let selected = (current as isize + step).rem_euclid(len as isize) as usize;
     diff.selected_hunk = Some(selected);
-
-    repo_mode.diff_scroll = detail
-        .diff
-        .hunks
-        .get(selected)
-        .map_or(0, |hunk| hunk.start_line_index);
+    sync_diff_selection(repo_mode);
     true
+}
+
+fn step_diff_line_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let selectable = selected_hunk_change_lines(repo_mode)
+        .map(|lines| lines.collect::<Vec<_>>())
+        .unwrap_or_default();
+    if selectable.is_empty() {
+        repo_mode.diff_line_cursor = None;
+        repo_mode.diff_line_anchor = None;
+        return false;
+    }
+
+    let current_index = repo_mode.diff_line_cursor.and_then(|cursor| {
+        selectable
+            .iter()
+            .position(|line_index| *line_index == cursor)
+    });
+    let next_index = match current_index {
+        Some(index) => (index as isize + step).rem_euclid(selectable.len() as isize) as usize,
+        None => 0,
+    };
+    let next_line = selectable[next_index];
+    let changed = repo_mode.diff_line_cursor != Some(next_line);
+    repo_mode.diff_line_cursor = Some(next_line);
+    repo_mode.diff_scroll = next_line;
+    changed || current_index.is_none()
+}
+
+fn toggle_diff_line_anchor(repo_mode: &mut RepoModeState) -> bool {
+    let Some(cursor) = repo_mode.diff_line_cursor else {
+        return false;
+    };
+
+    repo_mode.diff_line_anchor = match repo_mode.diff_line_anchor {
+        Some(anchor) if anchor == cursor => None,
+        _ => Some(cursor),
+    };
+    true
+}
+
+fn selected_hunk_change_lines(
+    repo_mode: &RepoModeState,
+) -> Option<impl Iterator<Item = usize> + '_> {
+    let detail = repo_mode.detail.as_ref()?;
+    let hunk = detail
+        .diff
+        .selected_hunk
+        .and_then(|index| detail.diff.hunks.get(index))?;
+    Some(
+        (hunk.start_line_index + 1..hunk.end_line_index)
+            .filter(|line_index| is_change_line(detail.diff.lines[*line_index].kind)),
+    )
 }
 
 fn close_commit_box(repo_mode: &mut RepoModeState) {
@@ -1684,6 +1780,9 @@ fn sync_status_selection(repo_mode: &mut RepoModeState) {
 
 fn sync_diff_selection(repo_mode: &mut RepoModeState) {
     let Some(detail) = repo_mode.detail.as_mut() else {
+        repo_mode.diff_line_cursor = None;
+        repo_mode.diff_line_anchor = None;
+        repo_mode.diff_scroll = 0;
         return;
     };
 
@@ -1692,11 +1791,173 @@ fn sync_diff_selection(repo_mode: &mut RepoModeState) {
     if detail.diff.selected_hunk.is_none() && len > 0 {
         detail.diff.selected_hunk = Some(0);
     }
-    repo_mode.diff_scroll = detail
-        .diff
-        .selected_hunk
-        .and_then(|index| detail.diff.hunks.get(index))
-        .map_or(0, |hunk| hunk.start_line_index);
+    let Some(selected_hunk_index) = detail.diff.selected_hunk else {
+        repo_mode.diff_line_cursor = None;
+        repo_mode.diff_line_anchor = None;
+        repo_mode.diff_scroll = 0;
+        return;
+    };
+    let Some(selected_hunk) = detail.diff.hunks.get(selected_hunk_index) else {
+        repo_mode.diff_line_cursor = None;
+        repo_mode.diff_line_anchor = None;
+        repo_mode.diff_scroll = 0;
+        return;
+    };
+
+    let selected_range = selected_hunk.start_line_index + 1..selected_hunk.end_line_index;
+    let selectable_lines = selected_range
+        .clone()
+        .filter(|line_index| is_change_line(detail.diff.lines[*line_index].kind))
+        .collect::<Vec<_>>();
+
+    repo_mode.diff_line_cursor = repo_mode.diff_line_cursor.filter(|line_index| {
+        selectable_lines
+            .iter()
+            .any(|candidate| candidate == line_index)
+    });
+    if repo_mode.diff_line_cursor.is_none() {
+        repo_mode.diff_line_cursor = selectable_lines.first().copied();
+    }
+
+    repo_mode.diff_line_anchor = repo_mode.diff_line_anchor.filter(|line_index| {
+        selectable_lines
+            .iter()
+            .any(|candidate| candidate == line_index)
+    });
+
+    repo_mode.diff_scroll = repo_mode
+        .diff_line_cursor
+        .unwrap_or(selected_hunk.start_line_index);
+}
+
+fn is_change_line(kind: DiffLineKind) -> bool {
+    matches!(kind, DiffLineKind::Addition | DiffLineKind::Removal)
+}
+
+fn displayed_hunk_patch_blocks(
+    diff: &crate::state::DiffModel,
+    hunk_index: usize,
+) -> Result<Vec<SelectedHunk>, String> {
+    let hunk = diff
+        .hunks
+        .get(hunk_index)
+        .ok_or_else(|| "Select a hunk before staging it.".to_string())?;
+    let mut block_start = None;
+    let mut selections = Vec::new();
+
+    for line_index in hunk.start_line_index + 1..hunk.end_line_index {
+        if is_change_line(diff.lines[line_index].kind) {
+            block_start.get_or_insert(line_index);
+            continue;
+        }
+
+        if let Some(start) = block_start.take() {
+            selections.push(selection_for_display_range(
+                diff,
+                hunk_index,
+                start,
+                line_index - 1,
+            )?);
+        }
+    }
+
+    if let Some(start) = block_start {
+        selections.push(selection_for_display_range(
+            diff,
+            hunk_index,
+            start,
+            hunk.end_line_index.saturating_sub(1),
+        )?);
+    }
+
+    Ok(selections)
+}
+
+fn selection_for_display_range(
+    diff: &crate::state::DiffModel,
+    hunk_index: usize,
+    start_line_index: usize,
+    end_line_index: usize,
+) -> Result<SelectedHunk, String> {
+    let hunk = diff
+        .hunks
+        .get(hunk_index)
+        .ok_or_else(|| "Select a hunk before staging it.".to_string())?;
+    if start_line_index > end_line_index
+        || start_line_index <= hunk.start_line_index
+        || end_line_index >= hunk.end_line_index
+    {
+        return Err("Select a valid changed line range inside the current hunk.".to_string());
+    }
+
+    let mut old_cursor = hunk.selection.old_start;
+    let mut new_cursor = hunk.selection.new_start;
+    let mut first_old_cursor = None;
+    let mut first_new_cursor = None;
+    let mut old_lines = 0_u32;
+    let mut new_lines = 0_u32;
+
+    for line_index in hunk.start_line_index + 1..hunk.end_line_index {
+        let line = &diff.lines[line_index];
+        let in_range = (start_line_index..=end_line_index).contains(&line_index);
+        match line.kind {
+            DiffLineKind::Context => {
+                if in_range {
+                    return Err(
+                        "Line staging only works within one contiguous change block. Use Enter for the whole hunk."
+                            .to_string(),
+                    );
+                }
+                old_cursor = old_cursor.saturating_add(1);
+                new_cursor = new_cursor.saturating_add(1);
+            }
+            DiffLineKind::Meta | DiffLineKind::HunkHeader => {
+                if in_range {
+                    return Err("Only added and removed lines can be selected.".to_string());
+                }
+            }
+            DiffLineKind::Removal => {
+                if in_range {
+                    first_old_cursor.get_or_insert(old_cursor);
+                    first_new_cursor.get_or_insert(new_cursor);
+                    old_lines = old_lines.saturating_add(1);
+                }
+                old_cursor = old_cursor.saturating_add(1);
+            }
+            DiffLineKind::Addition => {
+                if in_range {
+                    first_old_cursor.get_or_insert(old_cursor);
+                    first_new_cursor.get_or_insert(new_cursor);
+                    new_lines = new_lines.saturating_add(1);
+                }
+                new_cursor = new_cursor.saturating_add(1);
+            }
+        }
+    }
+
+    if old_lines == 0 && new_lines == 0 {
+        return Err("Select a changed line before staging lines.".to_string());
+    }
+
+    let old_start_cursor = first_old_cursor
+        .ok_or_else(|| "Select a changed line before staging lines.".to_string())?;
+    let new_start_cursor = first_new_cursor
+        .ok_or_else(|| "Select a changed line before staging lines.".to_string())?;
+
+    Ok(SelectedHunk {
+        old_start: if old_lines > 0 {
+            old_start_cursor
+        } else {
+            old_start_cursor.saturating_sub(1)
+        },
+        old_lines,
+        new_start: if new_lines > 0 {
+            new_start_cursor
+        } else {
+            new_start_cursor.saturating_sub(1)
+        },
+        new_lines,
+    })
 }
 
 fn status_entries_len(detail: &crate::state::RepoDetail, pane: PaneId) -> usize {
@@ -2147,17 +2408,67 @@ fn selected_hunk_patch_job(
     }
 
     let path = diff.selected_path.clone()?;
-    let selected_hunk = diff
-        .selected_hunk
-        .and_then(|index| diff.hunks.get(index))
-        .map(|hunk| hunk.selection)?;
+    let selected_hunk_index = diff.selected_hunk?;
+    let selections = displayed_hunk_patch_blocks(diff, selected_hunk_index).ok()?;
+    if selections.is_empty() {
+        return None;
+    }
 
     Some(patch_job(
         repo_mode.current_repo_id.clone(),
         path,
         mode,
-        vec![selected_hunk],
+        selections,
     ))
+}
+
+fn selected_line_patch_job(
+    state: &AppState,
+    mode: PatchApplicationMode,
+) -> Result<Option<PatchSelectionJob>, String> {
+    let repo_mode = match state.repo_mode.as_ref() {
+        Some(repo_mode) => repo_mode,
+        None => return Ok(None),
+    };
+    let detail = match repo_mode.detail.as_ref() {
+        Some(detail) => detail,
+        None => return Ok(None),
+    };
+    let diff = &detail.diff;
+    if diff.presentation == DiffPresentation::Comparison {
+        return Ok(None);
+    }
+
+    let expected_presentation = match mode {
+        PatchApplicationMode::Stage => DiffPresentation::Unstaged,
+        PatchApplicationMode::Unstage => DiffPresentation::Staged,
+    };
+    if diff.presentation != expected_presentation {
+        return Ok(None);
+    }
+
+    let path = match diff.selected_path.clone() {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+    let hunk_index = diff
+        .selected_hunk
+        .ok_or_else(|| "Select a hunk before staging lines.".to_string())?;
+    let cursor = repo_mode
+        .diff_line_cursor
+        .ok_or_else(|| "Use J/K to pick a changed line before staging lines.".to_string())?;
+    let anchor = repo_mode.diff_line_anchor.unwrap_or(cursor);
+    let start_line_index = anchor.min(cursor);
+    let end_line_index = anchor.max(cursor);
+    let selection =
+        selection_for_display_range(diff, hunk_index, start_line_index, end_line_index)?;
+
+    Ok(Some(patch_job(
+        repo_mode.current_repo_id.clone(),
+        path,
+        mode,
+        vec![selection],
+    )))
 }
 
 fn job_suffix(command: &GitCommand) -> &'static str {
@@ -4441,6 +4752,265 @@ mod tests {
                 summary: "Stage README.md".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn stage_selected_hunk_splits_displayed_hunk_into_zero_context_blocks() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail {
+                    diff: DiffModel {
+                        selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                        presentation: DiffPresentation::Unstaged,
+                        lines: vec![
+                            DiffLine {
+                                kind: DiffLineKind::HunkHeader,
+                                content: "@@ -1,4 +1,4 @@".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-before".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+after".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Context,
+                                content: " shared".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-tail before".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+tail after".to_string(),
+                            },
+                        ],
+                        hunks: vec![DiffHunk {
+                            header: "@@ -1,4 +1,4 @@".to_string(),
+                            selection: SelectedHunk {
+                                old_start: 1,
+                                old_lines: 4,
+                                new_start: 1,
+                                new_lines: 4,
+                            },
+                            start_line_index: 0,
+                            end_line_index: 6,
+                        }],
+                        selected_hunk: Some(0),
+                        hunk_count: 1,
+                    },
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StageSelectedHunk));
+        let job_id = JobId::new("git:repo-1:stage-hunk");
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunPatchSelection(
+                crate::effect::PatchSelectionJob {
+                    job_id,
+                    repo_id,
+                    path: std::path::PathBuf::from("src/lib.rs"),
+                    mode: crate::effect::PatchApplicationMode::Stage,
+                    hunks: vec![
+                        SelectedHunk {
+                            old_start: 1,
+                            old_lines: 1,
+                            new_start: 1,
+                            new_lines: 1,
+                        },
+                        SelectedHunk {
+                            old_start: 3,
+                            old_lines: 1,
+                            new_start: 3,
+                            new_lines: 1,
+                        },
+                    ],
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn stage_selected_lines_uses_cursor_and_anchor_range() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                diff_line_cursor: Some(2),
+                diff_line_anchor: Some(1),
+                detail: Some(RepoDetail {
+                    diff: DiffModel {
+                        selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                        presentation: DiffPresentation::Unstaged,
+                        lines: vec![
+                            DiffLine {
+                                kind: DiffLineKind::HunkHeader,
+                                content: "@@ -1 +1 @@".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-old".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+new".to_string(),
+                            },
+                        ],
+                        hunks: vec![DiffHunk {
+                            header: "@@ -1 +1 @@".to_string(),
+                            selection: SelectedHunk {
+                                old_start: 1,
+                                old_lines: 1,
+                                new_start: 1,
+                                new_lines: 1,
+                            },
+                            start_line_index: 0,
+                            end_line_index: 3,
+                        }],
+                        selected_hunk: Some(0),
+                        hunk_count: 1,
+                    },
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StageSelectedLines));
+        let job_id = JobId::new("git:repo-1:stage-hunk");
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunPatchSelection(
+                crate::effect::PatchSelectionJob {
+                    job_id,
+                    repo_id,
+                    path: std::path::PathBuf::from("src/lib.rs"),
+                    mode: crate::effect::PatchApplicationMode::Stage,
+                    hunks: vec![SelectedHunk {
+                        old_start: 1,
+                        old_lines: 1,
+                        new_start: 1,
+                        new_lines: 1,
+                    }],
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn stage_selected_lines_warns_when_range_crosses_context() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Status,
+                diff_line_cursor: Some(5),
+                diff_line_anchor: Some(1),
+                detail: Some(RepoDetail {
+                    diff: DiffModel {
+                        selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                        presentation: DiffPresentation::Unstaged,
+                        lines: vec![
+                            DiffLine {
+                                kind: DiffLineKind::HunkHeader,
+                                content: "@@ -1,4 +1,4 @@".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-before".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+after".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Context,
+                                content: " shared".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-tail before".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+tail after".to_string(),
+                            },
+                        ],
+                        hunks: vec![DiffHunk {
+                            header: "@@ -1,4 +1,4 @@".to_string(),
+                            selection: SelectedHunk {
+                                old_start: 1,
+                                old_lines: 4,
+                                new_start: 1,
+                                new_lines: 4,
+                            },
+                            start_line_index: 0,
+                            end_line_index: 6,
+                        }],
+                        selected_hunk: Some(0),
+                        hunk_count: 1,
+                    },
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StageSelectedLines));
+
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| (&notification.level, notification.text.as_str())),
+            Some((
+                &MessageLevel::Warning,
+                "Line staging only works within one contiguous change block. Use Enter for the whole hunk."
+            ))
+        );
+        assert!(!result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::RunPatchSelection(_))));
     }
 
     #[test]

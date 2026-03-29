@@ -1062,10 +1062,19 @@ fn build_selected_patch(diff: &str, selections: &[SelectedHunk]) -> GitResult<St
     let mut selected_hunks = Vec::new();
 
     for selection in selections {
-        let Some(hunk) = parsed
+        if let Some(hunk) = parsed
             .hunks
             .iter()
             .find(|hunk| hunk.selection == *selection)
+        {
+            selected_hunks.push(hunk.raw.clone());
+            continue;
+        }
+
+        let Some(hunk) = parsed
+            .hunks
+            .iter()
+            .find(|hunk| selection_within_hunk(*selection, hunk.selection))
         else {
             return Err(GitError::OperationFailed {
                 message: format!(
@@ -1077,7 +1086,7 @@ fn build_selected_patch(diff: &str, selections: &[SelectedHunk]) -> GitResult<St
                 ),
             });
         };
-        selected_hunks.push(hunk.raw.clone());
+        selected_hunks.push(build_partial_hunk(hunk, *selection)?);
     }
 
     let mut patch = String::new();
@@ -1089,6 +1098,96 @@ fn build_selected_patch(diff: &str, selections: &[SelectedHunk]) -> GitResult<St
         patch.push_str(&hunk);
     }
     Ok(patch)
+}
+
+fn selection_within_hunk(selection: SelectedHunk, hunk: SelectedHunk) -> bool {
+    let selection_old_end = selection.old_start.saturating_add(selection.old_lines);
+    let selection_new_end = selection.new_start.saturating_add(selection.new_lines);
+    let hunk_old_end = hunk.old_start.saturating_add(hunk.old_lines);
+    let hunk_new_end = hunk.new_start.saturating_add(hunk.new_lines);
+
+    selection.old_start >= hunk.old_start.saturating_sub(1)
+        && selection.new_start >= hunk.new_start.saturating_sub(1)
+        && selection_old_end <= hunk_old_end
+        && selection_new_end <= hunk_new_end
+}
+
+fn build_partial_hunk(hunk: &ParsedHunk, selection: SelectedHunk) -> GitResult<String> {
+    let mut raw_lines = hunk.raw.lines();
+    let header_line = raw_lines.next().ok_or_else(|| GitError::OperationFailed {
+        message: "patch hunk was empty".to_string(),
+    })?;
+    let header_suffix = hunk_header_suffix(header_line);
+    let mut body = String::new();
+    let mut old_cursor = hunk.selection.old_start;
+    let mut new_cursor = hunk.selection.new_start;
+    let old_end = selection.old_start.saturating_add(selection.old_lines);
+    let new_end = selection.new_start.saturating_add(selection.new_lines);
+    let mut previous_change_selected = false;
+
+    for line in raw_lines {
+        let include = match line.chars().next() {
+            Some('-') => {
+                let include = old_cursor >= selection.old_start && old_cursor < old_end;
+                old_cursor = old_cursor.saturating_add(1);
+                include
+            }
+            Some('+') => {
+                let include = new_cursor >= selection.new_start && new_cursor < new_end;
+                new_cursor = new_cursor.saturating_add(1);
+                include
+            }
+            Some('\\') => previous_change_selected,
+            _ => {
+                return Err(GitError::OperationFailed {
+                    message: format!(
+                        "unexpected context in zero-context hunk while selecting partial patch: {line}"
+                    ),
+                });
+            }
+        };
+
+        if include {
+            body.push_str(line);
+            body.push('\n');
+        }
+        previous_change_selected = matches!(line.chars().next(), Some('-' | '+')) && include;
+    }
+
+    if body.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: format!(
+                "requested hunk -{},{} +{},{} did not match any lines in patch",
+                selection.old_start, selection.old_lines, selection.new_start, selection.new_lines
+            ),
+        });
+    }
+
+    let mut raw = format!(
+        "@@ -{} +{} @@{}",
+        format_patch_range(selection.old_start, selection.old_lines),
+        format_patch_range(selection.new_start, selection.new_lines),
+        header_suffix
+    );
+    raw.push('\n');
+    raw.push_str(&body);
+    Ok(raw)
+}
+
+fn format_patch_range(start: u32, lines: u32) -> String {
+    if lines == 1 {
+        start.to_string()
+    } else {
+        format!("{start},{lines}")
+    }
+}
+
+fn hunk_header_suffix(header_line: &str) -> &str {
+    header_line
+        .strip_prefix("@@")
+        .and_then(|rest| rest.split_once("@@"))
+        .map(|(_, suffix)| suffix)
+        .unwrap_or("")
 }
 
 fn parse_patch(diff: &str) -> GitResult<ParsedPatch> {
@@ -3914,6 +4013,123 @@ mod tests {
         assert!(!unstaged.contains("+five staged"));
     }
 
+    #[test]
+    fn cli_backend_stages_selected_partial_lines_from_unstaged_diff() {
+        let repo = multi_line_partial_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .apply_patch_selection(PatchSelectionRequest {
+                repo_id: repo_id.clone(),
+                path: PathBuf::from("multi.txt"),
+                mode: PatchApplicationMode::Stage,
+                hunks: vec![SelectedHunk {
+                    old_start: 3,
+                    old_lines: 1,
+                    new_start: 3,
+                    new_lines: 1,
+                }],
+            })
+            .expect("patch selection should stage selected line");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert!(outcome.summary.contains("Staged 1 selected hunk(s)"));
+        assert_eq!(repo.status_porcelain().expect("status"), "MM multi.txt");
+
+        let staged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+        let unstaged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("worktree diff should load");
+
+        assert!(staged.contains("+three staged"));
+        assert!(!staged.contains("+two staged"));
+        assert!(!staged.contains("+four staged"));
+        assert!(unstaged.contains("+two staged"));
+        assert!(!unstaged.contains("+three staged"));
+        assert!(unstaged.contains("+four staged"));
+    }
+
+    #[test]
+    fn cli_backend_unstages_selected_partial_lines_from_index_diff() {
+        let repo = multi_line_partial_repo().expect("fixture repo");
+        repo.stage("multi.txt").expect("stage file");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .apply_patch_selection(PatchSelectionRequest {
+                repo_id: repo_id.clone(),
+                path: PathBuf::from("multi.txt"),
+                mode: PatchApplicationMode::Unstage,
+                hunks: vec![SelectedHunk {
+                    old_start: 3,
+                    old_lines: 2,
+                    new_start: 3,
+                    new_lines: 2,
+                }],
+            })
+            .expect("patch selection should unstage selected lines");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert!(outcome.summary.contains("Unstaged 1 selected hunk(s)"));
+        assert_eq!(repo.status_porcelain().expect("status"), "MM multi.txt");
+
+        let staged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+        let unstaged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("worktree diff should load");
+
+        assert!(staged.contains("+two staged"));
+        assert!(!staged.contains("+three staged"));
+        assert!(!staged.contains("+four staged"));
+        assert!(!unstaged.contains("+two staged"));
+        assert!(unstaged.contains("+three staged"));
+        assert!(unstaged.contains("+four staged"));
+    }
+
     fn multi_hunk_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
         let repo = temp_repo()?;
         repo.write_file("multi.txt", "one\ntwo\nthree\nfour\nfive\nsix\n")?;
@@ -3921,6 +4137,17 @@ mod tests {
         repo.write_file(
             "multi.txt",
             "one\ntwo staged\nthree\nfour\nfive staged\nsix\n",
+        )?;
+        Ok(repo)
+    }
+
+    fn multi_line_partial_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file("multi.txt", "one\ntwo\nthree\nfour\nfive\n")?;
+        repo.commit_all("initial")?;
+        repo.write_file(
+            "multi.txt",
+            "one\ntwo staged\nthree staged\nfour staged\nfive\n",
         )?;
         Ok(repo)
     }
