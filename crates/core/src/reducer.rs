@@ -361,9 +361,11 @@ fn complete_job(state: &mut AppState, job_id: &JobId, next_state: BackgroundJobS
 #[cfg(test)]
 mod tests {
     use crate::action::Action;
-    use crate::event::{Event, WorkerEvent};
+    use crate::effect::{Effect, GitCommand, GitCommandRequest};
+    use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
-        AppMode, AppState, ModalKind, PaneId, RepoId, RepoSummary, Timestamp, WatcherHealth,
+        AppMode, AppState, BackgroundJobState, JobId, MessageLevel, ModalKind, PaneId, RepoDetail,
+        RepoId, RepoSubview, RepoSummary, Timestamp, WatcherHealth,
     };
 
     use super::reduce;
@@ -410,6 +412,7 @@ mod tests {
         assert_eq!(result.state.mode, AppMode::Workspace);
         assert_eq!(result.state.focused_pane, PaneId::WorkspaceList);
         assert!(result.state.repo_mode.is_none());
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
@@ -423,12 +426,14 @@ mod tests {
             next.state.workspace.selected_repo_id,
             Some(RepoId::new("b"))
         );
+        assert_eq!(next.effects, vec![Effect::ScheduleRender]);
 
         let wrapped = reduce(next.state, Event::Action(Action::SelectNextRepo));
         assert_eq!(
             wrapped.state.workspace.selected_repo_id,
             Some(RepoId::new("a"))
         );
+        assert_eq!(wrapped.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
@@ -443,17 +448,19 @@ mod tests {
 
         assert_eq!(opened.state.modal_stack.len(), 1);
         assert_eq!(opened.state.focused_pane, PaneId::Modal);
+        assert_eq!(opened.effects, vec![Effect::ScheduleRender]);
 
         let closed = reduce(opened.state, Event::Action(Action::CloseTopModal));
         assert!(closed.state.modal_stack.is_empty());
         assert_eq!(closed.state.focused_pane, PaneId::WorkspaceList);
+        assert_eq!(closed.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
     fn watcher_degraded_updates_health() {
         let result = reduce(
             AppState::default(),
-            Event::Watcher(crate::event::WatcherEvent::WatcherDegraded {
+            Event::Watcher(WatcherEvent::WatcherDegraded {
                 message: "watch overflow".to_string(),
             }),
         );
@@ -464,6 +471,7 @@ mod tests {
                 message: "watch overflow".to_string()
             }
         );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
@@ -485,6 +493,7 @@ mod tests {
             result.state.workspace.last_full_refresh_at,
             Some(Timestamp(42))
         );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
@@ -506,5 +515,433 @@ mod tests {
             result.state.workspace.repo_summaries.get(&summary.repo_id),
             Some(&summary)
         );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn refresh_selected_repo_routes_to_summary_and_detail_in_repo_mode() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Action(Action::RefreshSelectedRepo));
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                },
+                Effect::LoadRepoDetail { repo_id },
+            ]
+        );
+    }
+
+    #[test]
+    fn refresh_selected_repo_only_refreshes_summary_in_workspace_mode() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState::default();
+        state.workspace.selected_repo_id = Some(repo_id.clone());
+
+        let result = reduce(state, Event::Action(Action::RefreshSelectedRepo));
+
+        assert_eq!(result.effects, vec![Effect::RefreshRepoSummary { repo_id }]);
+    }
+
+    #[test]
+    fn refresh_visible_repos_emits_scan_effect() {
+        let result = reduce(
+            AppState::default(),
+            Event::Action(Action::RefreshVisibleRepos),
+        );
+
+        assert_eq!(result.effects, vec![Effect::StartRepoScan]);
+    }
+
+    #[test]
+    fn switch_repo_subview_moves_focus_to_detail_pane() {
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: RepoId::new("repo-1"),
+            }),
+        )
+        .state;
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SwitchRepoSubview(RepoSubview::Branches)),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Branches)
+        );
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn close_top_modal_in_repo_mode_restores_repo_focus() {
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: RepoId::new("repo-1"),
+            }),
+        )
+        .state;
+        let state = reduce(
+            state,
+            Event::Action(Action::OpenModal {
+                kind: ModalKind::Help,
+                title: "Help".to_string(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Action(Action::CloseTopModal));
+
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoStatus);
+    }
+
+    #[test]
+    fn stage_selection_queues_git_job_and_sets_progress() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Action(Action::StageSelection));
+        let job_id = JobId::new("git:repo-1:stage-selection");
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Stage selection".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::StageSelection,
+            })]
+        );
+    }
+
+    #[test]
+    fn git_operation_started_marks_job_running() {
+        let repo_id = RepoId::new("repo-1");
+        let job_id = JobId::new("git:repo-1:stage-selection");
+
+        let result = reduce(
+            AppState::default(),
+            Event::Worker(WorkerEvent::GitOperationStarted {
+                job_id: job_id.clone(),
+                repo_id: repo_id.clone(),
+                summary: "Stage selection".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Running)
+        );
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .and_then(|job| job.target_repo.as_ref()),
+            Some(&repo_id)
+        );
+    }
+
+    #[test]
+    fn repo_detail_loaded_only_updates_matching_repo_mode() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+        let detail = RepoDetail::default();
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::RepoDetailLoaded {
+                repo_id: repo_id.clone(),
+                detail: detail.clone(),
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref()),
+            Some(&detail)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| &repo_mode.operation_progress),
+            Some(&crate::state::OperationProgress::Idle)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn git_operation_completed_refreshes_repo_and_reports_status() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+        let state = reduce(state, Event::Action(Action::StageSelection)).state;
+        let job_id = JobId::new("git:repo-1:stage-selection");
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::GitOperationCompleted {
+                job_id: job_id.clone(),
+                repo_id: repo_id.clone(),
+                summary: "Done".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Succeeded)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| &repo_mode.operation_progress),
+            Some(&crate::state::OperationProgress::Idle)
+        );
+        assert_eq!(
+            result
+                .state
+                .status_messages
+                .back()
+                .map(|message| message.text.as_str()),
+            Some("Done")
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                },
+                Effect::LoadRepoDetail {
+                    repo_id: repo_id.clone(),
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn git_operation_failed_sets_failed_progress_and_notification() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+        let state = reduce(state, Event::Action(Action::StageSelection)).state;
+        let job_id = JobId::new("git:repo-1:stage-selection");
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::GitOperationFailed {
+                job_id: job_id.clone(),
+                repo_id,
+                error: "boom".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Failed {
+                error: "boom".to_string(),
+            })
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Failed {
+                summary: "boom".to_string(),
+            })
+        );
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| (&notification.level, notification.text.as_str())),
+            Some((&MessageLevel::Error, "boom"))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn repo_invalidated_loads_detail_for_active_repo() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(
+            state,
+            Event::Watcher(WatcherEvent::RepoInvalidated {
+                repo_id: repo_id.clone(),
+            }),
+        );
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                },
+                Effect::LoadRepoDetail { repo_id },
+            ]
+        );
+    }
+
+    #[test]
+    fn repo_invalidated_outside_repo_mode_only_refreshes_summary() {
+        let repo_id = RepoId::new("repo-1");
+
+        let result = reduce(
+            AppState::default(),
+            Event::Watcher(WatcherEvent::RepoInvalidated {
+                repo_id: repo_id.clone(),
+            }),
+        );
+
+        assert_eq!(result.effects, vec![Effect::RefreshRepoSummary { repo_id }]);
+    }
+
+    #[test]
+    fn watcher_recovered_sets_health_to_healthy() {
+        let result = reduce(
+            AppState::default(),
+            Event::Watcher(WatcherEvent::WatcherRecovered),
+        );
+
+        assert_eq!(
+            result.state.workspace.watcher_health,
+            WatcherHealth::Healthy
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn periodic_refresh_tick_moves_idle_scan_to_scanning() {
+        let result = reduce(
+            AppState::default(),
+            Event::Timer(TimerEvent::PeriodicRefreshTick),
+        );
+
+        assert_eq!(
+            result.state.workspace.scan_status,
+            crate::state::ScanStatus::Scanning
+        );
+        assert!(result.effects.is_empty());
+    }
+
+    #[test]
+    fn toast_expiry_tick_removes_expired_notifications() {
+        let mut state = AppState::default();
+        state.notifications.push_back(crate::state::Notification {
+            id: 1,
+            level: MessageLevel::Info,
+            text: "stale".to_string(),
+            expires_at: Some(Timestamp(5)),
+        });
+        state.notifications.push_back(crate::state::Notification {
+            id: 2,
+            level: MessageLevel::Info,
+            text: "fresh".to_string(),
+            expires_at: Some(Timestamp(15)),
+        });
+
+        let result = reduce(
+            state,
+            Event::Timer(TimerEvent::ToastExpiryTick { now: Timestamp(10) }),
+        );
+
+        assert_eq!(result.state.notifications.len(), 1);
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .front()
+                .map(|notification| notification.id),
+            Some(2)
+        );
+        assert!(result.effects.is_empty());
     }
 }

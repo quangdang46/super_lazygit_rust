@@ -454,3 +454,73 @@ pub enum BackgroundJobState {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Timestamp(pub u64);
+
+#[cfg(test)]
+mod tests {
+    use super::{OperationProgress, RepoId, RepoModeState, RepoSubview, WorkspaceState};
+
+    #[test]
+    fn select_next_wraps_to_first_repo() {
+        let mut workspace = WorkspaceState {
+            discovered_repo_ids: vec![RepoId::new("repo-a"), RepoId::new("repo-b")],
+            selected_repo_id: Some(RepoId::new("repo-b")),
+            ..WorkspaceState::default()
+        };
+
+        let selected = workspace.select_next();
+
+        assert_eq!(selected, Some(RepoId::new("repo-a")));
+        assert_eq!(workspace.selected_repo_id, Some(RepoId::new("repo-a")));
+    }
+
+    #[test]
+    fn select_previous_wraps_to_last_repo() {
+        let mut workspace = WorkspaceState {
+            discovered_repo_ids: vec![RepoId::new("repo-a"), RepoId::new("repo-b")],
+            selected_repo_id: Some(RepoId::new("repo-a")),
+            ..WorkspaceState::default()
+        };
+
+        let selected = workspace.select_previous();
+
+        assert_eq!(selected, Some(RepoId::new("repo-b")));
+        assert_eq!(workspace.selected_repo_id, Some(RepoId::new("repo-b")));
+    }
+
+    #[test]
+    fn select_next_defaults_to_first_repo_when_selection_is_missing() {
+        let mut workspace = WorkspaceState {
+            discovered_repo_ids: vec![RepoId::new("repo-a"), RepoId::new("repo-b")],
+            selected_repo_id: None,
+            ..WorkspaceState::default()
+        };
+
+        let selected = workspace.select_next();
+
+        assert_eq!(selected, Some(RepoId::new("repo-b")));
+        assert_eq!(workspace.selected_repo_id, Some(RepoId::new("repo-b")));
+    }
+
+    #[test]
+    fn selecting_in_empty_workspace_clears_selection() {
+        let mut workspace = WorkspaceState {
+            selected_repo_id: Some(RepoId::new("repo-a")),
+            ..WorkspaceState::default()
+        };
+
+        let selected = workspace.select_next();
+
+        assert_eq!(selected, None);
+        assert_eq!(workspace.selected_repo_id, None);
+    }
+
+    #[test]
+    fn repo_mode_state_new_starts_on_status_subview_with_idle_progress() {
+        let state = RepoModeState::new(RepoId::new("repo-a"));
+
+        assert_eq!(state.current_repo_id, RepoId::new("repo-a"));
+        assert_eq!(state.active_subview, RepoSubview::Status);
+        assert_eq!(state.operation_progress, OperationProgress::Idle);
+        assert!(state.detail.is_none());
+    }
+}

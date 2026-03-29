@@ -9,8 +9,9 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, Event, InputEvent,
-    KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
+    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand,
+    InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
+    Timestamp, WorkerEvent,
 };
 use super_lazygit_git::GitFacade;
 use super_lazygit_workspace::WorkspaceRegistry;
@@ -100,6 +101,80 @@ impl TuiApp {
                 result
             }
         }
+    }
+
+    pub fn apply_effects(&mut self, effects: &[Effect]) -> Vec<Event> {
+        let mut follow_up_events = Vec::new();
+
+        for effect in effects {
+            match effect {
+                Effect::StartRepoScan => {
+                    let repo_ids = self
+                        .workspace
+                        .root()
+                        .map(|root| vec![RepoId::new(root.display().to_string())])
+                        .unwrap_or_default();
+                    self.workspace
+                        .record_scan("runtime.start_repo_scan", repo_ids.len());
+                    self.diagnostics
+                        .extend_snapshot(self.workspace.diagnostics());
+                    follow_up_events.push(Event::Worker(WorkerEvent::RepoScanCompleted {
+                        root: self.workspace.root().cloned(),
+                        repo_ids,
+                        scanned_at: Timestamp(1),
+                    }));
+                }
+                Effect::RefreshRepoSummary { repo_id } => {
+                    self.git.record_operation("refresh_repo_summary", true);
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+                    follow_up_events.push(Event::Worker(WorkerEvent::RepoSummaryUpdated {
+                        summary: RepoSummary {
+                            repo_id: repo_id.clone(),
+                            display_name: repo_id.0.clone(),
+                            display_path: self
+                                .workspace
+                                .root()
+                                .map(|root| root.display().to_string())
+                                .unwrap_or_else(|| repo_id.0.clone()),
+                            ..RepoSummary::default()
+                        },
+                    }));
+                }
+                Effect::LoadRepoDetail { repo_id } => {
+                    self.git.record_operation("load_repo_detail", true);
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+                    follow_up_events.push(Event::Worker(WorkerEvent::RepoDetailLoaded {
+                        repo_id: repo_id.clone(),
+                        detail: RepoDetail::default(),
+                    }));
+                }
+                Effect::RunGitCommand(request) => {
+                    let summary = git_command_summary(&request.command);
+                    self.git.record_operation(summary, true);
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+                    follow_up_events.push(Event::Worker(WorkerEvent::GitOperationStarted {
+                        job_id: request.job_id.clone(),
+                        repo_id: request.repo_id.clone(),
+                        summary: summary.to_string(),
+                    }));
+                    follow_up_events.push(Event::Worker(WorkerEvent::GitOperationCompleted {
+                        job_id: request.job_id.clone(),
+                        repo_id: request.repo_id.clone(),
+                        summary: format!("{summary} completed"),
+                    }));
+                }
+                Effect::PersistCache | Effect::PersistConfig | Effect::ScheduleRender => {
+                    let _ = self.render();
+                }
+            }
+        }
+
+        follow_up_events
+    }
+
+    #[must_use]
+    pub fn diagnostics_snapshot(&self) -> DiagnosticsSnapshot {
+        self.diagnostics.snapshot()
     }
 
     pub fn resize(&mut self, width: u16, height: u16) {
@@ -642,6 +717,15 @@ fn buffer_to_string(buffer: &Buffer) -> String {
         .join("\n")
 }
 
+fn git_command_summary(command: &GitCommand) -> &'static str {
+    match command {
+        GitCommand::StageSelection => "stage_selection",
+        GitCommand::CommitStaged { .. } => "commit_staged",
+        GitCommand::PushCurrentBranch => "push_current_branch",
+        GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
+    }
+}
+
 fn log_diagnostics(snapshot: &DiagnosticsSnapshot, config: &AppConfig) {
     eprintln!(
         "[diagnostics] startup_total_ms={} startup_stages={} scans={} git_ops={} watcher_events={} renders={}",
@@ -845,5 +929,48 @@ mod tests {
             result.state.repo_mode.expect("repo mode").active_subview,
             RepoSubview::Branches
         );
+    }
+
+    #[test]
+    fn apply_effects_converts_scan_into_worker_event() {
+        let mut app = TuiApp::new(
+            AppState::default(),
+            WorkspaceRegistry::new(None),
+            GitFacade::default(),
+            AppConfig::default(),
+        );
+
+        let events = app.apply_effects(&[Effect::StartRepoScan]);
+
+        assert!(matches!(
+            events.as_slice(),
+            [Event::Worker(WorkerEvent::RepoScanCompleted { .. })]
+        ));
+    }
+
+    #[test]
+    fn apply_effects_converts_git_command_into_worker_lifecycle() {
+        let mut app = TuiApp::new(
+            AppState::default(),
+            WorkspaceRegistry::new(None),
+            GitFacade::default(),
+            AppConfig::default(),
+        );
+
+        let events = app.apply_effects(&[Effect::RunGitCommand(
+            super_lazygit_core::GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-1"),
+                repo_id: RepoId::new("repo-1"),
+                command: GitCommand::StageSelection,
+            },
+        )]);
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Event::Worker(WorkerEvent::GitOperationStarted { .. }),
+                Event::Worker(WorkerEvent::GitOperationCompleted { .. })
+            ]
+        ));
     }
 }
