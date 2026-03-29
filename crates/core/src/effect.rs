@@ -2,17 +2,28 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{JobId, RepoId};
+use crate::state::{DiffPresentation, JobId, RepoId, SelectedHunk};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
     StartRepoScan,
-    ConfigureWatcher { repo_ids: Vec<RepoId> },
+    ConfigureWatcher {
+        repo_ids: Vec<RepoId>,
+    },
     ScheduleWatcherDebounce,
-    RefreshRepoSummaries { repo_ids: Vec<RepoId> },
-    RefreshRepoSummary { repo_id: RepoId },
-    LoadRepoDetail { repo_id: RepoId },
+    RefreshRepoSummaries {
+        repo_ids: Vec<RepoId>,
+    },
+    RefreshRepoSummary {
+        repo_id: RepoId,
+    },
+    LoadRepoDetail {
+        repo_id: RepoId,
+        selected_path: Option<PathBuf>,
+        diff_presentation: DiffPresentation,
+    },
     RunGitCommand(GitCommandRequest),
+    RunPatchSelection(PatchSelectionJob),
     PersistCache,
     PersistConfig,
     ScheduleRender,
@@ -37,4 +48,19 @@ pub enum GitCommand {
     PullCurrentBranch,
     PushCurrentBranch,
     RefreshSelectedRepo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchSelectionJob {
+    pub job_id: JobId,
+    pub repo_id: RepoId,
+    pub path: PathBuf,
+    pub mode: PatchApplicationMode,
+    pub hunks: Vec<SelectedHunk>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PatchApplicationMode {
+    Stage,
+    Unstage,
 }

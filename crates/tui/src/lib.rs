@@ -9,8 +9,9 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, DiffLineKind, Event,
-    InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
+    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, DiffLineKind,
+    DiffPresentation, Event, InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId,
+    RepoSubview, RepoSummary,
 };
 
 #[derive(Debug)]
@@ -247,11 +248,28 @@ impl TuiApp {
         {
             if let Some(repo_mode) = self.state.repo_mode.as_ref() {
                 match (repo_mode.active_subview, normalized) {
-                    (RepoSubview::Status, "j" | "down") => {
+                    (RepoSubview::Status, "j") => {
+                        return Some(Action::SelectNextDiffHunk);
+                    }
+                    (RepoSubview::Status, "k") => {
+                        return Some(Action::SelectPreviousDiffHunk);
+                    }
+                    (RepoSubview::Status, "down") => {
                         return Some(Action::ScrollRepoDetailDown);
                     }
-                    (RepoSubview::Status, "k" | "up") => {
+                    (RepoSubview::Status, "up") => {
                         return Some(Action::ScrollRepoDetailUp);
+                    }
+                    (RepoSubview::Status, "enter") => {
+                        return match repo_mode
+                            .detail
+                            .as_ref()
+                            .map(|detail| detail.diff.presentation)
+                        {
+                            Some(DiffPresentation::Unstaged) => Some(Action::StageSelectedHunk),
+                            Some(DiffPresentation::Staged) => Some(Action::UnstageSelectedHunk),
+                            _ => None,
+                        };
                     }
                     (RepoSubview::Commits, "j" | "down") => {
                         return Some(Action::SelectNextCommit);
@@ -1216,7 +1234,7 @@ fn repo_commit_lines(
                 .lines
                 .iter()
                 .take(remaining)
-                .map(|line| render_diff_line(line.kind, &line.content, theme)),
+                .map(|line| render_diff_line(line.kind, &line.content, theme, false)),
         );
     }
 
@@ -1269,14 +1287,18 @@ fn repo_diff_lines(
 
     let mut lines = vec![
         Line::from(vec![Span::styled(
-            format!("Path: {selected}"),
+            format!(
+                "Path: {selected} ({})",
+                diff_presentation_label(detail.diff.presentation)
+            ),
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )]),
         Line::from(format!(
-            "Hunks: {}  Lines: {}  Showing {}-{}",
+            "Hunks: {}  Selected: {}  Lines: {}  Showing {}-{}",
             detail.diff.hunk_count,
+            selected_hunk_label(&detail.diff),
             detail.diff.lines.len(),
             scroll + 1,
             end
@@ -1286,7 +1308,24 @@ fn repo_diff_lines(
     lines.extend(
         detail.diff.lines[scroll..end]
             .iter()
-            .map(|line| render_diff_line(line.kind, &line.content, theme)),
+            .enumerate()
+            .map(|(offset, line)| {
+                let absolute_index = scroll + offset;
+                let selected_hunk = detail
+                    .diff
+                    .selected_hunk
+                    .and_then(|index| detail.diff.hunks.get(index));
+                let is_selected_hunk_line = selected_hunk.is_some_and(|hunk| {
+                    (hunk.start_line_index..hunk.end_line_index).contains(&absolute_index)
+                });
+                render_diff_line(
+                    line.kind,
+                    &line.content,
+                    theme,
+                    is_selected_hunk_line
+                        && detail.diff.presentation != DiffPresentation::Comparison,
+                )
+            }),
     );
     lines
 }
@@ -1302,7 +1341,12 @@ fn file_status_kind_label(kind: super_lazygit_core::FileStatusKind) -> &'static 
     }
 }
 
-fn render_diff_line(kind: DiffLineKind, content: &str, theme: Theme) -> Line<'static> {
+fn render_diff_line(
+    kind: DiffLineKind,
+    content: &str,
+    theme: Theme,
+    selected_hunk_line: bool,
+) -> Line<'static> {
     let style = match kind {
         DiffLineKind::Meta => Style::default().fg(theme.muted),
         DiffLineKind::HunkHeader => Style::default()
@@ -1312,7 +1356,27 @@ fn render_diff_line(kind: DiffLineKind, content: &str, theme: Theme) -> Line<'st
         DiffLineKind::Removal => Style::default().fg(theme.danger),
         DiffLineKind::Context => Style::default().fg(theme.foreground),
     };
+    let style = if selected_hunk_line {
+        style.add_modifier(Modifier::REVERSED)
+    } else {
+        style
+    };
     Line::from(Span::styled(content.to_string(), style))
+}
+
+fn diff_presentation_label(presentation: DiffPresentation) -> &'static str {
+    match presentation {
+        DiffPresentation::Unstaged => "unstaged",
+        DiffPresentation::Staged => "staged",
+        DiffPresentation::Comparison => "comparison",
+    }
+}
+
+fn selected_hunk_label(diff: &super_lazygit_core::DiffModel) -> String {
+    match (diff.selected_hunk, diff.hunks.len()) {
+        (Some(index), len) if len > 0 => format!("{}/{}", index + 1, len),
+        _ => "0/0".to_string(),
+    }
 }
 
 fn operation_progress_label(progress: &super_lazygit_core::OperationProgress) -> String {
@@ -1619,6 +1683,7 @@ mod tests {
             ],
             diff: DiffModel {
                 selected_path: Some(PathBuf::from("src/lib.rs")),
+                presentation: DiffPresentation::Unstaged,
                 lines: vec![
                     DiffLine {
                         kind: DiffLineKind::Meta,
@@ -1641,6 +1706,18 @@ mod tests {
                         content: "+new line".to_string(),
                     },
                 ],
+                hunks: vec![super_lazygit_core::DiffHunk {
+                    header: "@@ -1,1 +1,2 @@".to_string(),
+                    selection: super_lazygit_core::SelectedHunk {
+                        old_start: 1,
+                        old_lines: 1,
+                        new_start: 1,
+                        new_lines: 2,
+                    },
+                    start_line_index: 2,
+                    end_line_index: 5,
+                }],
+                selected_hunk: Some(0),
                 hunk_count: 1,
             },
             branches: vec![Default::default(), Default::default()],
@@ -1655,6 +1732,7 @@ mod tests {
                     }],
                     diff: DiffModel {
                         selected_path: None,
+                        presentation: DiffPresentation::Comparison,
                         lines: vec![
                             DiffLine {
                                 kind: DiffLineKind::Meta,
@@ -1669,6 +1747,18 @@ mod tests {
                                 content: "+pub fn answer() -> u32 {".to_string(),
                             },
                         ],
+                        hunks: vec![super_lazygit_core::DiffHunk {
+                            header: "@@ -0,0 +1,3 @@".to_string(),
+                            selection: super_lazygit_core::SelectedHunk {
+                                old_start: 0,
+                                old_lines: 0,
+                                new_start: 1,
+                                new_lines: 3,
+                            },
+                            start_line_index: 1,
+                            end_line_index: 3,
+                        }],
+                        selected_hunk: Some(0),
                         hunk_count: 1,
                     },
                 },
@@ -1682,6 +1772,7 @@ mod tests {
                     }],
                     diff: DiffModel {
                         selected_path: None,
+                        presentation: DiffPresentation::Comparison,
                         lines: vec![
                             DiffLine {
                                 kind: DiffLineKind::Meta,
@@ -1692,6 +1783,8 @@ mod tests {
                                 content: "+# Notes".to_string(),
                             },
                         ],
+                        hunks: Vec::new(),
+                        selected_hunk: None,
                         hunk_count: 0,
                     },
                 },
@@ -2079,8 +2172,16 @@ mod tests {
             down.state
                 .repo_mode
                 .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref())
+                .and_then(|detail| detail.diff.selected_hunk),
+            Some(0)
+        );
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
                 .map(|repo_mode| repo_mode.diff_scroll),
-            Some(1)
+            Some(2)
         );
 
         let repo_mode = app.state().repo_mode.as_ref().expect("repo mode");
@@ -2099,21 +2200,33 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(rendered_lines.contains(&"Path: src/lib.rs".to_string()));
-        assert!(rendered_lines.contains(&"index 1111111..2222222 100644".to_string()));
-        assert!(!rendered_lines
+        assert!(rendered_lines.contains(&"Path: src/lib.rs (unstaged)".to_string()));
+        assert!(rendered_lines
             .iter()
-            .any(|line| line == "diff --git a/src/lib.rs b/src/lib.rs"));
+            .any(|line| line.contains("Hunks: 1  Selected: 1/1")));
+        assert!(rendered_lines.contains(&"@@ -1,1 +1,2 @@".to_string()));
+
+        let scroll_down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "down".to_string(),
+        })));
+        assert_eq!(
+            scroll_down
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_scroll),
+            Some(3)
+        );
 
         let up = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
-            key: "k".to_string(),
+            key: "up".to_string(),
         })));
         assert_eq!(
             up.state
                 .repo_mode
                 .as_ref()
                 .map(|repo_mode| repo_mode.diff_scroll),
-            Some(0)
+            Some(2)
         );
     }
 

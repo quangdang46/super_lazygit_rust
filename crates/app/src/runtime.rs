@@ -7,11 +7,13 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::watcher::{NullWatcherBackend, WatchRegistration, WatcherBackend};
 use super_lazygit_core::{
-    AppWatcherEvent, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId, RepoId,
-    RepoSummary, TimerEvent, Timestamp, WorkerEvent,
+    AppWatcherEvent, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId,
+    PatchApplicationMode, PatchSelectionJob, RepoId, RepoSummary, TimerEvent, Timestamp,
+    WorkerEvent,
 };
 use super_lazygit_git::{
-    GitFacade, GitResult, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest,
+    GitFacade, GitResult, PatchSelectionRequest, RepoDetailRequest, RepoSummaryRequest,
+    WorkspaceScanRequest,
 };
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
@@ -161,9 +163,15 @@ impl AppRuntime {
                 Effect::RefreshRepoSummary { repo_id } => {
                     follow_up_events.extend(self.refresh_repo_summaries(vec![repo_id.clone()]));
                 }
-                Effect::LoadRepoDetail { repo_id } => {
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path,
+                    diff_presentation,
+                } => {
                     let result = self.git.read_repo_detail(RepoDetailRequest {
                         repo_id: repo_id.clone(),
+                        selected_path: selected_path.clone(),
+                        diff_presentation: *diff_presentation,
                     });
                     self.diagnostics.extend_snapshot(self.git.diagnostics());
 
@@ -198,6 +206,40 @@ impl AppRuntime {
                             follow_up_events.push(Event::Worker(WorkerEvent::GitOperationFailed {
                                 job_id: request.job_id.clone(),
                                 repo_id: request.repo_id.clone(),
+                                error: error.to_string(),
+                            }));
+                        }
+                    }
+                }
+                Effect::RunPatchSelection(job) => {
+                    let summary = patch_selection_summary(job);
+                    follow_up_events.push(Event::Worker(WorkerEvent::GitOperationStarted {
+                        job_id: job.job_id.clone(),
+                        repo_id: job.repo_id.clone(),
+                        summary: summary.to_string(),
+                    }));
+
+                    match self.git.apply_patch_selection(PatchSelectionRequest {
+                        repo_id: job.repo_id.clone(),
+                        path: job.path.clone(),
+                        mode: job.mode,
+                        hunks: job.hunks.clone(),
+                    }) {
+                        Ok(outcome) => {
+                            self.diagnostics.extend_snapshot(self.git.diagnostics());
+                            follow_up_events.push(Event::Worker(
+                                WorkerEvent::GitOperationCompleted {
+                                    job_id: job.job_id.clone(),
+                                    repo_id: outcome.repo_id,
+                                    summary: outcome.summary,
+                                },
+                            ));
+                        }
+                        Err(error) => {
+                            self.diagnostics.extend_snapshot(self.git.diagnostics());
+                            follow_up_events.push(Event::Worker(WorkerEvent::GitOperationFailed {
+                                job_id: job.job_id.clone(),
+                                repo_id: job.repo_id.clone(),
                                 error: error.to_string(),
                             }));
                         }
@@ -375,6 +417,13 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",
         GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
+    }
+}
+
+fn patch_selection_summary(job: &PatchSelectionJob) -> &'static str {
+    match job.mode {
+        PatchApplicationMode::Stage => "stage_selected_hunk",
+        PatchApplicationMode::Unstage => "unstage_selected_hunk",
     }
 }
 

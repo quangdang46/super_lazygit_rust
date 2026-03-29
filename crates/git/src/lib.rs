@@ -9,9 +9,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
     BranchItem, CommitFileItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
-    DiffLine, DiffLineKind, DiffModel, FileStatus, FileStatusKind, GitCommand, GitCommandRequest,
-    HeadKind, MergeState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, StashItem,
-    Timestamp, WatcherFreshness, WorktreeItem,
+    DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
+    GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode, ReflogItem,
+    RemoteSummary, RepoDetail, RepoId, RepoSummary, SelectedHunk, StashItem, Timestamp,
+    WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -317,6 +318,8 @@ pub struct RepoSummaryRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoDetailRequest {
     pub repo_id: RepoId,
+    pub selected_path: Option<PathBuf>,
+    pub diff_presentation: DiffPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,20 +327,7 @@ pub struct DiffRequest {
     pub repo_id: RepoId,
     pub comparison_target: Option<ComparisonTarget>,
     pub selected_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PatchApplicationMode {
-    Stage,
-    Unstage,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SelectedHunk {
-    pub old_start: u32,
-    pub old_lines: u32,
-    pub new_start: u32,
-    pub new_lines: u32,
+    pub diff_presentation: DiffPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -502,7 +492,12 @@ impl GitBackend for CliGitBackend {
     fn read_repo_detail(&self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
         let repo_path = repo_path(&request.repo_id)?;
         let status = read_status_snapshot(&repo_path)?;
-        let diff = read_diff_model(&repo_path, None, status.first_path.clone())?;
+        let diff = read_diff_model(
+            &repo_path,
+            None,
+            request.selected_path.or(status.first_path.clone()),
+            request.diff_presentation,
+        )?;
         let commits = read_commits(&repo_path);
         let comparison_target = commits
             .first()
@@ -532,6 +527,7 @@ impl GitBackend for CliGitBackend {
             &repo_path,
             request.comparison_target.as_ref(),
             selected_path,
+            request.diff_presentation,
         )
     }
 
@@ -1007,15 +1003,26 @@ fn read_diff_model(
     repo_path: &Path,
     comparison_target: Option<&ComparisonTarget>,
     selected_path: Option<PathBuf>,
+    diff_presentation: DiffPresentation,
 ) -> GitResult<DiffModel> {
-    let diff_text = read_diff_text(repo_path, comparison_target, selected_path.as_deref())?;
-    Ok(parse_diff_model(selected_path, &diff_text))
+    let diff_text = read_diff_text(
+        repo_path,
+        comparison_target,
+        selected_path.as_deref(),
+        diff_presentation,
+    )?;
+    Ok(parse_diff_model(
+        selected_path,
+        diff_presentation,
+        &diff_text,
+    ))
 }
 
 fn read_diff_text(
     repo_path: &Path,
     comparison_target: Option<&ComparisonTarget>,
     selected_path: Option<&Path>,
+    diff_presentation: DiffPresentation,
 ) -> GitResult<String> {
     let mut args = vec![
         "diff".to_string(),
@@ -1028,6 +1035,8 @@ fn read_diff_text(
         args.push(match target {
             ComparisonTarget::Branch(branch) | ComparisonTarget::Commit(branch) => branch.clone(),
         });
+    } else if matches!(diff_presentation, DiffPresentation::Staged) {
+        args.push("--cached".to_string());
     }
 
     if let Some(path) = selected_path {
@@ -1038,13 +1047,30 @@ fn read_diff_text(
     git_stdout(repo_path, args)
 }
 
-fn parse_diff_model(selected_path: Option<PathBuf>, diff: &str) -> DiffModel {
+fn parse_diff_model(
+    selected_path: Option<PathBuf>,
+    presentation: DiffPresentation,
+    diff: &str,
+) -> DiffModel {
     let mut lines = Vec::new();
-    let mut hunk_count = 0;
+    let mut hunks = Vec::new();
+    let mut current_hunk: Option<DiffHunk> = None;
 
-    for raw_line in diff.lines() {
+    for (index, raw_line) in diff.lines().enumerate() {
         let kind = if raw_line.starts_with("@@") {
-            hunk_count += 1;
+            if let Some(mut hunk) = current_hunk.take() {
+                hunk.end_line_index = index;
+                hunks.push(hunk);
+            }
+            current_hunk = Some(DiffHunk {
+                header: raw_line.to_string(),
+                selection: parse_hunk_header(raw_line)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                start_line_index: index,
+                end_line_index: index + 1,
+            });
             DiffLineKind::HunkHeader
         } else if raw_line.starts_with("diff --git")
             || raw_line.starts_with("index ")
@@ -1060,16 +1086,27 @@ fn parse_diff_model(selected_path: Option<PathBuf>, diff: &str) -> DiffModel {
             DiffLineKind::Context
         };
 
+        if let Some(hunk) = current_hunk.as_mut() {
+            hunk.end_line_index = index + 1;
+        }
         lines.push(DiffLine {
             kind,
             content: raw_line.to_string(),
         });
     }
 
+    if let Some(mut hunk) = current_hunk.take() {
+        hunk.end_line_index = lines.len();
+        hunks.push(hunk);
+    }
+
     DiffModel {
         selected_path,
+        presentation,
         lines,
-        hunk_count,
+        selected_hunk: (!hunks.is_empty()).then_some(0),
+        hunk_count: hunks.len(),
+        hunks,
     }
 }
 
@@ -1505,7 +1542,7 @@ fn read_commit_diff(repo_path: &Path, oid: &str) -> DiffModel {
             oid,
         ],
     )
-    .map(|output| parse_diff_model(None, &output))
+    .map(|output| parse_diff_model(None, DiffPresentation::Comparison, &output))
     .unwrap_or_default()
 }
 
@@ -1676,10 +1713,23 @@ mod tests {
         fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel> {
             Ok(DiffModel {
                 selected_path: request.selected_path,
+                presentation: request.diff_presentation,
                 lines: vec![DiffLine {
                     kind: DiffLineKind::HunkHeader,
                     content: "@@ -1,1 +1,1 @@".to_string(),
                 }],
+                hunks: vec![DiffHunk {
+                    header: "@@ -1,1 +1,1 @@".to_string(),
+                    selection: SelectedHunk {
+                        old_start: 1,
+                        old_lines: 1,
+                        new_start: 1,
+                        new_lines: 1,
+                    },
+                    start_line_index: 0,
+                    end_line_index: 1,
+                }],
+                selected_hunk: Some(0),
                 hunk_count: 1,
             })
         }
@@ -2053,6 +2103,8 @@ mod tests {
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("detail succeeds");
 
@@ -2142,6 +2194,8 @@ mod tests {
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("detail should load");
 
@@ -2160,6 +2214,8 @@ mod tests {
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("detail should load");
 
@@ -2177,6 +2233,8 @@ mod tests {
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("detail should load");
 
@@ -2196,6 +2254,8 @@ mod tests {
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("detail should load");
 
@@ -2240,6 +2300,8 @@ mod tests {
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("detail should load");
         let diff = backend
@@ -2247,6 +2309,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 comparison_target: None,
                 selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("diff should load");
 
@@ -2277,6 +2340,8 @@ mod tests {
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
             })
             .expect("detail should load");
 

@@ -400,8 +400,35 @@ pub enum FileStatusKind {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffModel {
     pub selected_path: Option<PathBuf>,
+    pub presentation: DiffPresentation,
     pub lines: Vec<DiffLine>,
+    pub hunks: Vec<DiffHunk>,
+    pub selected_hunk: Option<usize>,
     pub hunk_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffPresentation {
+    #[default]
+    Unstaged,
+    Staged,
+    Comparison,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffHunk {
+    pub header: String,
+    pub selection: SelectedHunk,
+    pub start_line_index: usize,
+    pub end_line_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectedHunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

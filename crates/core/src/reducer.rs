@@ -1,10 +1,12 @@
 use crate::action::Action;
-use crate::effect::{Effect, GitCommand, GitCommandRequest};
+use crate::effect::{
+    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob,
+};
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, ComparisonTarget,
-    JobId, MessageLevel, Notification, OperationProgress, PaneId, RepoModeState, ScanStatus,
-    StatusMessage, WatcherHealth,
+    DiffPresentation, JobId, MessageLevel, Notification, OperationProgress, PaneId, RepoModeState,
+    ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +38,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             state.workspace.selected_repo_id = Some(repo_id.clone());
             push_recent_repo(state, repo_id.clone());
             state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
-            effects.push(Effect::LoadRepoDetail { repo_id });
+            effects.push(Effect::LoadRepoDetail {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            });
             effects.push(Effect::ScheduleRender);
         }
         Action::LeaveRepoMode => {
@@ -58,6 +64,15 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::SelectNextStatusEntry => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_status_selection(repo_mode, state.focused_pane, 1) {
+                    if let Some((selected_path, diff_presentation)) =
+                        selected_status_detail_request(repo_mode, state.focused_pane)
+                    {
+                        effects.push(Effect::LoadRepoDetail {
+                            repo_id: repo_mode.current_repo_id.clone(),
+                            selected_path: Some(selected_path),
+                            diff_presentation,
+                        });
+                    }
                     effects.push(Effect::ScheduleRender);
                 }
             }
@@ -65,6 +80,15 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::SelectPreviousStatusEntry => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_status_selection(repo_mode, state.focused_pane, -1) {
+                    if let Some((selected_path, diff_presentation)) =
+                        selected_status_detail_request(repo_mode, state.focused_pane)
+                    {
+                        effects.push(Effect::LoadRepoDetail {
+                            repo_id: repo_mode.current_repo_id.clone(),
+                            selected_path: Some(selected_path),
+                            diff_presentation,
+                        });
+                    }
                     effects.push(Effect::ScheduleRender);
                 }
             }
@@ -99,6 +123,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::SelectNextDiffHunk => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_diff_hunk_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousDiffHunk => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_diff_hunk_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::SetFocusedPane(pane) => {
             state.focused_pane = pane;
             effects.push(Effect::ScheduleRender);
@@ -126,7 +164,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     repo_id: repo_id.clone(),
                 });
                 if matches!(state.mode, AppMode::Repository) {
-                    effects.push(Effect::LoadRepoDetail { repo_id });
+                    effects.push(load_repo_detail_effect(state, repo_id));
                 }
             }
         }
@@ -167,6 +205,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     enqueue_git_job(state, &job, &summary);
                     effects.push(Effect::RunGitCommand(job));
                 }
+            }
+        }
+        Action::StageSelectedHunk => {
+            if let Some(job) = selected_hunk_patch_job(state, PatchApplicationMode::Stage) {
+                let summary = format!("Stage hunk in {}", job.path.display());
+                enqueue_patch_job(state, &job, &summary);
+                effects.push(Effect::RunPatchSelection(job));
+            }
+        }
+        Action::UnstageSelectedHunk => {
+            if let Some(job) = selected_hunk_patch_job(state, PatchApplicationMode::Unstage) {
+                let summary = format!("Unstage hunk in {}", job.path.display());
+                enqueue_patch_job(state, &job, &summary);
+                effects.push(Effect::RunPatchSelection(job));
             }
         }
         Action::CommitStaged { message } => {
@@ -332,7 +384,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     repo_mode.detail = Some(detail);
                     sync_status_selection(repo_mode);
                     sync_commit_selection(repo_mode);
-                    repo_mode.diff_scroll = 0;
+                    sync_diff_selection(repo_mode);
                     repo_mode.operation_progress = OperationProgress::Idle;
                 }
             }
@@ -373,7 +425,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
             effects.push(Effect::RefreshRepoSummary {
                 repo_id: repo_id.clone(),
             });
-            effects.push(Effect::LoadRepoDetail { repo_id });
+            effects.push(load_repo_detail_effect(state, repo_id));
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::GitOperationFailed {
@@ -460,7 +512,7 @@ fn reduce_timer_event(state: &mut AppState, event: TimerEvent, effects: &mut Vec
                     .as_ref()
                     .is_some_and(|repo_mode| repo_mode.current_repo_id == repo_id)
                 {
-                    effects.push(Effect::LoadRepoDetail { repo_id });
+                    effects.push(load_repo_detail_effect(state, repo_id));
                 }
             }
         }
@@ -519,6 +571,32 @@ fn step_commit_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     true
 }
 
+fn step_diff_hunk_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let Some(detail) = repo_mode.detail.as_mut() else {
+        return false;
+    };
+
+    let diff = &mut detail.diff;
+    if diff.presentation == DiffPresentation::Comparison {
+        return false;
+    }
+    let len = diff.hunks.len();
+    if len == 0 {
+        diff.selected_hunk = None;
+        return false;
+    }
+    let current = diff.selected_hunk.filter(|index| *index < len).unwrap_or(0);
+    let selected = (current as isize + step).rem_euclid(len as isize) as usize;
+    diff.selected_hunk = Some(selected);
+
+    repo_mode.diff_scroll = detail
+        .diff
+        .hunks
+        .get(selected)
+        .map_or(0, |hunk| hunk.start_line_index);
+    true
+}
+
 fn sync_commit_selection(repo_mode: &mut RepoModeState) {
     let Some(detail) = repo_mode.detail.as_mut() else {
         repo_mode.commits_view.selected_index = None;
@@ -548,6 +626,23 @@ fn sync_status_selection(repo_mode: &mut RepoModeState) {
 
     let staged_len = status_entries_len(detail, PaneId::RepoStaged);
     repo_mode.staged_view.ensure_selection(staged_len);
+}
+
+fn sync_diff_selection(repo_mode: &mut RepoModeState) {
+    let Some(detail) = repo_mode.detail.as_mut() else {
+        return;
+    };
+
+    let len = detail.diff.hunks.len();
+    detail.diff.selected_hunk = detail.diff.selected_hunk.filter(|index| *index < len);
+    if detail.diff.selected_hunk.is_none() && len > 0 {
+        detail.diff.selected_hunk = Some(0);
+    }
+    repo_mode.diff_scroll = detail
+        .diff
+        .selected_hunk
+        .and_then(|index| detail.diff.hunks.get(index))
+        .map_or(0, |hunk| hunk.start_line_index);
 }
 
 fn status_entries_len(detail: &crate::state::RepoDetail, pane: PaneId) -> usize {
@@ -589,6 +684,38 @@ fn selected_status_path(repo_mode: &RepoModeState, pane: PaneId) -> Option<std::
     entries.get(selected_index).map(|item| item.path.clone())
 }
 
+fn selected_status_detail_request(
+    repo_mode: &RepoModeState,
+    pane: PaneId,
+) -> Option<(std::path::PathBuf, DiffPresentation)> {
+    selected_status_path(repo_mode, pane).map(|path| (path, diff_presentation_for_pane(pane)))
+}
+
+fn diff_presentation_for_pane(pane: PaneId) -> DiffPresentation {
+    match pane {
+        PaneId::RepoStaged => DiffPresentation::Staged,
+        _ => DiffPresentation::Unstaged,
+    }
+}
+
+fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> Effect {
+    let (selected_path, diff_presentation) = state
+        .repo_mode
+        .as_ref()
+        .and_then(|repo_mode| {
+            repo_mode
+                .detail
+                .as_ref()
+                .map(|detail| (detail.diff.selected_path.clone(), detail.diff.presentation))
+        })
+        .unwrap_or((None, DiffPresentation::Unstaged));
+    Effect::LoadRepoDetail {
+        repo_id,
+        selected_path,
+        diff_presentation,
+    }
+}
+
 fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequest {
     let job_id = JobId::new(format!("git:{}:{}", repo_id.0, job_suffix(&command)));
     GitCommandRequest {
@@ -596,6 +723,62 @@ fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequ
         repo_id,
         command,
     }
+}
+
+fn patch_job(
+    repo_id: crate::state::RepoId,
+    path: std::path::PathBuf,
+    mode: PatchApplicationMode,
+    hunks: Vec<SelectedHunk>,
+) -> PatchSelectionJob {
+    let job_id = JobId::new(format!(
+        "git:{}:{}",
+        repo_id.0,
+        match mode {
+            PatchApplicationMode::Stage => "stage-hunk",
+            PatchApplicationMode::Unstage => "unstage-hunk",
+        }
+    ));
+    PatchSelectionJob {
+        job_id,
+        repo_id,
+        path,
+        mode,
+        hunks,
+    }
+}
+
+fn selected_hunk_patch_job(
+    state: &AppState,
+    mode: PatchApplicationMode,
+) -> Option<PatchSelectionJob> {
+    let repo_mode = state.repo_mode.as_ref()?;
+    let detail = repo_mode.detail.as_ref()?;
+    let diff = &detail.diff;
+    if diff.presentation == DiffPresentation::Comparison {
+        return None;
+    }
+
+    let expected_presentation = match mode {
+        PatchApplicationMode::Stage => DiffPresentation::Unstaged,
+        PatchApplicationMode::Unstage => DiffPresentation::Staged,
+    };
+    if diff.presentation != expected_presentation {
+        return None;
+    }
+
+    let path = diff.selected_path.clone()?;
+    let selected_hunk = diff
+        .selected_hunk
+        .and_then(|index| diff.hunks.get(index))
+        .map(|hunk| hunk.selection)?;
+
+    Some(patch_job(
+        repo_mode.current_repo_id.clone(),
+        path,
+        mode,
+        vec![selected_hunk],
+    ))
 }
 
 fn job_suffix(command: &GitCommand) -> &'static str {
@@ -627,7 +810,30 @@ fn enqueue_git_job(state: &mut AppState, job: &GitCommandRequest, summary: &str)
     };
 }
 
+fn enqueue_patch_job(state: &mut AppState, job: &PatchSelectionJob, summary: &str) {
+    state
+        .background_jobs
+        .insert(job.job_id.clone(), background_patch_job(job));
+    state
+        .repo_mode
+        .as_mut()
+        .expect("repo mode exists")
+        .operation_progress = OperationProgress::Running {
+        job_id: job.job_id.clone(),
+        summary: summary.to_string(),
+    };
+}
+
 fn background_job(job: &GitCommandRequest) -> BackgroundJob {
+    BackgroundJob {
+        id: job.job_id.clone(),
+        kind: BackgroundJobKind::GitCommand,
+        target_repo: Some(job.repo_id.clone()),
+        state: BackgroundJobState::Queued,
+    }
+}
+
+fn background_patch_job(job: &PatchSelectionJob) -> BackgroundJob {
     BackgroundJob {
         id: job.job_id.clone(),
         kind: BackgroundJobKind::GitCommand,
@@ -649,9 +855,9 @@ mod tests {
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitFileItem, CommitItem,
-        ComparisonTarget, DiffLine, DiffLineKind, DiffModel, FileStatus, FileStatusKind, JobId,
-        MessageLevel, ModalKind, PaneId, RepoDetail, RepoId, RepoSubview, RepoSummary, Timestamp,
-        WatcherHealth,
+        ComparisonTarget, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation,
+        FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind, PaneId, RepoDetail, RepoId,
+        RepoSubview, RepoSummary, SelectedHunk, Timestamp, WatcherHealth,
     };
 
     use super::reduce;
@@ -677,7 +883,11 @@ mod tests {
         assert_eq!(
             result.effects,
             vec![
-                crate::effect::Effect::LoadRepoDetail { repo_id },
+                crate::effect::Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
                 crate::effect::Effect::ScheduleRender,
             ]
         );
@@ -935,7 +1145,11 @@ mod tests {
                 Effect::RefreshRepoSummary {
                     repo_id: repo_id.clone(),
                 },
-                Effect::LoadRepoDetail { repo_id },
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
             ]
         );
     }
@@ -1066,6 +1280,7 @@ mod tests {
         let detail = RepoDetail {
             diff: DiffModel {
                 selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                presentation: DiffPresentation::Unstaged,
                 lines: vec![
                     DiffLine {
                         kind: DiffLineKind::Meta,
@@ -1080,6 +1295,18 @@ mod tests {
                         content: "+hello".to_string(),
                     },
                 ],
+                hunks: vec![DiffHunk {
+                    header: "@@ -1,1 +1,1 @@".to_string(),
+                    selection: SelectedHunk {
+                        old_start: 1,
+                        old_lines: 1,
+                        new_start: 1,
+                        new_lines: 1,
+                    },
+                    start_line_index: 1,
+                    end_line_index: 3,
+                }],
+                selected_hunk: Some(0),
                 hunk_count: 1,
             },
             ..RepoDetail::default()
@@ -1501,6 +1728,8 @@ mod tests {
                 },
                 Effect::LoadRepoDetail {
                     repo_id: repo_id.clone(),
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
                 },
                 Effect::ScheduleRender,
             ]
@@ -1645,7 +1874,11 @@ mod tests {
                 Effect::RefreshRepoSummary {
                     repo_id: repo_id.clone(),
                 },
-                Effect::LoadRepoDetail { repo_id },
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
             ]
         );
         assert!(result
