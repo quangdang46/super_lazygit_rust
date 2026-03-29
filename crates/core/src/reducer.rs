@@ -1,0 +1,510 @@
+use crate::action::Action;
+use crate::effect::{Effect, GitCommand, GitCommandRequest};
+use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
+use crate::state::{
+    AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, JobId, MessageLevel,
+    Notification, OperationProgress, PaneId, RepoModeState, ScanStatus, StatusMessage,
+    WatcherHealth,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReduceResult {
+    pub state: AppState,
+    pub effects: Vec<Effect>,
+}
+
+pub fn reduce(state: AppState, event: Event) -> ReduceResult {
+    let mut state = state;
+    let mut effects = Vec::new();
+
+    match event {
+        Event::Action(action) => reduce_action(&mut state, action, &mut effects),
+        Event::Worker(event) => reduce_worker_event(&mut state, event, &mut effects),
+        Event::Watcher(event) => reduce_watcher_event(&mut state, event, &mut effects),
+        Event::Timer(event) => reduce_timer_event(&mut state, event),
+        Event::Input(_) => {}
+    }
+
+    ReduceResult { state, effects }
+}
+
+fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>) {
+    match action {
+        Action::EnterRepoMode { repo_id } => {
+            state.mode = AppMode::Repository;
+            state.focused_pane = PaneId::RepoStatus;
+            state.workspace.selected_repo_id = Some(repo_id.clone());
+            push_recent_repo(state, repo_id.clone());
+            state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
+            effects.push(Effect::LoadRepoDetail { repo_id });
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::LeaveRepoMode => {
+            state.mode = AppMode::Workspace;
+            state.focused_pane = PaneId::WorkspaceList;
+            state.repo_mode = None;
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::SelectNextRepo => {
+            if state.workspace.select_next().is_some() {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::SelectPreviousRepo => {
+            if state.workspace.select_previous().is_some() {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::SetFocusedPane(pane) => {
+            state.focused_pane = pane;
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenModal { kind, title } => {
+            state
+                .modal_stack
+                .push(crate::state::Modal::new(kind, title));
+            state.focused_pane = PaneId::Modal;
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::CloseTopModal => {
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = match state.mode {
+                    AppMode::Workspace => PaneId::WorkspaceList,
+                    AppMode::Repository => PaneId::RepoStatus,
+                };
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::RefreshSelectedRepo => {
+            if let Some(repo_id) = state.workspace.selected_repo_id.clone() {
+                effects.push(Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                });
+                if matches!(state.mode, AppMode::Repository) {
+                    effects.push(Effect::LoadRepoDetail { repo_id });
+                }
+            }
+        }
+        Action::RefreshVisibleRepos => {
+            effects.push(Effect::StartRepoScan);
+        }
+        Action::StageSelection => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::StageSelection,
+                );
+                state
+                    .background_jobs
+                    .insert(job.job_id.clone(), background_job(&job));
+                state
+                    .repo_mode
+                    .as_mut()
+                    .expect("repo mode exists")
+                    .operation_progress = OperationProgress::Running {
+                    job_id: job.job_id.clone(),
+                    summary: "Stage selection".to_string(),
+                };
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::CommitStaged { message } => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::CommitStaged {
+                        message: message.clone(),
+                    },
+                );
+                state
+                    .background_jobs
+                    .insert(job.job_id.clone(), background_job(&job));
+                state
+                    .repo_mode
+                    .as_mut()
+                    .expect("repo mode exists")
+                    .operation_progress = OperationProgress::Running {
+                    job_id: job.job_id.clone(),
+                    summary: "Commit staged changes".to_string(),
+                };
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::PushCurrentBranch => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::PushCurrentBranch,
+                );
+                state
+                    .background_jobs
+                    .insert(job.job_id.clone(), background_job(&job));
+                state
+                    .repo_mode
+                    .as_mut()
+                    .expect("repo mode exists")
+                    .operation_progress = OperationProgress::Running {
+                    job_id: job.job_id.clone(),
+                    summary: "Push current branch".to_string(),
+                };
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::SwitchRepoSubview(subview) => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.active_subview = subview;
+                state.focused_pane = PaneId::RepoDetail;
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::ApplyWorkspaceScan(workspace) => {
+            state.workspace = workspace;
+            effects.push(Effect::ScheduleRender);
+        }
+    }
+}
+
+fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut Vec<Effect>) {
+    match event {
+        WorkerEvent::RepoScanCompleted {
+            root,
+            repo_ids,
+            scanned_at,
+        } => {
+            state.workspace.current_root = root;
+            state.workspace.discovered_repo_ids = repo_ids;
+            state.workspace.scan_status = ScanStatus::Complete {
+                scanned_repos: state.workspace.discovered_repo_ids.len(),
+            };
+            state.workspace.last_full_refresh_at = Some(scanned_at);
+            if state.workspace.selected_repo_id.is_none() {
+                state.workspace.selected_repo_id =
+                    state.workspace.discovered_repo_ids.first().cloned();
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::RepoSummaryUpdated { summary } => {
+            state
+                .workspace
+                .repo_summaries
+                .insert(summary.repo_id.clone(), summary);
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::RepoDetailLoaded { repo_id, detail } => {
+            if state
+                .repo_mode
+                .as_ref()
+                .is_some_and(|repo_mode| repo_mode.current_repo_id == repo_id)
+            {
+                if let Some(repo_mode) = state.repo_mode.as_mut() {
+                    repo_mode.detail = Some(detail);
+                    repo_mode.operation_progress = OperationProgress::Idle;
+                }
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::GitOperationStarted {
+            job_id,
+            repo_id,
+            summary,
+        } => {
+            state.background_jobs.insert(
+                job_id.clone(),
+                BackgroundJob {
+                    id: job_id.clone(),
+                    kind: BackgroundJobKind::GitCommand,
+                    target_repo: Some(repo_id),
+                    state: BackgroundJobState::Running,
+                },
+            );
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.operation_progress = OperationProgress::Running { job_id, summary };
+            }
+        }
+        WorkerEvent::GitOperationCompleted {
+            job_id,
+            repo_id,
+            summary,
+        } => {
+            complete_job(state, &job_id, BackgroundJobState::Succeeded);
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if repo_mode.current_repo_id == repo_id {
+                    repo_mode.operation_progress = OperationProgress::Idle;
+                }
+            }
+            state
+                .status_messages
+                .push_back(StatusMessage::info(0, summary));
+            effects.push(Effect::RefreshRepoSummary {
+                repo_id: repo_id.clone(),
+            });
+            effects.push(Effect::LoadRepoDetail { repo_id });
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::GitOperationFailed {
+            job_id,
+            repo_id,
+            error,
+        } => {
+            complete_job(
+                state,
+                &job_id,
+                BackgroundJobState::Failed {
+                    error: error.clone(),
+                },
+            );
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if repo_mode.current_repo_id == repo_id {
+                    repo_mode.operation_progress = OperationProgress::Failed {
+                        summary: error.clone(),
+                    };
+                }
+            }
+            state.notifications.push_back(Notification {
+                id: 0,
+                level: MessageLevel::Error,
+                text: error,
+                expires_at: None,
+            });
+            effects.push(Effect::ScheduleRender);
+        }
+    }
+}
+
+fn reduce_watcher_event(state: &mut AppState, event: WatcherEvent, effects: &mut Vec<Effect>) {
+    match event {
+        WatcherEvent::RepoInvalidated { repo_id } => {
+            effects.push(Effect::RefreshRepoSummary {
+                repo_id: repo_id.clone(),
+            });
+            if state
+                .repo_mode
+                .as_ref()
+                .is_some_and(|repo_mode| repo_mode.current_repo_id == repo_id)
+            {
+                effects.push(Effect::LoadRepoDetail { repo_id });
+            }
+        }
+        WatcherEvent::WatcherDegraded { message } => {
+            state.workspace.watcher_health = WatcherHealth::Degraded { message };
+            effects.push(Effect::ScheduleRender);
+        }
+        WatcherEvent::WatcherRecovered => {
+            state.workspace.watcher_health = WatcherHealth::Healthy;
+            effects.push(Effect::ScheduleRender);
+        }
+    }
+}
+
+fn reduce_timer_event(state: &mut AppState, event: TimerEvent) {
+    match event {
+        TimerEvent::PeriodicRefreshTick => {
+            if matches!(
+                state.workspace.scan_status,
+                ScanStatus::Idle | ScanStatus::Complete { .. }
+            ) {
+                state.workspace.scan_status = ScanStatus::Scanning;
+            }
+        }
+        TimerEvent::PeriodicFetchTick => {}
+        TimerEvent::ToastExpiryTick { now } => {
+            state.notifications.retain(|notification| {
+                notification
+                    .expires_at
+                    .is_none_or(|expires_at| expires_at > now)
+            });
+        }
+    }
+}
+
+fn push_recent_repo(state: &mut AppState, repo_id: crate::state::RepoId) {
+    state
+        .recent_repo_stack
+        .retain(|candidate| candidate != &repo_id);
+    state.recent_repo_stack.push(repo_id);
+}
+
+fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequest {
+    let job_id = JobId::new(format!("git:{}:{}", repo_id.0, job_suffix(&command)));
+    GitCommandRequest {
+        job_id,
+        repo_id,
+        command,
+    }
+}
+
+fn job_suffix(command: &GitCommand) -> &'static str {
+    match command {
+        GitCommand::StageSelection => "stage-selection",
+        GitCommand::CommitStaged { .. } => "commit-staged",
+        GitCommand::PushCurrentBranch => "push-current-branch",
+        GitCommand::RefreshSelectedRepo => "refresh-selected-repo",
+    }
+}
+
+fn background_job(job: &GitCommandRequest) -> BackgroundJob {
+    BackgroundJob {
+        id: job.job_id.clone(),
+        kind: BackgroundJobKind::GitCommand,
+        target_repo: Some(job.repo_id.clone()),
+        state: BackgroundJobState::Queued,
+    }
+}
+
+fn complete_job(state: &mut AppState, job_id: &JobId, next_state: BackgroundJobState) {
+    if let Some(job) = state.background_jobs.get_mut(job_id) {
+        job.state = next_state;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::action::Action;
+    use crate::event::{Event, WorkerEvent};
+    use crate::state::{
+        AppMode, AppState, ModalKind, PaneId, RepoId, RepoSummary, Timestamp, WatcherHealth,
+    };
+
+    use super::reduce;
+
+    #[test]
+    fn enter_repo_mode_creates_repo_state_and_load_effect() {
+        let repo_id = RepoId::new("repo-1");
+
+        let result = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        );
+
+        assert_eq!(result.state.mode, AppMode::Repository);
+        assert_eq!(result.state.focused_pane, PaneId::RepoStatus);
+        assert_eq!(
+            result.state.workspace.selected_repo_id,
+            Some(repo_id.clone())
+        );
+        assert_eq!(result.state.recent_repo_stack, vec![repo_id.clone()]);
+        assert_eq!(
+            result.effects,
+            vec![
+                crate::effect::Effect::LoadRepoDetail { repo_id },
+                crate::effect::Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn leave_repo_mode_returns_to_workspace() {
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: RepoId::new("repo-1"),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Action(Action::LeaveRepoMode));
+
+        assert_eq!(result.state.mode, AppMode::Workspace);
+        assert_eq!(result.state.focused_pane, PaneId::WorkspaceList);
+        assert!(result.state.repo_mode.is_none());
+    }
+
+    #[test]
+    fn selection_changes_wrap_across_repos() {
+        let mut state = AppState::default();
+        state.workspace.discovered_repo_ids = vec![RepoId::new("a"), RepoId::new("b")];
+        state.workspace.selected_repo_id = Some(RepoId::new("a"));
+
+        let next = reduce(state.clone(), Event::Action(Action::SelectNextRepo));
+        assert_eq!(
+            next.state.workspace.selected_repo_id,
+            Some(RepoId::new("b"))
+        );
+
+        let wrapped = reduce(next.state, Event::Action(Action::SelectNextRepo));
+        assert_eq!(
+            wrapped.state.workspace.selected_repo_id,
+            Some(RepoId::new("a"))
+        );
+    }
+
+    #[test]
+    fn modal_open_and_close_updates_stack_and_focus() {
+        let opened = reduce(
+            AppState::default(),
+            Event::Action(Action::OpenModal {
+                kind: ModalKind::Help,
+                title: "Help".to_string(),
+            }),
+        );
+
+        assert_eq!(opened.state.modal_stack.len(), 1);
+        assert_eq!(opened.state.focused_pane, PaneId::Modal);
+
+        let closed = reduce(opened.state, Event::Action(Action::CloseTopModal));
+        assert!(closed.state.modal_stack.is_empty());
+        assert_eq!(closed.state.focused_pane, PaneId::WorkspaceList);
+    }
+
+    #[test]
+    fn watcher_degraded_updates_health() {
+        let result = reduce(
+            AppState::default(),
+            Event::Watcher(crate::event::WatcherEvent::WatcherDegraded {
+                message: "watch overflow".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            result.state.workspace.watcher_health,
+            WatcherHealth::Degraded {
+                message: "watch overflow".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn repo_scan_completion_sets_selected_repo_when_missing() {
+        let result = reduce(
+            AppState::default(),
+            Event::Worker(WorkerEvent::RepoScanCompleted {
+                root: None,
+                repo_ids: vec![RepoId::new("repo-1"), RepoId::new("repo-2")],
+                scanned_at: Timestamp(42),
+            }),
+        );
+
+        assert_eq!(
+            result.state.workspace.selected_repo_id,
+            Some(RepoId::new("repo-1"))
+        );
+        assert_eq!(
+            result.state.workspace.last_full_refresh_at,
+            Some(Timestamp(42))
+        );
+    }
+
+    #[test]
+    fn repo_summary_update_is_stored() {
+        let summary = RepoSummary {
+            repo_id: RepoId::new("repo-1"),
+            display_name: "Repo 1".to_string(),
+            ..RepoSummary::default()
+        };
+
+        let result = reduce(
+            AppState::default(),
+            Event::Worker(WorkerEvent::RepoSummaryUpdated {
+                summary: summary.clone(),
+            }),
+        );
+
+        assert_eq!(
+            result.state.workspace.repo_summaries.get(&summary.repo_id),
+            Some(&summary)
+        );
+    }
+}
