@@ -7,7 +7,7 @@ use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
     ComparisonTarget, ConfirmableOperation, DiffPresentation, InputPromptOperation, JobId,
     MergeState, MessageLevel, Notification, OperationProgress, PaneId, PendingInputPrompt,
-    RepoModeState, ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
+    RepoModeState, ResetMode, ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +201,30 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 None => push_warning(state, "A rebase is already in progress."),
             }
             effects.push(Effect::ScheduleRender);
+        }
+        Action::SoftResetToSelectedCommit => {
+            if open_reset_confirmation(state, ResetMode::Soft) {
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a commit before resetting HEAD.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::MixedResetToSelectedCommit => {
+            if open_reset_confirmation(state, ResetMode::Mixed) {
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a commit before resetting HEAD.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::HardResetToSelectedCommit => {
+            if open_reset_confirmation(state, ResetMode::Hard) {
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a commit before resetting HEAD.");
+                effects.push(Effect::ScheduleRender);
+            }
         }
         Action::ContinueRebase => {
             if let Some(job) =
@@ -423,6 +447,15 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::DiscardSelectedFile => {
+            if let Some((repo_id, path)) = selected_discard_path(state) {
+                open_confirmation_modal(state, repo_id, ConfirmableOperation::DiscardFile { path });
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a status entry before discarding changes.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::UnstageSelectedFile => {
             if let Some(repo_mode) = &state.repo_mode {
                 if let Some(path) = selected_status_path(repo_mode, PaneId::RepoStaged) {
@@ -623,6 +656,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 .map(|repo_mode| repo_mode.current_repo_id.clone())
             {
                 open_confirmation_modal(state, repo_id, ConfirmableOperation::Push);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::NukeWorkingTree => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                open_confirmation_modal(state, repo_id, ConfirmableOperation::NukeWorkingTree);
                 effects.push(Effect::ScheduleRender);
             }
         }
@@ -1194,11 +1237,18 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::Fetch => "Confirm fetch".to_string(),
         ConfirmableOperation::Pull => "Confirm pull".to_string(),
         ConfirmableOperation::Push => "Confirm push".to_string(),
+        ConfirmableOperation::DiscardFile { path } => {
+            format!("Discard changes for {}", path.display())
+        }
         ConfirmableOperation::StartInteractiveRebase { summary, .. } => {
             format!("Start interactive rebase at {summary}")
         }
+        ConfirmableOperation::ResetToCommit { mode, summary, .. } => {
+            format!("{} reset to {summary}", mode.title())
+        }
         ConfirmableOperation::AbortRebase => "Abort rebase".to_string(),
         ConfirmableOperation::SkipRebase => "Skip rebase step".to_string(),
+        ConfirmableOperation::NukeWorkingTree => "Discard all local changes".to_string(),
         ConfirmableOperation::DeleteBranch { branch_name } => {
             format!("Delete branch {branch_name}")
         }
@@ -1223,12 +1273,26 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
         ConfirmableOperation::Fetch => (GitCommand::FetchSelectedRepo, "Fetch remote updates"),
         ConfirmableOperation::Pull => (GitCommand::PullCurrentBranch, "Pull current branch"),
         ConfirmableOperation::Push => (GitCommand::PushCurrentBranch, "Push current branch"),
+        ConfirmableOperation::DiscardFile { path } => (
+            GitCommand::DiscardFile { path: path.clone() },
+            "Discard file changes",
+        ),
         ConfirmableOperation::StartInteractiveRebase { commit, .. } => (
             GitCommand::StartInteractiveRebase { commit },
             "Start interactive rebase",
         ),
+        ConfirmableOperation::ResetToCommit { mode, commit, .. } => (
+            GitCommand::ResetToCommit {
+                mode,
+                target: commit,
+            },
+            "Reset to selected commit",
+        ),
         ConfirmableOperation::AbortRebase => (GitCommand::AbortRebase, "Abort rebase"),
         ConfirmableOperation::SkipRebase => (GitCommand::SkipRebase, "Skip rebase step"),
+        ConfirmableOperation::NukeWorkingTree => {
+            (GitCommand::NukeWorkingTree, "Discard all local changes")
+        }
         ConfirmableOperation::DeleteBranch { branch_name } => (
             GitCommand::DeleteBranch {
                 branch_name: branch_name.clone(),
@@ -1535,6 +1599,22 @@ fn selected_status_detail_request(
     selected_status_path(repo_mode, pane).map(|path| (path, diff_presentation_for_pane(pane)))
 }
 
+fn selected_discard_path(state: &AppState) -> Option<(crate::state::RepoId, std::path::PathBuf)> {
+    let repo_mode = state.repo_mode.as_ref()?;
+    let path = match state.focused_pane {
+        PaneId::RepoUnstaged => selected_status_path(repo_mode, PaneId::RepoUnstaged),
+        PaneId::RepoStaged => selected_status_path(repo_mode, PaneId::RepoStaged),
+        PaneId::RepoDetail if repo_mode.active_subview == crate::state::RepoSubview::Status => {
+            repo_mode
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.diff.selected_path.clone())
+        }
+        _ => None,
+    }?;
+    Some((repo_mode.current_repo_id.clone(), path))
+}
+
 fn selected_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::BranchItem> {
     let detail = repo_mode.detail.as_ref()?;
     let selected_index = repo_mode
@@ -1554,6 +1634,31 @@ fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::Comm
         .filter(|index| *index < detail.commits.len())
         .unwrap_or(0);
     detail.commits.get(selected_index)
+}
+
+fn open_reset_confirmation(state: &mut AppState, mode: ResetMode) -> bool {
+    let Some((repo_id, commit, summary)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+        selected_commit_item(repo_mode).map(|commit| {
+            (
+                repo_mode.current_repo_id.clone(),
+                commit.oid.clone(),
+                format!("{} {}", commit.short_oid, commit.summary),
+            )
+        })
+    }) else {
+        return false;
+    };
+
+    open_confirmation_modal(
+        state,
+        repo_id,
+        ConfirmableOperation::ResetToCommit {
+            mode,
+            commit,
+            summary,
+        },
+    );
+    true
 }
 
 fn selected_comparison_target(repo_mode: &RepoModeState) -> Option<ComparisonTarget> {
@@ -1831,10 +1936,16 @@ fn job_suffix(command: &GitCommand) -> &'static str {
     match command {
         GitCommand::StageSelection => "stage-selection",
         GitCommand::StageFile { .. } => "stage-file",
+        GitCommand::DiscardFile { .. } => "discard-file",
         GitCommand::UnstageFile { .. } => "unstage-file",
         GitCommand::CommitStaged { .. } => "commit-staged",
         GitCommand::AmendHead { .. } => "amend-head",
         GitCommand::StartInteractiveRebase { .. } => "start-interactive-rebase",
+        GitCommand::ResetToCommit { mode, .. } => match mode {
+            ResetMode::Soft => "reset-soft",
+            ResetMode::Mixed => "reset-mixed",
+            ResetMode::Hard => "reset-hard",
+        },
         GitCommand::ContinueRebase => "continue-rebase",
         GitCommand::AbortRebase => "abort-rebase",
         GitCommand::SkipRebase => "skip-rebase",
@@ -1850,6 +1961,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::FetchSelectedRepo => "fetch-selected-repo",
         GitCommand::PullCurrentBranch => "pull-current-branch",
         GitCommand::PushCurrentBranch => "push-current-branch",
+        GitCommand::NukeWorkingTree => "nuke-working-tree",
         GitCommand::RefreshSelectedRepo => "refresh-selected-repo",
     }
 }
@@ -2214,6 +2326,62 @@ mod tests {
                 repo_id,
                 ConfirmableOperation::DeleteBranch {
                     branch_name: "feature".to_string()
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn hard_reset_selected_commit_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        crate::state::CommitItem {
+                            oid: "abcdef1234567890".to_string(),
+                            short_oid: "abcdef1".to_string(),
+                            summary: "add lib".to_string(),
+                            changed_files: vec![],
+                            diff: DiffModel::default(),
+                        },
+                        crate::state::CommitItem {
+                            oid: "1234567890abcdef".to_string(),
+                            short_oid: "1234567".to_string(),
+                            summary: "second".to_string(),
+                            changed_files: vec![],
+                            diff: DiffModel::default(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::HardResetToSelectedCommit));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::ResetToCommit {
+                    mode: crate::state::ResetMode::Hard,
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
                 }
             ))
         );
@@ -2666,6 +2834,97 @@ mod tests {
                 command: GitCommand::DropStash {
                     stash_ref: "stash@{0}".to_string(),
                 },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_reset_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Hard reset to 1234567 second",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::ResetToCommit {
+                    mode: crate::state::ResetMode::Hard,
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:reset-hard");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::ResetToCommit {
+                    mode: crate::state::ResetMode::Hard,
+                    target: "1234567890abcdef".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_nuke_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Discard all local changes",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::NukeWorkingTree,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:nuke-working-tree");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::NukeWorkingTree,
             })]
         );
     }
@@ -3512,6 +3771,65 @@ mod tests {
                 command: GitCommand::StageSelection,
             })]
         );
+    }
+
+    #[test]
+    fn discard_selected_file_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                status_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DiscardSelectedFile));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::DiscardFile {
+                    path: std::path::PathBuf::from("README.md")
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn nuke_working_tree_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::NukeWorkingTree));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((repo_id, ConfirmableOperation::NukeWorkingTree))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]

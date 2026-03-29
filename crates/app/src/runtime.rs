@@ -449,10 +449,16 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
     match command {
         GitCommand::StageSelection => "stage_selection",
         GitCommand::StageFile { .. } => "stage_file",
+        GitCommand::DiscardFile { .. } => "discard_file",
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::StartInteractiveRebase { .. } => "start_interactive_rebase",
+        GitCommand::ResetToCommit { mode, .. } => match mode {
+            super_lazygit_core::ResetMode::Soft => "reset_to_commit_soft",
+            super_lazygit_core::ResetMode::Mixed => "reset_to_commit_mixed",
+            super_lazygit_core::ResetMode::Hard => "reset_to_commit_hard",
+        },
         GitCommand::ContinueRebase => "continue_rebase",
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
@@ -468,6 +474,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",
+        GitCommand::NukeWorkingTree => "nuke_working_tree",
         GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
     }
 }

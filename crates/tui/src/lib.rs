@@ -302,6 +302,9 @@ impl TuiApp {
             (PaneId::RepoUnstaged | PaneId::RepoStaged, "k" | "up") => {
                 return Some(Action::SelectPreviousStatusEntry);
             }
+            (PaneId::RepoUnstaged | PaneId::RepoStaged, _) if raw == "D" => {
+                return Some(Action::DiscardSelectedFile);
+            }
             (PaneId::RepoUnstaged, "enter") => return Some(Action::StageSelectedFile),
             (PaneId::RepoStaged, "enter") => return Some(Action::UnstageSelectedFile),
             (PaneId::RepoStaged, "c") if self.can_open_commit_box() => {
@@ -404,6 +407,12 @@ impl TuiApp {
                             _ => None,
                         };
                     }
+                    (RepoSubview::Status, "D", _) => {
+                        return Some(Action::DiscardSelectedFile);
+                    }
+                    (RepoSubview::Status, "X", _) => {
+                        return Some(Action::NukeWorkingTree);
+                    }
                     (RepoSubview::Commits, _, "j" | "down") => {
                         return Some(Action::SelectNextCommit);
                     }
@@ -412,6 +421,15 @@ impl TuiApp {
                     }
                     (RepoSubview::Commits, _, "i") => {
                         return Some(Action::StartInteractiveRebase);
+                    }
+                    (RepoSubview::Commits, "S", _) => {
+                        return Some(Action::SoftResetToSelectedCommit);
+                    }
+                    (RepoSubview::Commits, "M", _) => {
+                        return Some(Action::MixedResetToSelectedCommit);
+                    }
+                    (RepoSubview::Commits, "H", _) => {
+                        return Some(Action::HardResetToSelectedCommit);
                     }
                     (RepoSubview::Compare, _, "j" | "down") => {
                         return Some(Action::ScrollRepoDetailDown);
@@ -1853,6 +1871,7 @@ fn repo_commit_lines(
             comparison_target,
             comparison_source,
         )),
+        Line::from("Actions: i interactive rebase  S soft reset  M mixed reset  H hard reset"),
         Line::from("History:"),
     ];
 
@@ -2227,16 +2246,38 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         super_lazygit_core::ConfirmableOperation::Push => {
             "Push the current branch to its configured upstream?".to_string()
         }
+        super_lazygit_core::ConfirmableOperation::DiscardFile { path } => {
+            format!(
+                "Discard all staged and unstaged changes for {}? This only affects the selected file, and untracked files will be removed.",
+                path.display()
+            )
+        }
         super_lazygit_core::ConfirmableOperation::StartInteractiveRebase { summary, .. } => {
             format!(
                 "Start an interactive rebase at {summary}? The selected commit will be marked edit."
             )
+        }
+        super_lazygit_core::ConfirmableOperation::ResetToCommit { mode, summary, .. } => {
+            match mode {
+                super_lazygit_core::ResetMode::Soft => format!(
+                    "Soft reset HEAD to {summary}? This moves HEAD only and keeps both the index and working tree intact."
+                ),
+                super_lazygit_core::ResetMode::Mixed => format!(
+                    "Mixed reset HEAD to {summary}? This moves HEAD and resets the index, but keeps working tree changes."
+                ),
+                super_lazygit_core::ResetMode::Hard => format!(
+                    "Hard reset HEAD to {summary}? This moves HEAD and discards tracked staged and unstaged changes."
+                ),
+            }
         }
         super_lazygit_core::ConfirmableOperation::AbortRebase => {
             "Abort the current rebase and restore the branch to its pre-rebase state?".to_string()
         }
         super_lazygit_core::ConfirmableOperation::SkipRebase => {
             "Skip the current rebase step? Git will drop the commit being replayed.".to_string()
+        }
+        super_lazygit_core::ConfirmableOperation::NukeWorkingTree => {
+            "Discard all local changes in this repository? This runs git reset --hard HEAD and git clean -fd, removing tracked edits and untracked files/directories.".to_string()
         }
         super_lazygit_core::ConfirmableOperation::DeleteBranch { branch_name } => {
             format!(
@@ -2570,23 +2611,24 @@ fn default_status_text(state: &AppState) -> String {
 
             match state.focused_pane {
             PaneId::RepoUnstaged => {
-                "Working tree focus; j/k move and Enter stages the selected file.".to_string()
+                "Working tree focus; j/k move, Enter stages, and D discards the selected file."
+                    .to_string()
             }
             PaneId::RepoStaged => {
-                "Staged focus; j/k move, Enter unstages, c commits, and A amends HEAD."
+                "Staged focus; j/k move, Enter unstages, D discards, c commits, and A amends HEAD."
                     .to_string()
             }
             PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
                 || "Repository shell ready.".to_string(),
                 |repo_mode| {
                     if repo_mode.active_subview == RepoSubview::Status {
-                        "Status diff focus; j/k scroll through hunks and keep orientation here."
+                        "Status diff focus; j/k move hunks, D discards the current file, and X nukes the working tree."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Branches {
                         "Branches detail focus; j/k move, v compares refs, x clears compare, Enter checks out, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; j/k browse history, i starts an interactive rebase, v compares commits, and x clears compare."
+                        "Commits detail focus; j/k browse history, i starts a rebase, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff and x clears compare."
@@ -2626,20 +2668,20 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  D discard file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  D discard file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  D discard file  X nuke working tree  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
                     "Branches pane  j/k move  v compare  x clear compare  Enter checkout  c create  R rename  d delete  u upstream  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  i start rebase  v compare  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -3539,6 +3581,14 @@ mod tests {
     }
 
     #[test]
+    fn confirm_modal_renders_nuke_working_tree_copy() {
+        let copy = confirmation_copy(&super_lazygit_core::ConfirmableOperation::NukeWorkingTree);
+
+        assert!(copy.contains("git reset --hard HEAD"));
+        assert!(copy.contains("git clean -fd"));
+    }
+
+    #[test]
     fn repo_mode_routes_subviews_and_focus() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -3594,6 +3644,73 @@ mod tests {
                     summary: "1234567 second".to_string(),
                 }
             )
+        );
+    }
+
+    #[test]
+    fn repo_mode_commit_detail_routes_reset_shortcuts() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut soft_app = TuiApp::new(state.clone(), AppConfig::default());
+        let soft = soft_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "S".to_string(),
+        })));
+        assert_eq!(
+            soft.state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::ResetToCommit {
+                mode: super_lazygit_core::ResetMode::Soft,
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut mixed_app = TuiApp::new(state.clone(), AppConfig::default());
+        let mixed = mixed_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "M".to_string(),
+        })));
+        assert_eq!(
+            mixed
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::ResetToCommit {
+                mode: super_lazygit_core::ResetMode::Mixed,
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut hard_app = TuiApp::new(state, AppConfig::default());
+        let hard = hard_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "H".to_string(),
+        })));
+        assert_eq!(
+            hard.state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::ResetToCommit {
+                mode: super_lazygit_core::ResetMode::Hard,
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
         );
     }
 
@@ -3732,6 +3849,59 @@ mod tests {
             key: "shift+tab".to_string(),
         })));
         assert_eq!(back.state.focused_pane, PaneId::RepoStaged);
+    }
+
+    #[test]
+    fn repo_mode_status_shortcuts_route_discard_and_nuke() {
+        let status_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut status_app = TuiApp::new(status_state, AppConfig::default());
+
+        let discard = status_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "D".to_string(),
+        })));
+        assert_eq!(
+            discard
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::DiscardFile {
+                path: std::path::PathBuf::from("src/lib.rs"),
+            })
+        );
+
+        let detail_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut detail_app = TuiApp::new(detail_state, AppConfig::default());
+
+        let nuke = detail_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "X".to_string(),
+        })));
+        assert_eq!(
+            nuke.state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::NukeWorkingTree)
+        );
     }
 
     #[test]
@@ -4509,8 +4679,8 @@ mod tests {
         assert!(rendered.contains("Selected 1/2"));
         assert!(rendered.contains("Compare base: abcdef1234567890"));
         assert!(rendered.contains("> abcdef1 add lib"));
+        assert!(rendered.contains("S soft reset"));
         assert!(rendered.contains("A src/lib.rs"));
-        assert!(rendered.contains("+pub fn answer() -> u32 {"));
     }
 
     #[test]

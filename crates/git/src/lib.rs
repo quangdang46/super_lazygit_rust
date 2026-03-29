@@ -13,8 +13,8 @@ use super_lazygit_core::{
     BranchItem, CommitFileItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
     DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
     GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode, RebaseKind,
-    RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, SelectedHunk,
-    StashItem, Timestamp, WatcherFreshness, WorktreeItem,
+    RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode,
+    SelectedHunk, StashItem, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -543,6 +543,10 @@ impl GitBackend for CliGitBackend {
                 git_path(&repo_path, ["add"], path)?;
                 format!("Staged {}", path.display())
             }
+            GitCommand::DiscardFile { path } => {
+                discard_path(&repo_path, path)?;
+                format!("Discarded changes for {}", path.display())
+            }
             GitCommand::UnstageFile { path } => {
                 unstage_path(&repo_path, path)?;
                 format!("Unstaged {}", path.display())
@@ -563,6 +567,14 @@ impl GitBackend for CliGitBackend {
                 let summary = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
                     .unwrap_or_else(|_| commit.clone());
                 format!("Started interactive rebase at {summary}")
+            }
+            GitCommand::ResetToCommit { mode, target } => {
+                reset_to_commit(&repo_path, *mode, target)?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", target.as_str()])
+                    .unwrap_or_else(|_| target.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", target])
+                    .unwrap_or_else(|_| target.clone());
+                format!("{} reset to {} {}", mode.title(), short, subject)
             }
             GitCommand::ContinueRebase => {
                 git_with_env(
@@ -668,6 +680,10 @@ impl GitBackend for CliGitBackend {
                 run_push(&repo_path)?;
                 "Pushed current branch".to_string()
             }
+            GitCommand::NukeWorkingTree => {
+                nuke_working_tree(&repo_path)?;
+                "Discarded all local changes".to_string()
+            }
             GitCommand::RefreshSelectedRepo => {
                 git(&repo_path, ["status", "--short"])?;
                 "Refreshed selected repository".to_string()
@@ -736,10 +752,16 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
     match &request.command {
         GitCommand::StageSelection => "stage_selection",
         GitCommand::StageFile { .. } => "stage_file",
+        GitCommand::DiscardFile { .. } => "discard_file",
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::StartInteractiveRebase { .. } => "start_interactive_rebase",
+        GitCommand::ResetToCommit { mode, .. } => match mode {
+            ResetMode::Soft => "reset_to_commit_soft",
+            ResetMode::Mixed => "reset_to_commit_mixed",
+            ResetMode::Hard => "reset_to_commit_hard",
+        },
         GitCommand::ContinueRebase => "continue_rebase",
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
@@ -755,6 +777,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",
+        GitCommand::NukeWorkingTree => "nuke_working_tree",
         GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
     }
 }
@@ -1430,6 +1453,29 @@ fn start_interactive_rebase(repo_path: &Path, commit: &str) -> GitResult<()> {
     )
 }
 
+fn discard_path(repo_path: &Path, path: &Path) -> GitResult<()> {
+    if path_exists_in_head(repo_path, path)? {
+        git_path(
+            repo_path,
+            ["restore", "--source=HEAD", "--staged", "--worktree"],
+            path,
+        )
+    } else if path_exists_in_index(repo_path, path)? {
+        git_path(repo_path, ["rm", "-f"], path)
+    } else {
+        git_path(repo_path, ["clean", "-f"], path)
+    }
+}
+
+fn reset_to_commit(repo_path: &Path, mode: ResetMode, target: &str) -> GitResult<()> {
+    git(repo_path, ["reset", reset_mode_flag(mode), target])
+}
+
+fn nuke_working_tree(repo_path: &Path) -> GitResult<()> {
+    git(repo_path, ["reset", "--hard", "HEAD"])?;
+    git(repo_path, ["clean", "-fd"])
+}
+
 fn unstage_path(repo_path: &Path, path: &Path) -> GitResult<()> {
     let restore = git_path_output(repo_path, ["restore", "--staged"], path)?;
     if restore.status.success() {
@@ -1453,6 +1499,31 @@ fn unstage_path(repo_path: &Path, path: &Path) -> GitResult<()> {
 fn io_error(error: std::io::Error) -> GitError {
     GitError::OperationFailed {
         message: error.to_string(),
+    }
+}
+
+fn path_exists_in_head(repo_path: &Path, path: &Path) -> GitResult<bool> {
+    let spec = format!("HEAD:{}", path.to_string_lossy());
+    let output = Command::new("git")
+        .arg("cat-file")
+        .arg("-e")
+        .arg(spec)
+        .current_dir(repo_path)
+        .output()
+        .map_err(io_error)?;
+    Ok(output.status.success())
+}
+
+fn path_exists_in_index(repo_path: &Path, path: &Path) -> GitResult<bool> {
+    let output = git_path_output(repo_path, ["ls-files", "--error-unmatch", "--cached"], path)?;
+    Ok(output.status.success())
+}
+
+fn reset_mode_flag(mode: ResetMode) -> &'static str {
+    match mode {
+        ResetMode::Soft => "--soft",
+        ResetMode::Mixed => "--mixed",
+        ResetMode::Hard => "--hard",
     }
 }
 
@@ -1948,7 +2019,9 @@ struct ParsedHunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super_lazygit_core::{DiffModel, GitCommand, GitCommandRequest, JobId, RebaseKind, RepoId};
+    use super_lazygit_core::{
+        DiffModel, GitCommand, GitCommandRequest, JobId, RebaseKind, RepoId, ResetMode,
+    };
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
         rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, temp_repo,
@@ -3141,6 +3214,185 @@ mod tests {
             .status_porcelain()
             .expect("status")
             .contains("?? staged.txt"));
+    }
+
+    #[test]
+    fn cli_backend_discards_unstaged_tracked_file_changes() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-discard-tracked"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::DiscardFile {
+                    path: PathBuf::from("tracked.txt"),
+                },
+            })
+            .expect("discard tracked file should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Discarded changes for tracked.txt");
+        assert!(!repo
+            .status_porcelain()
+            .expect("status")
+            .contains(" M tracked.txt"));
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).expect("tracked.txt"),
+            "base\n"
+        );
+    }
+
+    #[test]
+    fn cli_backend_discards_staged_new_file() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-discard-staged-new"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::DiscardFile {
+                    path: PathBuf::from("staged.txt"),
+                },
+            })
+            .expect("discard staged file should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Discarded changes for staged.txt");
+        assert!(!repo
+            .status_porcelain()
+            .expect("status")
+            .contains("staged.txt"));
+        assert!(!repo.path().join("staged.txt").exists());
+    }
+
+    #[test]
+    fn cli_backend_discards_untracked_file() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-discard-untracked"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::DiscardFile {
+                    path: PathBuf::from("untracked.txt"),
+                },
+            })
+            .expect("discard untracked file should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Discarded changes for untracked.txt");
+        assert!(!repo
+            .status_porcelain()
+            .expect("status")
+            .contains("untracked.txt"));
+        assert!(!repo.path().join("untracked.txt").exists());
+    }
+
+    #[test]
+    fn cli_backend_soft_resets_to_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target oid");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-reset-soft"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::ResetToCommit {
+                    mode: ResetMode::Soft,
+                    target: target.clone(),
+                },
+            })
+            .expect("soft reset should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert!(outcome.summary.contains("Soft reset"));
+        assert_eq!(repo.rev_parse("HEAD").expect("head"), target);
+        assert!(repo
+            .status_porcelain()
+            .expect("status")
+            .contains("A  src/lib.rs"));
+    }
+
+    #[test]
+    fn cli_backend_mixed_resets_to_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target oid");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-reset-mixed"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::ResetToCommit {
+                    mode: ResetMode::Mixed,
+                    target: target.clone(),
+                },
+            })
+            .expect("mixed reset should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert!(outcome.summary.contains("Mixed reset"));
+        assert_eq!(repo.rev_parse("HEAD").expect("head"), target);
+        assert!(repo.status_porcelain().expect("status").contains("?? src/"));
+    }
+
+    #[test]
+    fn cli_backend_hard_resets_to_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target oid");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-reset-hard"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::ResetToCommit {
+                    mode: ResetMode::Hard,
+                    target: target.clone(),
+                },
+            })
+            .expect("hard reset should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert!(outcome.summary.contains("Hard reset"));
+        assert_eq!(repo.rev_parse("HEAD").expect("head"), target);
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert!(!repo.path().join("src/lib.rs").exists());
+    }
+
+    #[test]
+    fn cli_backend_nukes_working_tree() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-nuke-working-tree"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::NukeWorkingTree,
+            })
+            .expect("nuke should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Discarded all local changes");
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert!(!repo.path().join("staged.txt").exists());
+        assert!(!repo.path().join("untracked.txt").exists());
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).expect("tracked.txt"),
+            "base\n"
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{ComparisonTarget, DiffPresentation, JobId, RepoId, SelectedHunk};
+use crate::state::{ComparisonTarget, DiffPresentation, JobId, RepoId, ResetMode, SelectedHunk};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
@@ -49,6 +49,9 @@ pub enum GitCommand {
     StageFile {
         path: PathBuf,
     },
+    DiscardFile {
+        path: PathBuf,
+    },
     UnstageFile {
         path: PathBuf,
     },
@@ -60,6 +63,10 @@ pub enum GitCommand {
     },
     StartInteractiveRebase {
         commit: String,
+    },
+    ResetToCommit {
+        mode: ResetMode,
+        target: String,
     },
     ContinueRebase,
     AbortRebase,
@@ -97,6 +104,7 @@ pub enum GitCommand {
     FetchSelectedRepo,
     PullCurrentBranch,
     PushCurrentBranch,
+    NukeWorkingTree,
     RefreshSelectedRepo,
 }
 

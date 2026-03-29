@@ -68,17 +68,62 @@ pub struct PendingConfirmation {
     pub operation: ConfirmableOperation,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResetMode {
+    Soft,
+    Mixed,
+    Hard,
+}
+
+impl ResetMode {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Soft => "soft",
+            Self::Mixed => "mixed",
+            Self::Hard => "hard",
+        }
+    }
+
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Soft => "Soft",
+            Self::Mixed => "Mixed",
+            Self::Hard => "Hard",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfirmableOperation {
     Fetch,
     Pull,
     Push,
-    StartInteractiveRebase { commit: String, summary: String },
+    DiscardFile {
+        path: PathBuf,
+    },
+    StartInteractiveRebase {
+        commit: String,
+        summary: String,
+    },
+    ResetToCommit {
+        mode: ResetMode,
+        commit: String,
+        summary: String,
+    },
     AbortRebase,
     SkipRebase,
-    DeleteBranch { branch_name: String },
-    DropStash { stash_ref: String },
-    RemoveWorktree { path: PathBuf },
+    NukeWorkingTree,
+    DeleteBranch {
+        branch_name: String,
+    },
+    DropStash {
+        stash_ref: String,
+    },
+    RemoveWorktree {
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
