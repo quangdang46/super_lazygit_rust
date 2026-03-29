@@ -5,6 +5,7 @@ use crate::state::{JobId, RepoId};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
     StartRepoScan,
+    RefreshRepoSummaries { repo_ids: Vec<RepoId> },
     RefreshRepoSummary { repo_id: RepoId },
     LoadRepoDetail { repo_id: RepoId },
     RunGitCommand(GitCommandRequest),

@@ -21,4 +21,5 @@ super-lazygit-tui = { path = "../tui" }
 super-lazygit-workspace = { path = "../workspace" }
 
 [dev-dependencies]
+super-lazygit-test-support = { path = "../test-support" }
 tempfile.workspace = true

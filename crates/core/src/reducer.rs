@@ -230,20 +230,53 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 state.workspace.selected_repo_id =
                     state.workspace.discovered_repo_ids.first().cloned();
             }
-            for repo_id in &state.workspace.discovered_repo_ids {
-                effects.push(Effect::RefreshRepoSummary {
-                    repo_id: repo_id.clone(),
-                });
-            }
+            effects.push(Effect::RefreshRepoSummaries {
+                repo_ids: state.workspace.discovered_repo_ids.clone(),
+            });
             effects.push(Effect::PersistCache);
             effects.push(Effect::ScheduleRender);
         }
-        WorkerEvent::RepoSummaryUpdated { summary } => {
+        WorkerEvent::RepoSummaryRefreshStarted { job_id, repo_id } => {
+            state.background_jobs.insert(
+                job_id.clone(),
+                BackgroundJob {
+                    id: job_id,
+                    kind: BackgroundJobKind::RepoRefresh,
+                    target_repo: Some(repo_id),
+                    state: BackgroundJobState::Running,
+                },
+            );
+        }
+        WorkerEvent::RepoSummaryUpdated { job_id, summary } => {
+            complete_job(state, &job_id, BackgroundJobState::Succeeded);
             state
                 .workspace
                 .repo_summaries
                 .insert(summary.repo_id.clone(), summary);
             effects.push(Effect::PersistCache);
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::RepoSummaryRefreshFailed {
+            job_id,
+            repo_id,
+            error,
+        } => {
+            complete_job(
+                state,
+                &job_id,
+                BackgroundJobState::Failed {
+                    error: error.clone(),
+                },
+            );
+            if let Some(summary) = state.workspace.repo_summaries.get_mut(&repo_id) {
+                summary.last_error = Some(error.clone());
+            }
+            state.notifications.push_back(Notification {
+                id: 0,
+                level: MessageLevel::Error,
+                text: error,
+                expires_at: None,
+            });
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::RepoDetailLoaded { repo_id, detail } => {
@@ -477,9 +510,9 @@ mod tests {
     use crate::effect::{Effect, GitCommand, GitCommandRequest};
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
-        AppMode, AppState, BackgroundJobState, CommitFileItem, CommitItem, ComparisonTarget,
-        DiffLine, DiffLineKind, DiffModel, FileStatusKind, JobId, MessageLevel, ModalKind, PaneId,
-        RepoDetail, RepoId, RepoSubview, RepoSummary, Timestamp, WatcherHealth,
+        AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitFileItem, CommitItem,
+        ComparisonTarget, DiffLine, DiffLineKind, DiffModel, FileStatusKind, JobId, MessageLevel,
+        ModalKind, PaneId, RepoDetail, RepoId, RepoSubview, RepoSummary, Timestamp, WatcherHealth,
     };
 
     use super::reduce;
@@ -610,11 +643,8 @@ mod tests {
         assert_eq!(
             result.effects,
             vec![
-                Effect::RefreshRepoSummary {
-                    repo_id: RepoId::new("repo-1"),
-                },
-                Effect::RefreshRepoSummary {
-                    repo_id: RepoId::new("repo-2"),
+                Effect::RefreshRepoSummaries {
+                    repo_ids: vec![RepoId::new("repo-1"), RepoId::new("repo-2")],
                 },
                 Effect::PersistCache,
                 Effect::ScheduleRender,
@@ -633,6 +663,7 @@ mod tests {
         let result = reduce(
             AppState::default(),
             Event::Worker(WorkerEvent::RepoSummaryUpdated {
+                job_id: JobId::new("summary-refresh:repo-1"),
                 summary: summary.clone(),
             }),
         );
@@ -641,7 +672,80 @@ mod tests {
             result.state.workspace.repo_summaries.get(&summary.repo_id),
             Some(&summary)
         );
-        assert_eq!(result.effects, vec![Effect::PersistCache, Effect::ScheduleRender]);
+        assert_eq!(
+            result.effects,
+            vec![Effect::PersistCache, Effect::ScheduleRender]
+        );
+    }
+
+    #[test]
+    fn repo_summary_refresh_started_marks_repo_job_running() {
+        let repo_id = RepoId::new("repo-1");
+        let job_id = JobId::new("summary-refresh:repo-1");
+
+        let result = reduce(
+            AppState::default(),
+            Event::Worker(WorkerEvent::RepoSummaryRefreshStarted {
+                job_id: job_id.clone(),
+                repo_id: repo_id.clone(),
+            }),
+        );
+
+        assert_eq!(
+            result.state.background_jobs.get(&job_id).map(|job| (
+                &job.kind,
+                &job.target_repo,
+                &job.state
+            )),
+            Some((
+                &BackgroundJobKind::RepoRefresh,
+                &Some(repo_id),
+                &BackgroundJobState::Running,
+            ))
+        );
+    }
+
+    #[test]
+    fn repo_summary_refresh_failed_marks_job_failed_and_notifies() {
+        let repo_id = RepoId::new("repo-1");
+        let job_id = JobId::new("summary-refresh:repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Worker(WorkerEvent::RepoSummaryRefreshStarted {
+                job_id: job_id.clone(),
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::RepoSummaryRefreshFailed {
+                job_id: job_id.clone(),
+                repo_id,
+                error: "boom".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Failed {
+                error: "boom".to_string(),
+            })
+        );
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| (&notification.level, notification.text.as_str())),
+            Some((&MessageLevel::Error, "boom"))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]

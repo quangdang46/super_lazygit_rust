@@ -61,7 +61,11 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use super_lazygit_core::{AppMode, RepoId, RepoSummary, ScanStatus, Timestamp, WorkspaceState};
+    use super_lazygit_core::{
+        AppMode, BackgroundJobState, Event, RepoId, RepoSummary, ScanStatus, Timestamp,
+        WorkerEvent, WorkspaceState,
+    };
+    use super_lazygit_test_support::clean_repo;
 
     #[test]
     fn runtime_processes_effects_until_worker_events_update_state() {
@@ -140,5 +144,36 @@ mod tests {
                 .map(|summary| summary.display_name.as_str()),
             Some("repo-a")
         );
+    }
+
+    #[test]
+    fn runtime_refresh_batch_keeps_successes_when_one_repo_fails() {
+        let repo = clean_repo().expect("fixture repo");
+        let valid_repo_id = RepoId::new(repo.path().display().to_string());
+        let invalid_repo_id = RepoId::new(repo.path().join("missing-repo").display().to_string());
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime = AppRuntime::new(app, workspace, git);
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![valid_repo_id.clone(), invalid_repo_id.clone()],
+            scanned_at: Timestamp(7),
+        })]);
+
+        let state = runtime.app().state();
+        assert!(state.workspace.repo_summaries.contains_key(&valid_repo_id));
+        assert!(state.background_jobs.values().any(|job| {
+            job.target_repo.as_ref() == Some(&valid_repo_id)
+                && matches!(job.state, BackgroundJobState::Succeeded)
+        }));
+        assert!(state.background_jobs.values().any(|job| {
+            job.target_repo.as_ref() == Some(&invalid_repo_id)
+                && matches!(job.state, BackgroundJobState::Failed { .. })
+        }));
     }
 }

@@ -32,7 +32,17 @@ pub enum WorkerEvent {
         scanned_at: Timestamp,
     },
     RepoSummaryUpdated {
+        job_id: JobId,
         summary: RepoSummary,
+    },
+    RepoSummaryRefreshStarted {
+        job_id: JobId,
+        repo_id: RepoId,
+    },
+    RepoSummaryRefreshFailed {
+        job_id: JobId,
+        repo_id: RepoId,
+        error: String,
     },
     RepoDetailLoaded {
         repo_id: RepoId,

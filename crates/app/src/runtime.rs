@@ -1,12 +1,20 @@
+use std::cmp;
 use std::collections::VecDeque;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, Timestamp, WorkerEvent,
+    Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId, RepoId, RepoSummary,
+    Timestamp, WorkerEvent,
 };
-use super_lazygit_git::{GitFacade, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest};
+use super_lazygit_git::{
+    GitFacade, GitResult, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest,
+};
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
+
+const SUMMARY_REFRESH_WORKER_LIMIT: usize = 4;
 
 #[derive(Debug)]
 pub struct AppRuntime {
@@ -117,17 +125,11 @@ impl AppRuntime {
                         }
                     }
                 }
+                Effect::RefreshRepoSummaries { repo_ids } => {
+                    follow_up_events.extend(self.refresh_repo_summaries(repo_ids.clone()));
+                }
                 Effect::RefreshRepoSummary { repo_id } => {
-                    let result = self.git.read_repo_summary(RepoSummaryRequest {
-                        repo_id: repo_id.clone(),
-                    });
-                    self.diagnostics.extend_snapshot(self.git.diagnostics());
-
-                    if let Ok(summary) = result {
-                        let summary = self.workspace.register_summary(summary);
-                        follow_up_events
-                            .push(Event::Worker(WorkerEvent::RepoSummaryUpdated { summary }));
-                    }
+                    follow_up_events.extend(self.refresh_repo_summaries(vec![repo_id.clone()]));
                 }
                 Effect::LoadRepoDetail { repo_id } => {
                     let result = self.git.read_repo_detail(RepoDetailRequest {
@@ -183,6 +185,100 @@ impl AppRuntime {
 
         follow_up_events
     }
+
+    fn refresh_repo_summaries(&mut self, repo_ids: Vec<RepoId>) -> Vec<Event> {
+        if repo_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let worker_limit = cmp::min(SUMMARY_REFRESH_WORKER_LIMIT, repo_ids.len());
+        let (sender, receiver) = mpsc::channel();
+        let mut pending = VecDeque::from(repo_ids);
+        let mut active_workers = 0usize;
+        let mut follow_up_events = Vec::new();
+
+        while active_workers < worker_limit {
+            if let Some(repo_id) = pending.pop_front() {
+                let job_id = summary_refresh_job_id(&repo_id);
+                follow_up_events.push(Event::Worker(WorkerEvent::RepoSummaryRefreshStarted {
+                    job_id: job_id.clone(),
+                    repo_id: repo_id.clone(),
+                }));
+                spawn_summary_refresh_worker(self.git.clone(), sender.clone(), repo_id, job_id);
+                active_workers += 1;
+            } else {
+                break;
+            }
+        }
+        while active_workers > 0 {
+            let Ok(outcome) = receiver.recv() else {
+                break;
+            };
+            active_workers = active_workers.saturating_sub(1);
+            self.diagnostics.extend_snapshot(outcome.diagnostics);
+
+            match outcome.result {
+                Ok(summary) => {
+                    let summary = self.workspace.register_summary(summary);
+                    follow_up_events.push(Event::Worker(WorkerEvent::RepoSummaryUpdated {
+                        job_id: outcome.job_id,
+                        summary,
+                    }));
+                }
+                Err(error) => {
+                    follow_up_events.push(Event::Worker(WorkerEvent::RepoSummaryRefreshFailed {
+                        job_id: outcome.job_id,
+                        repo_id: outcome.repo_id,
+                        error: error.to_string(),
+                    }));
+                }
+            }
+
+            if let Some(repo_id) = pending.pop_front() {
+                let job_id = summary_refresh_job_id(&repo_id);
+                follow_up_events.push(Event::Worker(WorkerEvent::RepoSummaryRefreshStarted {
+                    job_id: job_id.clone(),
+                    repo_id: repo_id.clone(),
+                }));
+                spawn_summary_refresh_worker(self.git.clone(), sender.clone(), repo_id, job_id);
+                active_workers += 1;
+            }
+        }
+
+        follow_up_events
+    }
+}
+
+#[derive(Debug)]
+struct SummaryRefreshOutcome {
+    job_id: JobId,
+    repo_id: RepoId,
+    result: GitResult<RepoSummary>,
+    diagnostics: DiagnosticsSnapshot,
+}
+
+fn spawn_summary_refresh_worker(
+    mut git: GitFacade,
+    sender: mpsc::Sender<SummaryRefreshOutcome>,
+    repo_id: RepoId,
+    job_id: JobId,
+) {
+    thread::spawn(move || {
+        let result = git.read_repo_summary(RepoSummaryRequest {
+            repo_id: repo_id.clone(),
+        });
+        let diagnostics = git.diagnostics();
+        let _ = sender.send(SummaryRefreshOutcome {
+            job_id,
+            repo_id,
+            result,
+            diagnostics,
+        });
+    });
+}
+
+fn summary_refresh_job_id(repo_id: &RepoId) -> JobId {
+    JobId::new(format!("summary-refresh:{}", repo_id.0))
 }
 
 fn git_command_summary(command: &GitCommand) -> &'static str {

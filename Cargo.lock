@@ -764,6 +764,7 @@ dependencies = [
  "super-lazygit-config",
  "super-lazygit-core",
  "super-lazygit-git",
+ "super-lazygit-test-support",
  "super-lazygit-tui",
  "super-lazygit-workspace",
  "tempfile",
