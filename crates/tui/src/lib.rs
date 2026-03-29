@@ -164,6 +164,13 @@ impl TuiApp {
                     );
                     self.state = result.state.clone();
                     result
+                } else if self.prompt_input_focused() && !text.is_empty() {
+                    let result = reduce(
+                        self.state.clone(),
+                        Event::Action(Action::AppendPromptInput { text }),
+                    );
+                    self.state = result.state.clone();
+                    result
                 } else if self.workspace_search_focused() && !text.is_empty() {
                     let result = reduce(
                         self.state.clone(),
@@ -190,6 +197,18 @@ impl TuiApp {
                 Some(super_lazygit_core::ModalKind::Confirm) => match normalized.as_str() {
                     "enter" | "y" => Some(Action::ConfirmPendingOperation),
                     "esc" | "q" | "n" => Some(Action::CloseTopModal),
+                    _ => None,
+                },
+                Some(super_lazygit_core::ModalKind::InputPrompt) => match raw {
+                    "esc" | "q" => Some(Action::CloseTopModal),
+                    "enter" => Some(Action::SubmitPromptInput),
+                    "backspace" => Some(Action::BackspacePromptInput),
+                    "space" | " " => Some(Action::AppendPromptInput {
+                        text: " ".to_string(),
+                    }),
+                    _ if raw.chars().count() == 1 => Some(Action::AppendPromptInput {
+                        text: raw.to_string(),
+                    }),
                     _ => None,
                 },
                 _ => match normalized.as_str() {
@@ -297,25 +316,67 @@ impl TuiApp {
             && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
                 matches!(
                     repo_mode.active_subview,
-                    RepoSubview::Status | RepoSubview::Commits
+                    RepoSubview::Status | RepoSubview::Branches | RepoSubview::Commits
                 )
             })
         {
             if let Some(repo_mode) = self.state.repo_mode.as_ref() {
-                match (repo_mode.active_subview, normalized) {
-                    (RepoSubview::Status, "j") => {
+                match (repo_mode.active_subview, raw, normalized) {
+                    (RepoSubview::Branches, _, "j" | "down") => {
+                        return Some(Action::SelectNextBranch);
+                    }
+                    (RepoSubview::Branches, _, "k" | "up") => {
+                        return Some(Action::SelectPreviousBranch);
+                    }
+                    (RepoSubview::Branches, _, "enter") => {
+                        return Some(Action::CheckoutSelectedBranch);
+                    }
+                    (RepoSubview::Branches, "R", _) => {
+                        if let Some(branch) = selected_branch(
+                            repo_mode.detail.as_ref(),
+                            repo_mode.branches_view.selected_index,
+                        ) {
+                            return Some(Action::OpenInputPrompt {
+                                operation: super_lazygit_core::InputPromptOperation::RenameBranch {
+                                    current_name: branch.name.clone(),
+                                },
+                            });
+                        }
+                    }
+                    (RepoSubview::Branches, _, "c") => {
+                        return Some(Action::OpenInputPrompt {
+                            operation: super_lazygit_core::InputPromptOperation::CreateBranch,
+                        });
+                    }
+                    (RepoSubview::Branches, _, "d") => {
+                        return Some(Action::DeleteSelectedBranch);
+                    }
+                    (RepoSubview::Branches, _, "u") => {
+                        if let Some(branch) = selected_branch(
+                            repo_mode.detail.as_ref(),
+                            repo_mode.branches_view.selected_index,
+                        ) {
+                            return Some(Action::OpenInputPrompt {
+                                operation:
+                                    super_lazygit_core::InputPromptOperation::SetBranchUpstream {
+                                        branch_name: branch.name.clone(),
+                                    },
+                            });
+                        }
+                    }
+                    (RepoSubview::Status, _, "j") => {
                         return Some(Action::SelectNextDiffHunk);
                     }
-                    (RepoSubview::Status, "k") => {
+                    (RepoSubview::Status, _, "k") => {
                         return Some(Action::SelectPreviousDiffHunk);
                     }
-                    (RepoSubview::Status, "down") => {
+                    (RepoSubview::Status, _, "down") => {
                         return Some(Action::ScrollRepoDetailDown);
                     }
-                    (RepoSubview::Status, "up") => {
+                    (RepoSubview::Status, _, "up") => {
                         return Some(Action::ScrollRepoDetailUp);
                     }
-                    (RepoSubview::Status, "enter") => {
+                    (RepoSubview::Status, _, "enter") => {
                         return match repo_mode
                             .detail
                             .as_ref()
@@ -326,10 +387,10 @@ impl TuiApp {
                             _ => None,
                         };
                     }
-                    (RepoSubview::Commits, "j" | "down") => {
+                    (RepoSubview::Commits, _, "j" | "down") => {
                         return Some(Action::SelectNextCommit);
                     }
-                    (RepoSubview::Commits, "k" | "up") => {
+                    (RepoSubview::Commits, _, "k" | "up") => {
                         return Some(Action::SelectPreviousCommit);
                     }
                     _ => {}
@@ -407,6 +468,13 @@ impl TuiApp {
             .repo_mode
             .as_ref()
             .is_some_and(|repo_mode| repo_mode.commit_box.focused)
+    }
+
+    fn prompt_input_focused(&self) -> bool {
+        self.state.pending_input_prompt.is_some()
+            && self.state.modal_stack.last().is_some_and(|modal| {
+                matches!(modal.kind, super_lazygit_core::ModalKind::InputPrompt)
+            })
     }
 
     fn can_open_commit_box(&self) -> bool {
@@ -650,6 +718,12 @@ impl TuiApp {
                     usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
+                RepoSubview::Branches => repo_branch_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.branches_view.selected_index,
+                    self.state.focused_pane == PaneId::RepoDetail,
+                    theme,
+                ),
                 RepoSubview::Commits => repo_commit_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.commits_view.selected_index,
@@ -751,9 +825,19 @@ impl TuiApp {
                 lines.push(Line::from(""));
                 if let Some(pending) = self.state.pending_confirmation.as_ref() {
                     lines.push(Line::from(format!("Repo: {}", pending.repo_id.0)));
-                    lines.push(Line::from(confirmation_copy(pending.operation)));
+                    lines.push(Line::from(confirmation_copy(&pending.operation)));
                 }
                 lines.push(Line::from("Enter or y confirms. Esc, n, or q cancels."));
+            }
+            super_lazygit_core::ModalKind::InputPrompt => {
+                lines.push(Line::from(""));
+                if let Some(prompt) = self.state.pending_input_prompt.as_ref() {
+                    lines.push(Line::from(format!("Repo: {}", prompt.repo_id.0)));
+                    lines.push(Line::from(input_prompt_copy(&prompt.operation)));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(format!("> {}_", prompt.value)));
+                    lines.push(Line::from("Enter submits. Esc cancels. Backspace deletes."));
+                }
             }
             _ => {
                 lines.push(Line::from(""));
@@ -1322,13 +1406,10 @@ fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<L
                 })
             )),
         ],
-        RepoSubview::Branches => vec![
-            Line::from(format!(
-                "Branches: {}",
-                detail.map_or(0, |detail| detail.branches.len())
-            )),
-            Line::from("Checkout and branch management land after the shell bead."),
-        ],
+        RepoSubview::Branches => vec![Line::from(format!(
+            "Branches: {}",
+            detail.map_or(0, |detail| detail.branches.len())
+        ))],
         RepoSubview::Commits => vec![
             Line::from(format!(
                 "Commits: {}",
@@ -1358,6 +1439,108 @@ fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<L
             Line::from("Worktree creation and removal reuse this detail shell."),
         ],
     }
+}
+
+fn repo_branch_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Branches",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    if detail.branches.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Branches",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("No local branches available."),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| *index < detail.branches.len())
+        .or_else(|| detail.branches.iter().position(|branch| branch.is_head))
+        .unwrap_or(0);
+    let selected_branch = &detail.branches[selected_index];
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "Branches",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("Selected: {}", selected_branch.name)),
+        Line::from(format!(
+            "Upstream: {}",
+            selected_branch.upstream.as_deref().unwrap_or("-")
+        )),
+        Line::from("Enter checks out. c creates. R renames. d deletes. u sets upstream."),
+        Line::from(""),
+    ];
+
+    for (index, branch) in detail.branches.iter().enumerate() {
+        let style = branch_row_style(branch, index == selected_index, is_focused, theme);
+        lines.push(Line::from(Span::styled(branch_row_label(branch), style)));
+    }
+
+    lines
+}
+
+fn branch_row_label(branch: &super_lazygit_core::BranchItem) -> String {
+    let head = if branch.is_head { "*" } else { " " };
+    let upstream = branch.upstream.as_deref().unwrap_or("-");
+    format!("{head} {:<20} upstream={upstream}", branch.name)
+}
+
+fn branch_row_style(
+    branch: &super_lazygit_core::BranchItem,
+    is_selected: bool,
+    is_focused: bool,
+    theme: Theme,
+) -> Style {
+    let mut style = if branch.is_head {
+        Style::default()
+            .fg(theme.success)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.foreground)
+    };
+
+    if is_selected {
+        style = style.add_modifier(Modifier::BOLD);
+        if is_focused {
+            style = style.add_modifier(Modifier::REVERSED);
+        }
+    }
+
+    style
+}
+
+fn selected_branch(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+) -> Option<&super_lazygit_core::BranchItem> {
+    let detail = detail?;
+    let selected_index = selected_index
+        .filter(|index| *index < detail.branches.len())
+        .or_else(|| detail.branches.iter().position(|branch| branch.is_head))
+        .unwrap_or(0);
+    detail.branches.get(selected_index)
 }
 
 fn repo_commit_lines(
@@ -1624,16 +1807,36 @@ fn operation_progress_label(progress: &super_lazygit_core::OperationProgress) ->
     }
 }
 
-fn confirmation_copy(operation: super_lazygit_core::ConfirmableOperation) -> &'static str {
+fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> String {
     match operation {
         super_lazygit_core::ConfirmableOperation::Fetch => {
-            "Fetch remote updates for the current repository?"
+            "Fetch remote updates for the current repository?".to_string()
         }
         super_lazygit_core::ConfirmableOperation::Pull => {
-            "Pull remote changes into the current branch?"
+            "Pull remote changes into the current branch?".to_string()
         }
         super_lazygit_core::ConfirmableOperation::Push => {
-            "Push the current branch to its configured upstream?"
+            "Push the current branch to its configured upstream?".to_string()
+        }
+        super_lazygit_core::ConfirmableOperation::DeleteBranch { branch_name } => {
+            format!(
+                "Delete local branch {branch_name}? Git will refuse if it is not safely merged."
+            )
+        }
+    }
+}
+
+fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> String {
+    match operation {
+        super_lazygit_core::InputPromptOperation::CreateBranch => {
+            "Enter the new branch name. The branch will be created from HEAD and checked out."
+                .to_string()
+        }
+        super_lazygit_core::InputPromptOperation::RenameBranch { current_name } => {
+            format!("Enter the new name for {current_name}.")
+        }
+        super_lazygit_core::InputPromptOperation::SetBranchUpstream { branch_name } => {
+            format!("Enter the upstream ref for {branch_name}, for example origin/main.")
         }
     }
 }
@@ -1661,6 +1864,10 @@ fn status_text(state: &AppState) -> String {
 
 fn help_text(state: &AppState) -> String {
     if !state.modal_stack.is_empty() {
+        if state.pending_input_prompt.is_some() {
+            return "Prompt overlay  type value  Enter submit  Backspace delete  Paste insert  Esc cancel"
+                .to_string();
+        }
         return "Esc close  q close overlay".to_string();
     }
 
@@ -1938,6 +2145,9 @@ fn default_status_text(state: &AppState) -> String {
                     if repo_mode.active_subview == RepoSubview::Status {
                         "Status diff focus; j/k scroll through hunks and keep orientation here."
                             .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Branches {
+                        "Branches detail focus; j/k move, Enter checks out, c creates, R renames, d deletes, and u sets upstream."
+                            .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
                         "Commits detail focus; j/k browse history and keep the selected commit compare-ready."
                             .to_string()
@@ -1983,6 +2193,8 @@ fn repo_help_text(state: &AppState) -> String {
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
                     "Status diff pane  j/k scroll diff  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Branches {
+                    "Branches pane  j/k move  Enter checkout  c create  R rename  d delete  u upstream  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
                     "Commits pane  j/k move commit  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
@@ -2142,8 +2354,8 @@ mod tests {
 
     use super::*;
     use super_lazygit_core::{
-        CommitFileItem, CommitItem, ComparisonTarget, DiffLine, DiffLineKind, DiffModel,
-        FileStatus, FileStatusKind, ModalKind, RepoModeState, StatusMessage, Timestamp,
+        BranchItem, CommitFileItem, CommitItem, ComparisonTarget, DiffLine, DiffLineKind,
+        DiffModel, FileStatus, FileStatusKind, ModalKind, RepoModeState, StatusMessage, Timestamp,
         WorkspaceFilterMode, WorkspaceState,
     };
 
@@ -2208,7 +2420,18 @@ mod tests {
                 selected_hunk: Some(0),
                 hunk_count: 1,
             },
-            branches: vec![Default::default(), Default::default()],
+            branches: vec![
+                BranchItem {
+                    name: "main".to_string(),
+                    is_head: true,
+                    upstream: Some("origin/main".to_string()),
+                },
+                BranchItem {
+                    name: "feature".to_string(),
+                    is_head: false,
+                    upstream: None,
+                },
+            ],
             commits: vec![
                 CommitItem {
                     oid: "abcdef1234567890".to_string(),
@@ -2856,6 +3079,50 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_branch_detail_routes_selection_and_prompts() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(1)
+        );
+
+        let rename = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "R".to_string(),
+        })));
+        assert_eq!(rename.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            rename
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::RenameBranch {
+                    current_name: "feature".to_string()
+                },
+                "feature"
+            ))
+        );
+    }
+
+    #[test]
     fn repo_mode_cycles_focus_across_three_panes() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -2937,6 +3204,49 @@ mod tests {
                 command: super_lazygit_core::GitCommand::FetchSelectedRepo,
                 ..
             })
+        )));
+    }
+
+    #[test]
+    fn input_prompt_routes_text_and_submit_branch_job() {
+        let state = AppState {
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![super_lazygit_core::Modal::new(
+                ModalKind::InputPrompt,
+                "Create branch",
+            )],
+            pending_input_prompt: Some(super_lazygit_core::PendingInputPrompt {
+                repo_id: RepoId::new("repo-1"),
+                operation: super_lazygit_core::InputPromptOperation::CreateBranch,
+                value: "feature".to_string(),
+            }),
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let typed = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "/".to_string(),
+        })));
+        assert_eq!(
+            typed
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.value.as_str()),
+            Some("feature/")
+        );
+
+        let submitted = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert!(submitted.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::CreateBranch { branch_name },
+                ..
+            }) if branch_name == "feature/"
         )));
     }
 
@@ -3372,6 +3682,53 @@ mod tests {
         assert!(rendered.contains("> abcdef1 add lib"));
         assert!(rendered.contains("A src/lib.rs"));
         assert!(rendered.contains("+pub fn answer() -> u32 {"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_branch_management_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Branches,
+                detail: Some(sample_repo_detail()),
+                branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Branches"));
+        assert!(rendered.contains("Selected: feature"));
+        assert!(rendered.contains("Enter checks out."));
+        assert!(rendered.contains("* main"));
+        assert!(rendered.contains("feature"));
     }
 
     #[test]

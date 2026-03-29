@@ -5,9 +5,9 @@ use crate::effect::{
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
-    ComparisonTarget, ConfirmableOperation, DiffPresentation, JobId, MessageLevel, Notification,
-    OperationProgress, PaneId, RepoModeState, ScanStatus, SelectedHunk, StatusMessage,
-    WatcherHealth,
+    ComparisonTarget, ConfirmableOperation, DiffPresentation, InputPromptOperation, JobId,
+    MessageLevel, Notification, OperationProgress, PaneId, PendingInputPrompt, RepoModeState,
+    ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +136,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextBranch => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_branch_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousBranch => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_branch_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::SelectNextCommit => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_commit_selection(repo_mode, 1) {
@@ -199,6 +213,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             {
                 state.pending_confirmation = None;
             }
+            if state
+                .modal_stack
+                .last()
+                .is_some_and(|modal| matches!(modal.kind, crate::state::ModalKind::InputPrompt))
+            {
+                state.pending_input_prompt = None;
+            }
             state.modal_stack.pop();
             if state.modal_stack.is_empty() {
                 state.focused_pane = match state.mode {
@@ -210,6 +231,36 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::ConfirmPendingOperation => {
             if let Some(job) = confirm_pending_operation(state) {
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenInputPrompt { operation } => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                open_input_prompt(state, repo_id, operation);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::AppendPromptInput { text } => {
+            if let Some(prompt) = state.pending_input_prompt.as_mut() {
+                prompt.value.push_str(&text);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::BackspacePromptInput => {
+            if let Some(prompt) = state.pending_input_prompt.as_mut() {
+                if prompt.value.pop().is_some() {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SubmitPromptInput => {
+            if let Some(job) = submit_input_prompt(state) {
                 effects.push(Effect::RunGitCommand(job));
             } else {
                 effects.push(Effect::ScheduleRender);
@@ -338,6 +389,17 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunGitCommand(job));
             }
         }
+        Action::CheckoutSelectedBranch => {
+            if let Some((repo_id, branch_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) {
+                let summary = format!("Checkout branch {branch_ref}");
+                let job = git_job(repo_id, GitCommand::CheckoutBranch { branch_ref });
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
         Action::CheckoutBranch { branch_ref } => {
             if let Some(repo_mode) = &state.repo_mode {
                 let job = git_job(
@@ -348,6 +410,19 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 );
                 enqueue_git_job(state, &job, "Checkout branch");
                 effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::DeleteSelectedBranch => {
+            if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::DeleteBranch { branch_name },
+                );
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::FetchSelectedRepo => {
@@ -386,6 +461,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.diff_scroll = 0;
                 if !matches!(subview, crate::state::RepoSubview::Status) {
                     close_commit_box(repo_mode);
+                }
+                if matches!(subview, crate::state::RepoSubview::Branches) {
+                    sync_branch_selection(repo_mode);
                 }
                 if matches!(subview, crate::state::RepoSubview::Commits) {
                     sync_commit_selection(repo_mode);
@@ -503,6 +581,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     detail.commit_input = commit_input;
                     repo_mode.detail = Some(detail);
                     sync_status_selection(repo_mode);
+                    sync_branch_selection(repo_mode);
                     sync_commit_selection(repo_mode);
                     sync_diff_selection(repo_mode);
                     repo_mode.operation_progress = OperationProgress::Idle;
@@ -847,19 +926,23 @@ fn open_confirmation_modal(
     repo_id: crate::state::RepoId,
     operation: ConfirmableOperation,
 ) {
+    let title = confirmation_title(&operation);
     state.pending_confirmation = Some(crate::state::PendingConfirmation { repo_id, operation });
     state.modal_stack.push(crate::state::Modal::new(
         crate::state::ModalKind::Confirm,
-        confirmation_title(operation),
+        title,
     ));
     state.focused_pane = PaneId::Modal;
 }
 
-fn confirmation_title(operation: ConfirmableOperation) -> &'static str {
+fn confirmation_title(operation: &ConfirmableOperation) -> String {
     match operation {
-        ConfirmableOperation::Fetch => "Confirm fetch",
-        ConfirmableOperation::Pull => "Confirm pull",
-        ConfirmableOperation::Push => "Confirm push",
+        ConfirmableOperation::Fetch => "Confirm fetch".to_string(),
+        ConfirmableOperation::Pull => "Confirm pull".to_string(),
+        ConfirmableOperation::Push => "Confirm push".to_string(),
+        ConfirmableOperation::DeleteBranch { branch_name } => {
+            format!("Delete branch {branch_name}")
+        }
     }
 }
 
@@ -877,10 +960,123 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
         ConfirmableOperation::Fetch => (GitCommand::FetchSelectedRepo, "Fetch remote updates"),
         ConfirmableOperation::Pull => (GitCommand::PullCurrentBranch, "Pull current branch"),
         ConfirmableOperation::Push => (GitCommand::PushCurrentBranch, "Push current branch"),
+        ConfirmableOperation::DeleteBranch { branch_name } => (
+            GitCommand::DeleteBranch {
+                branch_name: branch_name.clone(),
+            },
+            "Delete branch",
+        ),
     };
     let job = git_job(pending.repo_id, command);
     enqueue_git_job(state, &job, summary);
     Some(job)
+}
+
+fn open_input_prompt(
+    state: &mut AppState,
+    repo_id: crate::state::RepoId,
+    operation: InputPromptOperation,
+) {
+    let title = input_prompt_title(&operation);
+    let value = input_prompt_initial_value(&operation);
+    state.pending_input_prompt = Some(PendingInputPrompt {
+        repo_id,
+        operation,
+        value,
+    });
+    state.modal_stack.push(crate::state::Modal::new(
+        crate::state::ModalKind::InputPrompt,
+        title,
+    ));
+    state.focused_pane = PaneId::Modal;
+}
+
+fn input_prompt_title(operation: &InputPromptOperation) -> String {
+    match operation {
+        InputPromptOperation::CreateBranch => "Create branch".to_string(),
+        InputPromptOperation::RenameBranch { current_name } => {
+            format!("Rename branch {current_name}")
+        }
+        InputPromptOperation::SetBranchUpstream { branch_name } => {
+            format!("Set upstream for {branch_name}")
+        }
+    }
+}
+
+fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
+    match operation {
+        InputPromptOperation::CreateBranch => String::new(),
+        InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
+        InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
+    }
+}
+
+fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
+    let pending = state.pending_input_prompt.take()?;
+    let value = pending.value.trim().to_string();
+    if value.is_empty() {
+        state.pending_input_prompt = Some(pending);
+        return None;
+    }
+
+    state.modal_stack.pop();
+    if state.modal_stack.is_empty() && matches!(state.mode, AppMode::Repository) {
+        state.focused_pane = PaneId::RepoDetail;
+    }
+
+    let (command, summary) = match pending.operation {
+        InputPromptOperation::CreateBranch => (
+            GitCommand::CreateBranch {
+                branch_name: value.clone(),
+            },
+            format!("Create branch {value}"),
+        ),
+        InputPromptOperation::RenameBranch { current_name } => (
+            GitCommand::RenameBranch {
+                branch_name: current_name.clone(),
+                new_name: value.clone(),
+            },
+            format!("Rename branch {current_name} to {value}"),
+        ),
+        InputPromptOperation::SetBranchUpstream { branch_name } => (
+            GitCommand::SetBranchUpstream {
+                branch_name: branch_name.clone(),
+                upstream_ref: value.clone(),
+            },
+            format!("Set upstream for {branch_name}"),
+        ),
+    };
+    let job = git_job(pending.repo_id, command);
+    enqueue_git_job(state, &job, &summary);
+    Some(job)
+}
+
+fn sync_branch_selection(repo_mode: &mut RepoModeState) {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.branches_view.selected_index = None;
+        return;
+    };
+
+    if detail.branches.is_empty() {
+        repo_mode.branches_view.selected_index = None;
+        return;
+    }
+
+    if let Some(index) = repo_mode
+        .branches_view
+        .selected_index
+        .filter(|index| *index < detail.branches.len())
+    {
+        repo_mode.branches_view.selected_index = Some(index);
+        return;
+    }
+
+    let head_index = detail
+        .branches
+        .iter()
+        .position(|branch| branch.is_head)
+        .unwrap_or(0);
+    repo_mode.branches_view.selected_index = Some(head_index);
 }
 
 fn sync_commit_selection(repo_mode: &mut RepoModeState) {
@@ -975,6 +1171,30 @@ fn selected_status_detail_request(
     pane: PaneId,
 ) -> Option<(std::path::PathBuf, DiffPresentation)> {
     selected_status_path(repo_mode, pane).map(|path| (path, diff_presentation_for_pane(pane)))
+}
+
+fn selected_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::BranchItem> {
+    let detail = repo_mode.detail.as_ref()?;
+    let selected_index = repo_mode
+        .branches_view
+        .selected_index
+        .filter(|index| *index < detail.branches.len())
+        .or_else(|| detail.branches.iter().position(|branch| branch.is_head))
+        .unwrap_or(0);
+    detail.branches.get(selected_index)
+}
+
+fn step_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.branches_view.selected_index = None;
+        return false;
+    };
+
+    let before = repo_mode.branches_view.selected_index;
+    let after = repo_mode
+        .branches_view
+        .select_with_step(detail.branches.len(), step);
+    after.is_some() && after != before
 }
 
 fn diff_presentation_for_pane(pane: PaneId) -> DiffPresentation {
@@ -1091,7 +1311,11 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::UnstageFile { .. } => "unstage-file",
         GitCommand::CommitStaged { .. } => "commit-staged",
         GitCommand::AmendHead { .. } => "amend-head",
+        GitCommand::CreateBranch { .. } => "create-branch",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
+        GitCommand::RenameBranch { .. } => "rename-branch",
+        GitCommand::DeleteBranch { .. } => "delete-branch",
+        GitCommand::SetBranchUpstream { .. } => "set-branch-upstream",
         GitCommand::FetchSelectedRepo => "fetch-selected-repo",
         GitCommand::PullCurrentBranch => "pull-current-branch",
         GitCommand::PushCurrentBranch => "push-current-branch",
@@ -1400,7 +1624,7 @@ mod tests {
                 .state
                 .pending_confirmation
                 .as_ref()
-                .map(|pending| (pending.repo_id.clone(), pending.operation)),
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
             Some((repo_id, ConfirmableOperation::Pull))
         );
         assert_eq!(
@@ -1412,6 +1636,101 @@ mod tests {
             Some((&ModalKind::Confirm, "Confirm pull"))
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn delete_selected_branch_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: None,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DeleteSelectedBranch));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::DeleteBranch {
+                    branch_name: "feature".to_string()
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn submit_branch_create_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Create branch",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateBranch,
+                value: "feature/new-ui".to_string(),
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-branch");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateBranch {
+                    branch_name: "feature/new-ui".to_string(),
+                },
+            })]
+        );
     }
 
     #[test]
@@ -1826,6 +2145,49 @@ mod tests {
         );
         assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn switch_repo_subview_branches_prefers_head_selection() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: None,
+                        },
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SwitchRepoSubview(RepoSubview::Branches)),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
     }
 
     #[test]
@@ -2387,6 +2749,18 @@ mod tests {
         )
         .state;
         let detail = RepoDetail {
+            branches: vec![
+                crate::state::BranchItem {
+                    name: "feature".to_string(),
+                    is_head: false,
+                    upstream: None,
+                },
+                crate::state::BranchItem {
+                    name: "main".to_string(),
+                    is_head: true,
+                    upstream: Some("origin/main".to_string()),
+                },
+            ],
             file_tree: vec![
                 FileStatus {
                     path: std::path::PathBuf::from("src/lib.rs"),
@@ -2452,6 +2826,14 @@ mod tests {
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.staged_view.selected_index),
             Some(0)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(1)
         );
         assert_eq!(
             result

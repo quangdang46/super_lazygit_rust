@@ -39,11 +39,35 @@ pub struct GitCommandRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GitCommand {
     StageSelection,
-    StageFile { path: PathBuf },
-    UnstageFile { path: PathBuf },
-    CommitStaged { message: String },
-    AmendHead { message: Option<String> },
-    CheckoutBranch { branch_ref: String },
+    StageFile {
+        path: PathBuf,
+    },
+    UnstageFile {
+        path: PathBuf,
+    },
+    CommitStaged {
+        message: String,
+    },
+    AmendHead {
+        message: Option<String>,
+    },
+    CreateBranch {
+        branch_name: String,
+    },
+    CheckoutBranch {
+        branch_ref: String,
+    },
+    RenameBranch {
+        branch_name: String,
+        new_name: String,
+    },
+    DeleteBranch {
+        branch_name: String,
+    },
+    SetBranchUpstream {
+        branch_name: String,
+        upstream_ref: String,
+    },
     FetchSelectedRepo,
     PullCurrentBranch,
     PushCurrentBranch,

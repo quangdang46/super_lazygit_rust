@@ -10,6 +10,7 @@ pub struct AppState {
     pub focused_pane: PaneId,
     pub modal_stack: Vec<Modal>,
     pub pending_confirmation: Option<PendingConfirmation>,
+    pub pending_input_prompt: Option<PendingInputPrompt>,
     pub status_messages: VecDeque<StatusMessage>,
     pub notifications: VecDeque<Notification>,
     pub background_jobs: BTreeMap<JobId, BackgroundJob>,
@@ -67,11 +68,26 @@ pub struct PendingConfirmation {
     pub operation: ConfirmableOperation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfirmableOperation {
     Fetch,
     Pull,
     Push,
+    DeleteBranch { branch_name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingInputPrompt {
+    pub repo_id: RepoId,
+    pub operation: InputPromptOperation,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputPromptOperation {
+    CreateBranch,
+    RenameBranch { current_name: String },
+    SetBranchUpstream { branch_name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -631,6 +647,7 @@ pub enum DiffLineKind {
 pub struct BranchItem {
     pub name: String,
     pub is_head: bool,
+    pub upstream: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

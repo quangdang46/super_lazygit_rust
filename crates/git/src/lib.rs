@@ -557,9 +557,42 @@ impl GitBackend for CliGitBackend {
                 }
                 "Amended HEAD commit".to_string()
             }
+            GitCommand::CreateBranch { branch_name } => {
+                git(&repo_path, ["checkout", "-b", branch_name.as_str()])?;
+                format!("Created and checked out {branch_name}")
+            }
             GitCommand::CheckoutBranch { branch_ref } => {
                 git(&repo_path, ["checkout", branch_ref.as_str()])?;
                 format!("Checked out {branch_ref}")
+            }
+            GitCommand::RenameBranch {
+                branch_name,
+                new_name,
+            } => {
+                if current_branch_name(&repo_path)? == *branch_name {
+                    git(&repo_path, ["branch", "-m", new_name.as_str()])?;
+                } else {
+                    git(
+                        &repo_path,
+                        ["branch", "-m", branch_name.as_str(), new_name.as_str()],
+                    )?;
+                }
+                format!("Renamed {branch_name} to {new_name}")
+            }
+            GitCommand::DeleteBranch { branch_name } => {
+                git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
+                format!("Deleted {branch_name}")
+            }
+            GitCommand::SetBranchUpstream {
+                branch_name,
+                upstream_ref,
+            } => {
+                let upstream_arg = format!("--set-upstream-to={upstream_ref}");
+                git(
+                    &repo_path,
+                    ["branch", upstream_arg.as_str(), branch_name.as_str()],
+                )?;
+                format!("Set upstream for {branch_name} to {upstream_ref}")
             }
             GitCommand::FetchSelectedRepo => {
                 run_fetch(&repo_path)?;
@@ -644,7 +677,11 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
+        GitCommand::RenameBranch { .. } => "rename_branch",
+        GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",
@@ -1462,23 +1499,38 @@ fn status_code_kind(code: char) -> Option<FileStatusKind> {
 }
 
 fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
-    git_stdout(repo_path, ["branch", "--all", "--no-color"])
-        .map(|output| {
-            output
-                .lines()
-                .filter_map(|line| {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.contains(" -> ") {
-                        return None;
-                    }
-                    Some(BranchItem {
-                        name: trimmed.trim_start_matches('*').trim_start().to_string(),
-                        is_head: trimmed.starts_with('*'),
-                    })
+    git_stdout(
+        repo_path,
+        [
+            "for-each-ref",
+            "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)",
+            "refs/heads",
+        ],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let mut parts = trimmed.split('\0');
+                let head = parts.next().unwrap_or_default().trim();
+                let name = parts.next().unwrap_or_default().trim();
+                let upstream = parts.next().unwrap_or_default().trim();
+                if name.is_empty() {
+                    return None;
+                }
+                Some(BranchItem {
+                    name: name.to_string(),
+                    is_head: head == "*",
+                    upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
                 })
-                .collect()
-        })
-        .unwrap_or_default()
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn read_commits(repo_path: &Path) -> Vec<CommitItem> {
@@ -2226,6 +2278,28 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_reads_local_branches_with_head_and_upstream() {
+        let repo = upstream_diverged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert!(detail.branches.iter().any(|branch| branch.name == "main"
+            && branch.is_head
+            && branch.upstream.as_deref() == Some("origin/main")));
+        assert!(detail
+            .branches
+            .iter()
+            .all(|branch| !branch.name.starts_with("origin/")));
+    }
+
+    #[test]
     fn cli_backend_reads_commit_history_in_reverse_chronological_order() {
         let repo = history_preview_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -2452,6 +2526,89 @@ mod tests {
             .status_porcelain()
             .expect("status")
             .contains("A  untracked.txt"));
+    }
+
+    #[test]
+    fn cli_backend_runs_branch_lifecycle_commands() {
+        let repo = upstream_diverged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let created = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-branch"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateBranch {
+                    branch_name: "feature".to_string(),
+                },
+            })
+            .expect("branch creation should succeed");
+        assert_eq!(created.summary, "Created and checked out feature");
+        assert_eq!(repo.current_branch().expect("current branch"), "feature");
+
+        let upstream = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-set-upstream"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::SetBranchUpstream {
+                    branch_name: "feature".to_string(),
+                    upstream_ref: "origin/main".to_string(),
+                },
+            })
+            .expect("set upstream should succeed");
+        assert_eq!(upstream.summary, "Set upstream for feature to origin/main");
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: repo_id.clone(),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should refresh");
+        assert!(detail
+            .branches
+            .iter()
+            .any(|branch| branch.name == "feature"
+                && branch.upstream.as_deref() == Some("origin/main")));
+
+        let renamed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-rename-branch"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::RenameBranch {
+                    branch_name: "feature".to_string(),
+                    new_name: "topic".to_string(),
+                },
+            })
+            .expect("branch rename should succeed");
+        assert_eq!(renamed.summary, "Renamed feature to topic");
+        assert_eq!(repo.current_branch().expect("current branch"), "topic");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-checkout-main"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CheckoutBranch {
+                    branch_ref: "main".to_string(),
+                },
+            })
+            .expect("checkout main should succeed");
+
+        let deleted = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-delete-branch"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::DeleteBranch {
+                    branch_name: "topic".to_string(),
+                },
+            })
+            .expect("branch delete should succeed");
+        assert_eq!(deleted.summary, "Deleted topic");
+        let branch_list = stdout_string(
+            repo.git_capture(["branch", "--list"])
+                .expect("branch list should load"),
+        )
+        .expect("branch output");
+        assert!(!branch_list.contains("topic"));
     }
 
     #[test]

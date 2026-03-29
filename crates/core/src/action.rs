@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::state::{ModalKind, RepoId, RepoSubview};
+use crate::state::{InputPromptOperation, ModalKind, RepoId, RepoSubview};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
@@ -17,6 +17,8 @@ pub enum Action {
     CycleWorkspaceSort,
     SelectNextStatusEntry,
     SelectPreviousStatusEntry,
+    SelectNextBranch,
+    SelectPreviousBranch,
     SelectNextCommit,
     SelectPreviousCommit,
     ScrollRepoDetailUp,
@@ -27,6 +29,10 @@ pub enum Action {
     OpenModal { kind: ModalKind, title: String },
     CloseTopModal,
     ConfirmPendingOperation,
+    OpenInputPrompt { operation: InputPromptOperation },
+    AppendPromptInput { text: String },
+    BackspacePromptInput,
+    SubmitPromptInput,
     RefreshSelectedRepo,
     RefreshVisibleRepos,
     StageSelection,
@@ -41,7 +47,9 @@ pub enum Action {
     SubmitCommitBox,
     CommitStaged { message: String },
     AmendHead { message: Option<String> },
+    CheckoutSelectedBranch,
     CheckoutBranch { branch_ref: String },
+    DeleteSelectedBranch,
     FetchSelectedRepo,
     PullCurrentBranch,
     PushCurrentBranch,
