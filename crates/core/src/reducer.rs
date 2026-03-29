@@ -358,6 +358,18 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::RestoreSelectedReflogEntry => {
+            match selected_reflog_restore_target(state) {
+                Ok(Some((repo_id, target, summary))) => open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::RestoreReflogEntry { target, summary },
+                ),
+                Ok(None) => push_warning(state, "Select a reflog entry before restoring HEAD."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::SelectNextWorktree => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_worktree_selection(repo_mode, 1) {
@@ -1333,6 +1345,9 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::ResetToCommit { mode, summary, .. } => {
             format!("{} reset to {summary}", mode.title())
         }
+        ConfirmableOperation::RestoreReflogEntry { summary, .. } => {
+            format!("Restore HEAD to {summary}")
+        }
         ConfirmableOperation::AbortRebase => "Abort rebase".to_string(),
         ConfirmableOperation::SkipRebase => "Skip rebase step".to_string(),
         ConfirmableOperation::NukeWorkingTree => "Discard all local changes".to_string(),
@@ -1399,6 +1414,10 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 target: commit,
             },
             "Reset to selected commit",
+        ),
+        ConfirmableOperation::RestoreReflogEntry { target, .. } => (
+            GitCommand::RestoreSnapshot { target },
+            "Restore HEAD from reflog",
         ),
         ConfirmableOperation::AbortRebase => (GitCommand::AbortRebase, "Abort rebase"),
         ConfirmableOperation::SkipRebase => (GitCommand::SkipRebase, "Skip rebase step"),
@@ -1763,6 +1782,48 @@ fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::Comm
     detail.commits.get(selected_index)
 }
 
+fn selected_reflog_restore_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(message) = history_action_block_reason(&detail.merge_state) {
+        return Err(message.to_string());
+    }
+    if !detail.file_tree.is_empty() {
+        return Err(
+            "Restore is only available on a clean working tree. Commit or discard changes first."
+                .to_string(),
+        );
+    }
+
+    let selected_index = repo_mode
+        .reflog_view
+        .selected_index
+        .filter(|index| *index < detail.reflog_items.len())
+        .unwrap_or(0);
+    if selected_index == 0 {
+        return Err("Select an older reflog entry to restore.".to_string());
+    }
+
+    let Some(entry) = detail.reflog_items.get(selected_index) else {
+        return Ok(None);
+    };
+    let Some((target, _)) = entry.description.split_once(':') else {
+        return Err("Selected reflog entry could not be parsed.".to_string());
+    };
+
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        target.trim().to_string(),
+        entry.description.clone(),
+    )))
+}
+
 fn pending_history_commit_operation<T, F>(
     state: &AppState,
     build: F,
@@ -2120,6 +2181,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
             ResetMode::Mixed => "reset-mixed",
             ResetMode::Hard => "reset-hard",
         },
+        GitCommand::RestoreSnapshot { .. } => "restore-snapshot",
         GitCommand::ContinueRebase => "continue-rebase",
         GitCommand::AbortRebase => "abort-rebase",
         GitCommand::SkipRebase => "skip-rebase",
@@ -2643,6 +2705,102 @@ mod tests {
     }
 
     #[test]
+    fn restore_selected_reflog_entry_opens_confirmation_on_clean_tree() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Reflog,
+                detail: Some(RepoDetail {
+                    reflog_items: vec![
+                        ReflogItem {
+                            description: "HEAD@{0}: commit: current".to_string(),
+                        },
+                        ReflogItem {
+                            description: "HEAD@{1}: commit: prior".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                reflog_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RestoreSelectedReflogEntry));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::RestoreReflogEntry {
+                    target: "HEAD@{1}".to_string(),
+                    summary: "HEAD@{1}: commit: prior".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn restore_selected_reflog_entry_warns_when_worktree_is_dirty() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Reflog,
+                detail: Some(RepoDetail {
+                    file_tree: vec![crate::state::FileStatus {
+                        path: std::path::PathBuf::from("dirty.txt"),
+                        kind: crate::state::FileStatusKind::Modified,
+                        staged_kind: None,
+                        unstaged_kind: Some(crate::state::FileStatusKind::Modified),
+                    }],
+                    reflog_items: vec![
+                        ReflogItem {
+                            description: "HEAD@{0}: commit: current".to_string(),
+                        },
+                        ReflogItem {
+                            description: "HEAD@{1}: commit: prior".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                reflog_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RestoreSelectedReflogEntry));
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .front()
+                .map(|notification| notification.text.as_str()),
+            Some("Restore is only available on a clean working tree. Commit or discard changes first.")
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
     fn select_next_worktree_advances_selection() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -3050,6 +3208,53 @@ mod tests {
                 repo_id,
                 command: GitCommand::DropStash {
                     stash_ref: "stash@{0}".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_restore_snapshot_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Restore HEAD to HEAD@{1}: commit: prior",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::RestoreReflogEntry {
+                    target: "HEAD@{1}".to_string(),
+                    summary: "HEAD@{1}: commit: prior".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:restore-snapshot");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::RestoreSnapshot {
+                    target: "HEAD@{1}".to_string(),
                 },
             })]
         );

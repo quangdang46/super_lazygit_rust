@@ -485,6 +485,9 @@ impl TuiApp {
                     (RepoSubview::Reflog, _, "k" | "up") => {
                         return Some(Action::SelectPreviousReflog);
                     }
+                    (RepoSubview::Reflog, _, "u") => {
+                        return Some(Action::RestoreSelectedReflogEntry);
+                    }
                     (RepoSubview::Worktrees, _, "j" | "down") => {
                         return Some(Action::SelectNextWorktree);
                     }
@@ -1743,6 +1746,8 @@ fn repo_reflog_lines(
         )),
         Line::from(selected_entry.description.clone()),
         Line::from("Use j/k to inspect recent HEAD and ref movement."),
+        Line::from("u restore HEAD to the selected entry on a clean working tree."),
+        Line::from("Limits: no working tree undo; redo is manual by selecting another entry."),
         Line::from(""),
     ];
 
@@ -2303,6 +2308,13 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                     "Hard reset HEAD to {summary}? This moves HEAD and discards tracked staged and unstaged changes."
                 ),
             }
+        }
+        super_lazygit_core::ConfirmableOperation::RestoreReflogEntry {
+            target, summary, ..
+        } => {
+            format!(
+                "Restore HEAD to {summary}? This uses git reset --hard {target}, so only committed HEAD movement is recoverable. Working tree edits and untracked files are not undone here."
+            )
         }
         super_lazygit_core::ConfirmableOperation::AbortRebase => {
             "Abort the current rebase and restore the branch to its pre-rebase state?".to_string()
@@ -4414,6 +4426,45 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_reflog_detail_routes_restore_confirmation() {
+        let mut detail = sample_repo_detail();
+        detail.file_tree.clear();
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Reflog,
+                detail: Some(detail),
+                reflog_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let restore = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "u".to_string(),
+        })));
+
+        assert_eq!(restore.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            restore
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::RestoreReflogEntry {
+                    target: "HEAD@{1}".to_string(),
+                    summary: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
+                }
+            )
+        );
+    }
+
+    #[test]
     fn repo_mode_worktree_detail_routes_selection_create_and_remove() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -4849,7 +4900,7 @@ mod tests {
             },
         );
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(100, 18);
+        app.resize(160, 18);
 
         let rendered = app.render_to_string();
 
@@ -5159,8 +5210,23 @@ mod tests {
         assert!(rendered.contains("Detail: Reflog"));
         assert!(rendered.contains("Selected 2/2"));
         assert!(rendered.contains("Use j/k to inspect recent HEAD and ref movement."));
+        assert!(rendered.contains("u restore HEAD to the selected entry"));
+        assert!(rendered.contains("Limits: no working tree undo"));
         assert!(rendered.contains("HEAD@{0}: checkout: moving from feature to main"));
         assert!(rendered.contains("HEAD@{1}: commit: add repo-mode stash flows"));
+    }
+
+    #[test]
+    fn restore_reflog_confirmation_copy_describes_hard_reset_limits() {
+        let copy = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::RestoreReflogEntry {
+                target: "HEAD@{1}".to_string(),
+                summary: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
+            },
+        );
+
+        assert!(copy.contains("git reset --hard HEAD@{1}"));
+        assert!(copy.contains("Working tree edits and untracked files are not undone"));
     }
 
     #[test]

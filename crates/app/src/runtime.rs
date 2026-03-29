@@ -466,6 +466,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
             super_lazygit_core::ResetMode::Mixed => "reset_to_commit_mixed",
             super_lazygit_core::ResetMode::Hard => "reset_to_commit_hard",
         },
+        GitCommand::RestoreSnapshot { .. } => "restore_snapshot",
         GitCommand::ContinueRebase => "continue_rebase",
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",

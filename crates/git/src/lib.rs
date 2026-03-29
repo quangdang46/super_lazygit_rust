@@ -607,6 +607,10 @@ impl GitBackend for CliGitBackend {
                     .unwrap_or_else(|_| target.clone());
                 format!("{} reset to {} {}", mode.title(), short, subject)
             }
+            GitCommand::RestoreSnapshot { target } => {
+                reset_to_commit(&repo_path, ResetMode::Hard, target)?;
+                format!("Restored HEAD to {target}")
+            }
             GitCommand::ContinueRebase => {
                 git_with_env(
                     &repo_path,
@@ -800,6 +804,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
             ResetMode::Mixed => "reset_to_commit_mixed",
             ResetMode::Hard => "reset_to_commit_hard",
         },
+        GitCommand::RestoreSnapshot { .. } => "restore_snapshot",
         GitCommand::ContinueRebase => "continue_rebase",
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
@@ -3726,6 +3731,30 @@ mod tests {
         assert_eq!(outcome.repo_id, repo_id);
         assert!(outcome.summary.contains("Hard reset"));
         assert_eq!(repo.rev_parse("HEAD").expect("head"), target);
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert!(!repo.path().join("src/lib.rs").exists());
+    }
+
+    #[test]
+    fn cli_backend_restores_head_to_selected_reflog_entry() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let expected_target = repo.rev_parse("HEAD~1").expect("target oid");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("job-restore-snapshot"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::RestoreSnapshot {
+                    target: "HEAD@{1}".to_string(),
+                },
+            })
+            .expect("restore snapshot should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Restored HEAD to HEAD@{1}");
+        assert_eq!(repo.rev_parse("HEAD").expect("head"), expected_target);
         assert_eq!(repo.status_porcelain().expect("status"), "");
         assert!(!repo.path().join("src/lib.rs").exists());
     }

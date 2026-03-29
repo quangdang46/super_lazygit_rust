@@ -128,6 +128,10 @@ pub enum ConfirmableOperation {
         commit: String,
         summary: String,
     },
+    RestoreReflogEntry {
+        target: String,
+        summary: String,
+    },
     AbortRebase,
     SkipRebase,
     NukeWorkingTree,

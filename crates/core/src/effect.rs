@@ -83,6 +83,9 @@ pub enum GitCommand {
         mode: ResetMode,
         target: String,
     },
+    RestoreSnapshot {
+        target: String,
+    },
     ContinueRebase,
     AbortRebase,
     SkipRebase,

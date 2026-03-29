@@ -34,6 +34,7 @@ pub enum Action {
     SelectPreviousStash,
     SelectNextReflog,
     SelectPreviousReflog,
+    RestoreSelectedReflogEntry,
     SelectNextWorktree,
     SelectPreviousWorktree,
     ToggleComparisonSelection,
