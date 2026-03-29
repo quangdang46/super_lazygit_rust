@@ -33,6 +33,11 @@ impl AppRuntime {
         self.workspace
             .mark_watcher_started(usize::from(self.workspace.root().is_some()));
         self.workspace.record_watcher_refresh(1);
+        if let Some(cached_workspace) = self.workspace.load_cache() {
+            let _ = self.app.dispatch(Event::Action(
+                super_lazygit_core::Action::ApplyWorkspaceScan(cached_workspace),
+            ));
+        }
         self.git.record_operation("bootstrap.git.probe", true);
         let _ = self.app.render();
 
@@ -87,13 +92,16 @@ impl AppRuntime {
 
                     match result {
                         Ok(scan) => {
+                            let repo_ids = self
+                                .workspace
+                                .register_scan(scan.root.clone(), &scan.repo_ids);
                             self.workspace
-                                .record_scan("runtime.start_repo_scan", scan.repo_ids.len());
+                                .record_scan("runtime.start_repo_scan", repo_ids.len());
                             self.diagnostics
                                 .extend_snapshot(self.workspace.diagnostics());
                             follow_up_events.push(Event::Worker(WorkerEvent::RepoScanCompleted {
                                 root: scan.root,
-                                repo_ids: scan.repo_ids,
+                                repo_ids,
                                 scanned_at: current_timestamp(),
                             }));
                         }
@@ -116,6 +124,7 @@ impl AppRuntime {
                     self.diagnostics.extend_snapshot(self.git.diagnostics());
 
                     if let Ok(summary) = result {
+                        let summary = self.workspace.register_summary(summary);
                         follow_up_events
                             .push(Event::Worker(WorkerEvent::RepoSummaryUpdated { summary }));
                     }
@@ -162,7 +171,11 @@ impl AppRuntime {
                         }
                     }
                 }
-                Effect::PersistCache | Effect::PersistConfig | Effect::ScheduleRender => {
+                Effect::PersistCache => {
+                    let _ = self.workspace.persist_cache(&self.app.state().workspace);
+                }
+                Effect::PersistConfig => {}
+                Effect::ScheduleRender => {
                     let _ = self.app.render();
                 }
             }

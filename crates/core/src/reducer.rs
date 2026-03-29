@@ -235,6 +235,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     repo_id: repo_id.clone(),
                 });
             }
+            effects.push(Effect::PersistCache);
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::RepoSummaryUpdated { summary } => {
@@ -242,6 +243,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 .workspace
                 .repo_summaries
                 .insert(summary.repo_id.clone(), summary);
+            effects.push(Effect::PersistCache);
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::RepoDetailLoaded { repo_id, detail } => {
@@ -614,6 +616,7 @@ mod tests {
                 Effect::RefreshRepoSummary {
                     repo_id: RepoId::new("repo-2"),
                 },
+                Effect::PersistCache,
                 Effect::ScheduleRender,
             ]
         );
@@ -638,7 +641,7 @@ mod tests {
             result.state.workspace.repo_summaries.get(&summary.repo_id),
             Some(&summary)
         );
-        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(result.effects, vec![Effect::PersistCache, Effect::ScheduleRender]);
     }
 
     #[test]

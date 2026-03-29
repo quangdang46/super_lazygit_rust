@@ -766,6 +766,7 @@ dependencies = [
  "super-lazygit-git",
  "super-lazygit-tui",
  "super-lazygit-workspace",
+ "tempfile",
 ]
 
 [[package]]
@@ -820,8 +821,11 @@ dependencies = [
 name = "super-lazygit-workspace"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "super-lazygit-core",
  "super-lazygit-git",
+ "tempfile",
 ]
 
 [[package]]

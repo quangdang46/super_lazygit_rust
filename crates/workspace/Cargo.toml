@@ -8,5 +8,10 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
 super-lazygit-core = { path = "../core" }
 super-lazygit-git = { path = "../git" }
+
+[dev-dependencies]
+tempfile.workspace = true
