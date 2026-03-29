@@ -87,47 +87,27 @@ impl GitFacade {
         request: WorkspaceScanRequest,
     ) -> GitResult<WorkspaceScanResult> {
         let operation = GitOperationKind::ScanWorkspace;
-        let route = self.route_for(operation);
-        let started_at = Instant::now();
-        let result = self.backend.scan_workspace(request);
-        self.finish_operation(operation, route, started_at, &result);
-        result
+        self.execute_routed(operation, |backend| backend.scan_workspace(request))
     }
 
     pub fn read_repo_summary(&mut self, request: RepoSummaryRequest) -> GitResult<RepoSummary> {
         let operation = GitOperationKind::ReadRepoSummary;
-        let route = self.route_for(operation);
-        let started_at = Instant::now();
-        let result = self.backend.read_repo_summary(request);
-        self.finish_operation(operation, route, started_at, &result);
-        result
+        self.execute_routed(operation, |backend| backend.read_repo_summary(request))
     }
 
     pub fn read_repo_detail(&mut self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
         let operation = GitOperationKind::ReadRepoDetail;
-        let route = self.route_for(operation);
-        let started_at = Instant::now();
-        let result = self.backend.read_repo_detail(request);
-        self.finish_operation(operation, route, started_at, &result);
-        result
+        self.execute_routed(operation, |backend| backend.read_repo_detail(request))
     }
 
     pub fn read_diff(&mut self, request: DiffRequest) -> GitResult<DiffModel> {
         let operation = GitOperationKind::ReadDiff;
-        let route = self.route_for(operation);
-        let started_at = Instant::now();
-        let result = self.backend.read_diff(request);
-        self.finish_operation(operation, route, started_at, &result);
-        result
+        self.execute_routed(operation, |backend| backend.read_diff(request))
     }
 
     pub fn run_command(&mut self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
         let operation = GitOperationKind::WriteCommand;
-        let route = self.route_for(operation);
-        let started_at = Instant::now();
-        let result = self.backend.run_command(request);
-        self.finish_operation(operation, route, started_at, &result);
-        result
+        self.execute_routed(operation, |backend| backend.run_command(request))
     }
 
     pub fn apply_patch_selection(
@@ -135,11 +115,7 @@ impl GitFacade {
         request: PatchSelectionRequest,
     ) -> GitResult<GitCommandOutcome> {
         let operation = GitOperationKind::WriteCommand;
-        let route = self.route_for(operation);
-        let started_at = Instant::now();
-        let result = self.backend.apply_patch_selection(request);
-        self.finish_operation(operation, route, started_at, &result);
-        result
+        self.execute_routed(operation, |backend| backend.apply_patch_selection(request))
     }
 
     pub fn record_operation(&mut self, operation: impl Into<String>, success: bool) {
@@ -151,6 +127,25 @@ impl GitFacade {
     #[must_use]
     pub fn diagnostics(&self) -> DiagnosticsSnapshot {
         self.diagnostics.snapshot()
+    }
+
+    fn execute_routed<T>(
+        &mut self,
+        operation: GitOperationKind,
+        execute: impl FnOnce(&dyn GitBackend) -> GitResult<T>,
+    ) -> GitResult<T> {
+        let route = self.route_for(operation);
+        let started_at = Instant::now();
+        let result = if route.backend == self.backend.kind() {
+            execute(self.backend.as_ref())
+        } else {
+            Err(GitError::RouteUnavailable {
+                operation: operation.label(),
+                backend: route.backend.label(),
+            })
+        };
+        self.finish_operation(operation, route, started_at, &result);
+        result
     }
 
     fn finish_operation<T>(
@@ -1453,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn facade_delegates_and_records_backend_route() {
+    fn facade_fails_fast_when_route_backend_is_unavailable() {
         let mut facade = GitFacade::with_routing(
             StubBackend {
                 kind: GitBackendKind::Git2,
@@ -1464,19 +1459,55 @@ mod tests {
             },
         );
 
-        let summary = facade
+        let error = facade
             .run_command(GitCommandRequest {
                 job_id: super_lazygit_core::JobId::new("job-1"),
                 repo_id: RepoId::new("repo-a"),
                 command: GitCommand::PushCurrentBranch,
             })
-            .expect("stub command should succeed");
+            .expect_err("route mismatch should fail fast");
+
+        assert_eq!(
+            error,
+            GitError::RouteUnavailable {
+                operation: GitOperationKind::WriteCommand.label(),
+                backend: GitBackendKind::Cli.label(),
+            }
+        );
+        assert_eq!(facade.diagnostics().git_operations.len(), 1);
+        assert!(facade.diagnostics().git_operations[0]
+            .operation
+            .contains("write_command via git-cli"));
+        assert!(!facade.diagnostics().git_operations[0].success);
+    }
+
+    #[test]
+    fn facade_executes_when_route_matches_active_backend() {
+        let mut facade = GitFacade::with_routing(
+            StubBackend {
+                kind: GitBackendKind::Git2,
+            },
+            GitBackendRoutingPolicy {
+                primary_backend: GitBackendKind::Git2,
+                writes: BackendPreference::PrimaryOnly,
+                ..GitBackendRoutingPolicy::default()
+            },
+        );
+
+        let summary = facade
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-2"),
+                repo_id: RepoId::new("repo-a"),
+                command: GitCommand::PushCurrentBranch,
+            })
+            .expect("primary-routed command should succeed");
 
         assert_eq!(summary.summary, "push_current_branch");
         assert_eq!(facade.diagnostics().git_operations.len(), 1);
         assert!(facade.diagnostics().git_operations[0]
             .operation
-            .contains("write_command via git-cli"));
+            .contains("write_command via git2"));
+        assert!(facade.diagnostics().git_operations[0].success);
     }
 
     #[test]
