@@ -55,6 +55,22 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::ScrollRepoDetailUp => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.diff_scroll = repo_mode.diff_scroll.saturating_sub(1);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::ScrollRepoDetailDown => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                let max_scroll = repo_mode
+                    .detail
+                    .as_ref()
+                    .map_or(0, |detail| detail.diff.lines.len().saturating_sub(1));
+                repo_mode.diff_scroll = (repo_mode.diff_scroll + 1).min(max_scroll);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::SetFocusedPane(pane) => {
             state.focused_pane = pane;
             effects.push(Effect::ScheduleRender);
@@ -168,6 +184,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::SwitchRepoSubview(subview) => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.active_subview = subview;
+                repo_mode.diff_scroll = 0;
                 state.focused_pane = PaneId::RepoDetail;
                 effects.push(Effect::ScheduleRender);
             }
@@ -218,6 +235,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
             {
                 if let Some(repo_mode) = state.repo_mode.as_mut() {
                     repo_mode.detail = Some(detail);
+                    repo_mode.diff_scroll = 0;
                     repo_mode.operation_progress = OperationProgress::Idle;
                 }
             }
@@ -401,8 +419,9 @@ mod tests {
     use crate::effect::{Effect, GitCommand, GitCommandRequest};
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
-        AppMode, AppState, BackgroundJobState, JobId, MessageLevel, ModalKind, PaneId, RepoDetail,
-        RepoId, RepoSubview, RepoSummary, Timestamp, WatcherHealth,
+        AppMode, AppState, BackgroundJobState, DiffLine, DiffLineKind, DiffModel, JobId,
+        MessageLevel, ModalKind, PaneId, RepoDetail, RepoId, RepoSubview, RepoSummary, Timestamp,
+        WatcherHealth,
     };
 
     use super::reduce;
@@ -636,6 +655,76 @@ mod tests {
         );
         assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn scroll_repo_detail_actions_clamp_to_bounds() {
+        let detail = RepoDetail {
+            diff: DiffModel {
+                selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                lines: vec![
+                    DiffLine {
+                        kind: DiffLineKind::Meta,
+                        content: "diff --git a/src/lib.rs b/src/lib.rs".to_string(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::HunkHeader,
+                        content: "@@ -1,1 +1,1 @@".to_string(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Addition,
+                        content: "+hello".to_string(),
+                    },
+                ],
+                hunk_count: 1,
+            },
+            ..RepoDetail::default()
+        };
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(detail),
+                ..crate::state::RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let down_once = reduce(state, Event::Action(Action::ScrollRepoDetailDown));
+        assert_eq!(
+            down_once
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_scroll),
+            Some(1)
+        );
+
+        let down_twice = reduce(down_once.state, Event::Action(Action::ScrollRepoDetailDown));
+        let down_thrice = reduce(
+            down_twice.state,
+            Event::Action(Action::ScrollRepoDetailDown),
+        );
+        assert_eq!(
+            down_thrice
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_scroll),
+            Some(2)
+        );
+
+        let up_once = reduce(down_thrice.state, Event::Action(Action::ScrollRepoDetailUp));
+        let up_twice = reduce(up_once.state, Event::Action(Action::ScrollRepoDetailUp));
+        let up_thrice = reduce(up_twice.state, Event::Action(Action::ScrollRepoDetailUp));
+        assert_eq!(
+            up_thrice
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_scroll),
+            Some(0)
+        );
     }
 
     #[test]

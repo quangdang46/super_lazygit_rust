@@ -9,8 +9,8 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, Event, InputEvent,
-    KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
+    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, DiffLineKind, Event,
+    InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
 };
 
 #[derive(Debug)]
@@ -223,6 +223,20 @@ impl TuiApp {
     fn route_repo_key(&self, raw: &str, normalized: &str) -> Option<Action> {
         if raw == "P" {
             return Some(Action::PushCurrentBranch);
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self
+                .state
+                .repo_mode
+                .as_ref()
+                .is_some_and(|repo_mode| repo_mode.active_subview == RepoSubview::Status)
+        {
+            match normalized {
+                "j" | "down" => return Some(Action::ScrollRepoDetailDown),
+                "k" | "up" => return Some(Action::ScrollRepoDetailUp),
+                _ => {}
+            }
         }
 
         match normalized {
@@ -443,9 +457,18 @@ impl TuiApp {
 
     fn render_repo_detail(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let (title, lines) = if let Some(repo_mode) = &self.state.repo_mode {
+            let lines = match repo_mode.active_subview {
+                RepoSubview::Status => repo_diff_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.diff_scroll,
+                    usize::from(area.height.saturating_sub(2)),
+                    theme,
+                ),
+                _ => repo_detail_lines(repo_mode.active_subview, repo_mode.detail.as_ref()),
+            };
             (
                 format!("Detail: {}", repo_subview_label(repo_mode.active_subview)),
-                repo_detail_lines(repo_mode.active_subview, repo_mode.detail.as_ref()),
+                lines,
             )
         } else {
             (
@@ -529,6 +552,8 @@ struct Theme {
     background: Color,
     foreground: Color,
     accent: Color,
+    success: Color,
+    danger: Color,
     muted: Color,
 }
 
@@ -538,6 +563,8 @@ impl Theme {
             background: parse_hex_color(&config.theme.colors.background).unwrap_or(Color::Black),
             foreground: parse_hex_color(&config.theme.colors.foreground).unwrap_or(Color::White),
             accent: parse_hex_color(&config.theme.colors.accent).unwrap_or(Color::Cyan),
+            success: parse_hex_color(&config.theme.colors.success).unwrap_or(Color::Green),
+            danger: parse_hex_color(&config.theme.colors.danger).unwrap_or(Color::Red),
             muted: Color::DarkGray,
         }
     }
@@ -682,6 +709,86 @@ fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<L
             Line::from("Worktree creation and removal reuse this detail shell."),
         ],
     }
+}
+
+fn repo_diff_lines(
+    detail: Option<&RepoDetail>,
+    scroll: usize,
+    viewport_lines: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Status diff",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    let selected = detail
+        .diff
+        .selected_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "working tree".to_string());
+
+    if detail.diff.lines.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                format!("Path: {selected}"),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("No diff available for the current selection."),
+        ];
+    }
+
+    let header_lines = 2;
+    let visible_capacity = viewport_lines.saturating_sub(header_lines).max(1);
+    let max_scroll = detail.diff.lines.len().saturating_sub(visible_capacity);
+    let scroll = scroll.min(max_scroll);
+    let end = (scroll + visible_capacity).min(detail.diff.lines.len());
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            format!("Path: {selected}"),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!(
+            "Hunks: {}  Lines: {}  Showing {}-{}",
+            detail.diff.hunk_count,
+            detail.diff.lines.len(),
+            scroll + 1,
+            end
+        )),
+    ];
+
+    lines.extend(
+        detail.diff.lines[scroll..end]
+            .iter()
+            .map(|line| render_diff_line(line.kind, &line.content, theme)),
+    );
+    lines
+}
+
+fn render_diff_line(kind: DiffLineKind, content: &str, theme: Theme) -> Line<'static> {
+    let style = match kind {
+        DiffLineKind::Meta => Style::default().fg(theme.muted),
+        DiffLineKind::HunkHeader => Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+        DiffLineKind::Addition => Style::default().fg(theme.success),
+        DiffLineKind::Removal => Style::default().fg(theme.danger),
+        DiffLineKind::Context => Style::default().fg(theme.foreground),
+    };
+    Line::from(Span::styled(content.to_string(), style))
 }
 
 fn operation_progress_label(progress: &super_lazygit_core::OperationProgress) -> String {
@@ -832,13 +939,19 @@ fn default_status_text(state: &AppState) -> String {
             PaneId::RepoStaged => {
                 "Staged focus; commit and amend flows attach to this pane.".to_string()
             }
-            PaneId::RepoDetail => format!(
-                "{} detail focus; deeper interactions are staged behind the shell bead.",
-                state
-                    .repo_mode
-                    .as_ref()
-                    .map(|repo_mode| repo_subview_label(repo_mode.active_subview))
-                    .unwrap_or("Repo")
+            PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
+                || "Repository shell ready.".to_string(),
+                |repo_mode| {
+                    if repo_mode.active_subview == RepoSubview::Status {
+                        "Status diff focus; j/k scroll through hunks and keep orientation here."
+                            .to_string()
+                    } else {
+                        format!(
+                            "{} detail focus; deeper interactions are staged behind the shell bead.",
+                            repo_subview_label(repo_mode.active_subview)
+                        )
+                    }
+                },
             ),
             _ => "Repository shell ready.".to_string(),
         },
@@ -853,13 +966,18 @@ fn repo_help_text(state: &AppState) -> String {
         PaneId::RepoStaged => {
             "Staged pane  h/l change pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
-        PaneId::RepoDetail => format!(
-            "{} detail pane  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
-            state
-                .repo_mode
-                .as_ref()
-                .map(|repo_mode| repo_subview_label(repo_mode.active_subview))
-                .unwrap_or("Repo")
+        PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
+            || "Repository shell".to_string(),
+            |repo_mode| {
+                if repo_mode.active_subview == RepoSubview::Status {
+                    "Status diff pane  j/k scroll diff  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else {
+                    format!(
+                        "{} detail pane  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
+                        repo_subview_label(repo_mode.active_subview)
+                    )
+                }
+            },
         ),
         _ => "Repository shell".to_string(),
     }
@@ -893,8 +1011,56 @@ fn buffer_to_string(buffer: &Buffer) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
-    use super_lazygit_core::{ModalKind, RepoModeState, StatusMessage, WorkspaceState};
+    use super_lazygit_core::{
+        DiffLine, DiffLineKind, DiffModel, FileStatus, FileStatusKind, ModalKind, RepoModeState,
+        StatusMessage, WorkspaceState,
+    };
+
+    fn sample_repo_detail() -> RepoDetail {
+        RepoDetail {
+            file_tree: vec![
+                FileStatus {
+                    path: PathBuf::from("src/lib.rs"),
+                    kind: FileStatusKind::Modified,
+                },
+                FileStatus {
+                    path: PathBuf::from("README.md"),
+                    kind: FileStatusKind::Untracked,
+                },
+            ],
+            diff: DiffModel {
+                selected_path: Some(PathBuf::from("src/lib.rs")),
+                lines: vec![
+                    DiffLine {
+                        kind: DiffLineKind::Meta,
+                        content: "diff --git a/src/lib.rs b/src/lib.rs".to_string(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Meta,
+                        content: "index 1111111..2222222 100644".to_string(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::HunkHeader,
+                        content: "@@ -1,1 +1,2 @@".to_string(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Removal,
+                        content: "-old line".to_string(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Addition,
+                        content: "+new line".to_string(),
+                    },
+                ],
+                hunk_count: 1,
+            },
+            branches: vec![Default::default(), Default::default()],
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn render_workspace_shell_shows_status_and_help() {
@@ -1069,6 +1235,69 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_status_detail_scrolls_diff_and_preserves_orientation() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 8);
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_scroll),
+            Some(1)
+        );
+
+        let repo_mode = app.state().repo_mode.as_ref().expect("repo mode");
+        let visible_lines = repo_diff_lines(
+            repo_mode.detail.as_ref(),
+            repo_mode.diff_scroll,
+            3,
+            Theme::from_config(&AppConfig::default()),
+        );
+        let rendered_lines = visible_lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert!(rendered_lines.contains(&"Path: src/lib.rs".to_string()));
+        assert!(rendered_lines.contains(&"index 1111111..2222222 100644".to_string()));
+        assert!(!rendered_lines
+            .iter()
+            .any(|line| line == "diff --git a/src/lib.rs b/src/lib.rs"));
+
+        let up = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "k".to_string(),
+        })));
+        assert_eq!(
+            up.state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_scroll),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn diagnostics_snapshot_includes_render_samples() {
         let mut app = TuiApp::new(AppState::default(), AppConfig::default());
 
@@ -1094,11 +1323,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: RepoId::new("repo-1"),
                 active_subview: RepoSubview::Status,
-                detail: Some(RepoDetail {
-                    file_tree: vec![Default::default()],
-                    branches: vec![Default::default(), Default::default()],
-                    ..Default::default()
-                }),
+                detail: Some(sample_repo_detail()),
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..Default::default()
@@ -1126,7 +1351,10 @@ mod tests {
         assert!(rendered.contains("Working tree"));
         assert!(rendered.contains("Staged changes"));
         assert!(rendered.contains("Detail: Status"));
-        assert!(rendered.contains("Modified: 3"));
+        assert!(rendered.contains("Path: src/lib.rs"));
+        assert!(rendered.contains("Hunks: 1"));
+        assert!(rendered.contains("@@ -1,1 +1,2 @@"));
+        assert!(rendered.contains("+new line"));
         assert!(rendered.contains("Repository shell"));
     }
 }

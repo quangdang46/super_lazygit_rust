@@ -7,10 +7,10 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    BranchItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffModel,
-    FileStatus, FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, ReflogItem,
-    RemoteSummary, RepoDetail, RepoId, RepoSummary, StashItem, Timestamp, WatcherFreshness,
-    WorktreeItem,
+    BranchItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffLine,
+    DiffLineKind, DiffModel, FileStatus, FileStatusKind, GitCommand, GitCommandRequest, HeadKind,
+    MergeState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, StashItem, Timestamp,
+    WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -501,12 +501,11 @@ impl GitBackend for CliGitBackend {
     fn read_repo_detail(&self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
         let repo_path = repo_path(&request.repo_id)?;
         let status = read_status_snapshot(&repo_path)?;
+        let diff = read_diff_model(&repo_path, None, status.first_path.clone())?;
 
         Ok(RepoDetail {
             file_tree: status.file_tree,
-            diff: DiffModel {
-                selected_path: status.first_path,
-            },
+            diff,
             branches: read_branches(&repo_path),
             commits: read_commits(&repo_path),
             stashes: read_stashes(&repo_path),
@@ -524,8 +523,11 @@ impl GitBackend for CliGitBackend {
             Some(path) => Some(path),
             None => read_status_snapshot(&repo_path)?.first_path,
         };
-
-        Ok(DiffModel { selected_path })
+        read_diff_model(
+            &repo_path,
+            request.comparison_target.as_ref(),
+            selected_path,
+        )
     }
 
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
@@ -921,6 +923,76 @@ fn parse_patch_range(range: &str) -> GitResult<(u32, u32)> {
         message: format!("invalid patch range length `{lines}`: {error}"),
     })?;
     Ok((start, lines))
+}
+
+fn read_diff_model(
+    repo_path: &Path,
+    comparison_target: Option<&ComparisonTarget>,
+    selected_path: Option<PathBuf>,
+) -> GitResult<DiffModel> {
+    let diff_text = read_diff_text(repo_path, comparison_target, selected_path.as_deref())?;
+    Ok(parse_diff_model(selected_path, &diff_text))
+}
+
+fn read_diff_text(
+    repo_path: &Path,
+    comparison_target: Option<&ComparisonTarget>,
+    selected_path: Option<&Path>,
+) -> GitResult<String> {
+    let mut args = vec![
+        "diff".to_string(),
+        "--no-ext-diff".to_string(),
+        "--binary".to_string(),
+        "--unified=3".to_string(),
+    ];
+
+    if let Some(target) = comparison_target {
+        args.push(match target {
+            ComparisonTarget::Branch(branch) | ComparisonTarget::Commit(branch) => branch.clone(),
+        });
+    }
+
+    if let Some(path) = selected_path {
+        args.push("--".to_string());
+        args.push(path.display().to_string());
+    }
+
+    git_stdout(repo_path, args)
+}
+
+fn parse_diff_model(selected_path: Option<PathBuf>, diff: &str) -> DiffModel {
+    let mut lines = Vec::new();
+    let mut hunk_count = 0;
+
+    for raw_line in diff.lines() {
+        let kind = if raw_line.starts_with("@@") {
+            hunk_count += 1;
+            DiffLineKind::HunkHeader
+        } else if raw_line.starts_with("diff --git")
+            || raw_line.starts_with("index ")
+            || raw_line.starts_with("--- ")
+            || raw_line.starts_with("+++ ")
+        {
+            DiffLineKind::Meta
+        } else if raw_line.starts_with('+') && !raw_line.starts_with("+++") {
+            DiffLineKind::Addition
+        } else if raw_line.starts_with('-') && !raw_line.starts_with("---") {
+            DiffLineKind::Removal
+        } else {
+            DiffLineKind::Context
+        };
+
+        lines.push(DiffLine {
+            kind,
+            content: raw_line.to_string(),
+        });
+    }
+
+    DiffModel {
+        selected_path,
+        lines,
+        hunk_count,
+    }
 }
 
 fn git<I, S>(repo_path: &Path, args: I) -> GitResult<()>
@@ -1390,6 +1462,11 @@ mod tests {
         fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel> {
             Ok(DiffModel {
                 selected_path: request.selected_path,
+                lines: vec![DiffLine {
+                    kind: DiffLineKind::HunkHeader,
+                    content: "@@ -1,1 +1,1 @@".to_string(),
+                }],
+                hunk_count: 1,
             })
         }
 
@@ -1703,6 +1780,13 @@ mod tests {
             .iter()
             .any(|item| item.branch.as_deref() == Some("feature")));
         assert!(diff.selected_path.is_none());
+        assert_eq!(
+            diff.hunk_count,
+            diff.lines
+                .iter()
+                .filter(|line| line.kind == DiffLineKind::HunkHeader)
+                .count()
+        );
     }
 
     #[test]

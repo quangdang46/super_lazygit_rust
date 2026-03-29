@@ -8,6 +8,8 @@ pub enum Action {
     LeaveRepoMode,
     SelectNextRepo,
     SelectPreviousRepo,
+    ScrollRepoDetailUp,
+    ScrollRepoDetailDown,
     SetFocusedPane(crate::state::PaneId),
     OpenModal { kind: ModalKind, title: String },
     CloseTopModal,

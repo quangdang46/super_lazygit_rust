@@ -226,6 +226,7 @@ pub enum WatcherHealth {
 pub struct RepoModeState {
     pub current_repo_id: RepoId,
     pub active_subview: RepoSubview,
+    pub diff_scroll: usize,
     pub status_view: ListViewState,
     pub branches_view: ListViewState,
     pub commits_view: ListViewState,
@@ -242,6 +243,7 @@ impl RepoModeState {
         Self {
             current_repo_id,
             active_subview: RepoSubview::default(),
+            diff_scroll: 0,
             status_view: ListViewState::default(),
             branches_view: ListViewState::default(),
             commits_view: ListViewState::default(),
@@ -362,6 +364,24 @@ pub enum FileStatusKind {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffModel {
     pub selected_path: Option<PathBuf>,
+    pub lines: Vec<DiffLine>,
+    pub hunk_count: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffLineKind {
+    #[default]
+    Context,
+    Meta,
+    HunkHeader,
+    Addition,
+    Removal,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,6 +536,7 @@ mod tests {
 
         assert_eq!(state.current_repo_id, RepoId::new("repo-a"));
         assert_eq!(state.active_subview, RepoSubview::Status);
+        assert_eq!(state.diff_scroll, 0);
         assert_eq!(state.operation_progress, OperationProgress::Idle);
         assert!(state.detail.is_none());
     }
