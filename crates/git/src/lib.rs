@@ -326,6 +326,7 @@ pub struct RepoDetailRequest {
 pub struct DiffRequest {
     pub repo_id: RepoId,
     pub comparison_target: Option<ComparisonTarget>,
+    pub compare_with: Option<ComparisonTarget>,
     pub selected_path: Option<PathBuf>,
     pub diff_presentation: DiffPresentation,
 }
@@ -495,14 +496,11 @@ impl GitBackend for CliGitBackend {
         let diff = read_diff_model(
             &repo_path,
             None,
+            None,
             request.selected_path.or(status.first_path.clone()),
             request.diff_presentation,
         )?;
         let commits = read_commits(&repo_path);
-        let comparison_target = commits
-            .first()
-            .map(|commit| ComparisonTarget::Commit(commit.oid.clone()));
-
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
@@ -513,7 +511,6 @@ impl GitBackend for CliGitBackend {
             worktrees: read_worktrees(&repo_path),
             commit_input: String::new(),
             merge_state: read_merge_state(&repo_path),
-            comparison_target,
         })
     }
 
@@ -526,6 +523,7 @@ impl GitBackend for CliGitBackend {
         read_diff_model(
             &repo_path,
             request.comparison_target.as_ref(),
+            request.compare_with.as_ref(),
             selected_path,
             request.diff_presentation,
         )
@@ -1078,12 +1076,14 @@ fn parse_patch_range(range: &str) -> GitResult<(u32, u32)> {
 fn read_diff_model(
     repo_path: &Path,
     comparison_target: Option<&ComparisonTarget>,
+    compare_with: Option<&ComparisonTarget>,
     selected_path: Option<PathBuf>,
     diff_presentation: DiffPresentation,
 ) -> GitResult<DiffModel> {
     let diff_text = read_diff_text(
         repo_path,
         comparison_target,
+        compare_with,
         selected_path.as_deref(),
         diff_presentation,
     )?;
@@ -1097,6 +1097,7 @@ fn read_diff_model(
 fn read_diff_text(
     repo_path: &Path,
     comparison_target: Option<&ComparisonTarget>,
+    compare_with: Option<&ComparisonTarget>,
     selected_path: Option<&Path>,
     diff_presentation: DiffPresentation,
 ) -> GitResult<String> {
@@ -1111,6 +1112,13 @@ fn read_diff_text(
         args.push(match target {
             ComparisonTarget::Branch(branch) | ComparisonTarget::Commit(branch) => branch.clone(),
         });
+        if let Some(compare_with) = compare_with {
+            args.push(match compare_with {
+                ComparisonTarget::Branch(branch) | ComparisonTarget::Commit(branch) => {
+                    branch.clone()
+                }
+            });
+        }
     } else if matches!(diff_presentation, DiffPresentation::Staged) {
         args.push("--cached".to_string());
     }
@@ -2397,10 +2405,7 @@ mod tests {
 
         assert_eq!(detail.commits[0].summary, "add lib");
         assert_eq!(detail.commits[1].summary, "second");
-        assert_eq!(
-            detail.comparison_target,
-            Some(ComparisonTarget::Commit(detail.commits[0].oid.clone()))
-        );
+        assert_eq!(detail.commits[0].short_oid.len(), 7);
     }
 
     #[test]
@@ -2436,6 +2441,35 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_reads_explicit_commit_comparison_diff() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let base = repo.rev_parse("HEAD~1").expect("base commit");
+        let target = repo.rev_parse("HEAD").expect("target commit");
+
+        let diff = backend
+            .read_diff(DiffRequest {
+                repo_id,
+                comparison_target: Some(ComparisonTarget::Commit(base)),
+                compare_with: Some(ComparisonTarget::Commit(target)),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Comparison,
+            })
+            .expect("comparison diff should load");
+
+        assert_eq!(diff.presentation, DiffPresentation::Comparison);
+        assert!(diff
+            .lines
+            .iter()
+            .any(|line| line.content.contains("src/lib.rs")));
+        assert!(diff
+            .lines
+            .iter()
+            .any(|line| line.content.contains("+pub fn answer() -> u32 {")));
+    }
+
+    #[test]
     fn cli_backend_marks_detached_head() {
         let repo = detached_head_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -2465,6 +2499,7 @@ mod tests {
             .read_diff(DiffRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 comparison_target: None,
+                compare_with: None,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
             })

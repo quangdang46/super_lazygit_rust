@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{DiffPresentation, JobId, RepoId, SelectedHunk};
+use crate::state::{ComparisonTarget, DiffPresentation, JobId, RepoId, SelectedHunk};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
@@ -19,6 +19,13 @@ pub enum Effect {
     },
     LoadRepoDetail {
         repo_id: RepoId,
+        selected_path: Option<PathBuf>,
+        diff_presentation: DiffPresentation,
+    },
+    LoadRepoDiff {
+        repo_id: RepoId,
+        comparison_target: Option<ComparisonTarget>,
+        compare_with: Option<ComparisonTarget>,
         selected_path: Option<PathBuf>,
         diff_presentation: DiffPresentation,
     },

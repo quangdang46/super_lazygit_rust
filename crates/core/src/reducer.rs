@@ -206,6 +206,12 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::ToggleComparisonSelection => {
+            toggle_comparison_selection(state, effects);
+        }
+        Action::ClearComparison => {
+            clear_comparison(state, effects);
+        }
         Action::ScrollRepoDetailUp => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.diff_scroll = repo_mode.diff_scroll.saturating_sub(1);
@@ -550,10 +556,14 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::SwitchRepoSubview(subview) => {
+            let mut repo_detail_reload = None;
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.active_subview = subview;
                 repo_mode.diff_scroll = 0;
-                if !matches!(subview, crate::state::RepoSubview::Status) {
+                if !matches!(
+                    subview,
+                    crate::state::RepoSubview::Status | crate::state::RepoSubview::Compare
+                ) {
                     close_commit_box(repo_mode);
                 }
                 if matches!(subview, crate::state::RepoSubview::Branches) {
@@ -571,8 +581,23 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 if matches!(subview, crate::state::RepoSubview::Worktrees) {
                     sync_worktree_selection(repo_mode);
                 }
+                if matches!(subview, crate::state::RepoSubview::Compare)
+                    && repo_mode.comparison_base.is_some()
+                    && repo_mode.comparison_target.is_some()
+                {
+                    effects.push(load_comparison_diff_effect(repo_mode));
+                } else if matches!(subview, crate::state::RepoSubview::Status)
+                    && repo_mode.detail.as_ref().is_some_and(|detail| {
+                        detail.diff.presentation == DiffPresentation::Comparison
+                    })
+                {
+                    repo_detail_reload = Some(repo_mode.current_repo_id.clone());
+                }
                 state.focused_pane = PaneId::RepoDetail;
                 effects.push(Effect::ScheduleRender);
+            }
+            if let Some(repo_id) = repo_detail_reload {
+                effects.push(load_repo_detail_effect(state, repo_id));
             }
         }
         Action::ApplyWorkspaceScan(workspace) => {
@@ -691,8 +716,47 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_worktree_selection(repo_mode);
                     sync_diff_selection(repo_mode);
                     repo_mode.operation_progress = OperationProgress::Idle;
+                    if repo_mode.active_subview == crate::state::RepoSubview::Compare
+                        && repo_mode.comparison_base.is_some()
+                        && repo_mode.comparison_target.is_some()
+                    {
+                        effects.push(load_comparison_diff_effect(repo_mode));
+                    }
                 }
             }
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::RepoDiffLoaded { repo_id, diff } => {
+            if let Some(repo_mode) = state
+                .repo_mode
+                .as_mut()
+                .filter(|repo_mode| repo_mode.current_repo_id == repo_id)
+            {
+                if let Some(detail) = repo_mode.detail.as_mut() {
+                    detail.diff = diff;
+                    sync_diff_selection(repo_mode);
+                    repo_mode.diff_scroll = 0;
+                    repo_mode.operation_progress = OperationProgress::Idle;
+                }
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::RepoDiffLoadFailed { repo_id, error } => {
+            if let Some(repo_mode) = state
+                .repo_mode
+                .as_mut()
+                .filter(|repo_mode| repo_mode.current_repo_id == repo_id)
+            {
+                repo_mode.operation_progress = OperationProgress::Failed {
+                    summary: error.clone(),
+                };
+            }
+            state.notifications.push_back(Notification {
+                id: 0,
+                level: MessageLevel::Error,
+                text: error,
+                expires_at: None,
+            });
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::GitOperationStarted {
@@ -888,24 +952,20 @@ fn step_status_selection(repo_mode: &mut RepoModeState, focused_pane: PaneId, st
 }
 
 fn step_commit_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
-    let Some(detail) = repo_mode.detail.as_mut() else {
+    let Some(detail) = repo_mode.detail.as_ref() else {
         return false;
     };
 
-    let Some(selected) = repo_mode
+    let before = repo_mode.commits_view.selected_index;
+    let after = repo_mode
         .commits_view
-        .select_with_step(detail.commits.len(), step)
-    else {
-        detail.comparison_target = None;
-        return false;
-    };
-
-    repo_mode.diff_scroll = 0;
-    detail.comparison_target = detail
-        .commits
-        .get(selected)
-        .map(|commit| ComparisonTarget::Commit(commit.oid.clone()));
-    true
+        .select_with_step(detail.commits.len(), step);
+    if after.is_some() && after != before {
+        repo_mode.diff_scroll = 0;
+        true
+    } else {
+        false
+    }
 }
 
 fn step_diff_hunk_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
@@ -1226,20 +1286,14 @@ fn sync_branch_selection(repo_mode: &mut RepoModeState) {
 }
 
 fn sync_commit_selection(repo_mode: &mut RepoModeState) {
-    let Some(detail) = repo_mode.detail.as_mut() else {
+    let Some(detail) = repo_mode.detail.as_ref() else {
         repo_mode.commits_view.selected_index = None;
         return;
     };
 
-    let selected = repo_mode
+    repo_mode
         .commits_view
         .ensure_selection(detail.commits.len());
-    detail.comparison_target = selected.and_then(|index| {
-        detail
-            .commits
-            .get(index)
-            .map(|commit| ComparisonTarget::Commit(commit.oid.clone()))
-    });
 }
 
 fn sync_stash_selection(repo_mode: &mut RepoModeState) {
@@ -1361,6 +1415,26 @@ fn selected_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::Bran
     detail.branches.get(selected_index)
 }
 
+fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::CommitItem> {
+    let detail = repo_mode.detail.as_ref()?;
+    let selected_index = repo_mode
+        .commits_view
+        .selected_index
+        .filter(|index| *index < detail.commits.len())
+        .unwrap_or(0);
+    detail.commits.get(selected_index)
+}
+
+fn selected_comparison_target(repo_mode: &RepoModeState) -> Option<ComparisonTarget> {
+    match repo_mode.active_subview {
+        crate::state::RepoSubview::Branches => selected_branch_item(repo_mode)
+            .map(|branch| ComparisonTarget::Branch(branch.name.clone())),
+        crate::state::RepoSubview::Commits => selected_commit_item(repo_mode)
+            .map(|commit| ComparisonTarget::Commit(commit.oid.clone())),
+        _ => None,
+    }
+}
+
 fn selected_stash_item(repo_mode: &RepoModeState) -> Option<&crate::state::StashItem> {
     let detail = repo_mode.detail.as_ref()?;
     let selected_index = repo_mode
@@ -1440,6 +1514,16 @@ fn diff_presentation_for_pane(pane: PaneId) -> DiffPresentation {
     }
 }
 
+fn load_comparison_diff_effect(repo_mode: &RepoModeState) -> Effect {
+    Effect::LoadRepoDiff {
+        repo_id: repo_mode.current_repo_id.clone(),
+        comparison_target: repo_mode.comparison_base.clone(),
+        compare_with: repo_mode.comparison_target.clone(),
+        selected_path: None,
+        diff_presentation: DiffPresentation::Comparison,
+    }
+}
+
 fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> Effect {
     let (selected_path, diff_presentation) = state
         .repo_mode
@@ -1450,11 +1534,83 @@ fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> E
                 .as_ref()
                 .map(|detail| (detail.diff.selected_path.clone(), detail.diff.presentation))
         })
+        .map(|(selected_path, diff_presentation)| {
+            if diff_presentation == DiffPresentation::Comparison {
+                (None, DiffPresentation::Unstaged)
+            } else {
+                (selected_path, diff_presentation)
+            }
+        })
         .unwrap_or((None, DiffPresentation::Unstaged));
     Effect::LoadRepoDetail {
         repo_id,
         selected_path,
         diff_presentation,
+    }
+}
+
+fn toggle_comparison_selection(state: &mut AppState, effects: &mut Vec<Effect>) {
+    let Some(repo_mode) = state.repo_mode.as_mut() else {
+        return;
+    };
+    let Some(target) = selected_comparison_target(repo_mode) else {
+        return;
+    };
+
+    let source = repo_mode.active_subview;
+    if repo_mode.comparison_source != Some(source) {
+        repo_mode.comparison_base = None;
+        repo_mode.comparison_target = None;
+    }
+
+    match repo_mode.comparison_base.clone() {
+        None => {
+            repo_mode.comparison_base = Some(target);
+            repo_mode.comparison_target = None;
+            repo_mode.comparison_source = Some(source);
+            effects.push(Effect::ScheduleRender);
+        }
+        Some(base) if base == target => {
+            effects.push(Effect::ScheduleRender);
+        }
+        Some(_) => {
+            repo_mode.comparison_base = repo_mode.comparison_base.clone().or(Some(target.clone()));
+            repo_mode.comparison_target = Some(target);
+            repo_mode.comparison_source = Some(source);
+            repo_mode.active_subview = crate::state::RepoSubview::Compare;
+            repo_mode.diff_scroll = 0;
+            close_commit_box(repo_mode);
+            state.focused_pane = PaneId::RepoDetail;
+            effects.push(load_comparison_diff_effect(repo_mode));
+            effects.push(Effect::ScheduleRender);
+        }
+    }
+}
+
+fn clear_comparison(state: &mut AppState, effects: &mut Vec<Effect>) {
+    let mut repo_detail_reload = None;
+    if let Some(repo_mode) = state.repo_mode.as_mut() {
+        if repo_mode.active_subview == crate::state::RepoSubview::Compare {
+            repo_mode.active_subview = repo_mode
+                .comparison_source
+                .unwrap_or(crate::state::RepoSubview::Commits);
+        }
+        if repo_mode
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.diff.presentation == DiffPresentation::Comparison)
+        {
+            repo_detail_reload = Some(repo_mode.current_repo_id.clone());
+        }
+        repo_mode.comparison_base = None;
+        repo_mode.comparison_target = None;
+        repo_mode.comparison_source = None;
+        repo_mode.diff_scroll = 0;
+        state.focused_pane = PaneId::RepoDetail;
+        effects.push(Effect::ScheduleRender);
+    }
+    if let Some(repo_id) = repo_detail_reload {
+        effects.push(load_repo_detail_effect(state, repo_id));
     }
 }
 
@@ -1622,11 +1778,11 @@ mod tests {
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
-        CommitItem, ComparisonTarget, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
-        DiffModel, DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId,
-        MessageLevel, ModalKind, PaneId, ReflogItem, RepoDetail, RepoId, RepoModeState,
-        RepoSubview, RepoSummary, ScanStatus, SelectedHunk, StashItem, Timestamp, WatcherHealth,
-        WorkspaceFilterMode, WorktreeItem,
+        CommitItem, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind, DiffModel,
+        DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId, MessageLevel,
+        ModalKind, PaneId, ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
+        ScanStatus, SelectedHunk, StashItem, Timestamp, WatcherHealth, WorkspaceFilterMode,
+        WorktreeItem,
     };
 
     use super::reduce;
@@ -2847,9 +3003,8 @@ mod tests {
             down.state
                 .repo_mode
                 .as_ref()
-                .and_then(|repo_mode| repo_mode.detail.as_ref())
-                .and_then(|detail| detail.comparison_target.clone()),
-            Some(ComparisonTarget::Commit("1234567890abcdef".to_string()))
+                .and_then(|repo_mode| repo_mode.comparison_target.clone()),
+            None
         );
 
         let up = reduce(down.state, Event::Action(Action::SelectPreviousCommit));
@@ -2864,9 +3019,8 @@ mod tests {
             up.state
                 .repo_mode
                 .as_ref()
-                .and_then(|repo_mode| repo_mode.detail.as_ref())
-                .and_then(|detail| detail.comparison_target.clone()),
-            Some(ComparisonTarget::Commit("abcdef1234567890".to_string()))
+                .and_then(|repo_mode| repo_mode.comparison_target.clone()),
+            None
         );
     }
 
@@ -2950,6 +3104,211 @@ mod tests {
                 .as_ref()
                 .map(|repo_mode| repo_mode.diff_scroll),
             Some(0)
+        );
+    }
+
+    #[test]
+    fn toggle_comparison_selection_marks_base_from_commits() {
+        let detail = RepoDetail {
+            commits: vec![
+                CommitItem {
+                    oid: "abcdef1234567890".to_string(),
+                    short_oid: "abcdef1".to_string(),
+                    summary: "add lib".to_string(),
+                    ..CommitItem::default()
+                },
+                CommitItem {
+                    oid: "1234567890abcdef".to_string(),
+                    short_oid: "1234567".to_string(),
+                    summary: "second".to_string(),
+                    ..CommitItem::default()
+                },
+            ],
+            ..RepoDetail::default()
+        };
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ToggleComparisonSelection));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_base.clone()),
+            Some(crate::state::ComparisonTarget::Commit(
+                "abcdef1234567890".to_string()
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_target.clone()),
+            None
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_source),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn toggle_comparison_selection_on_second_commit_opens_compare_diff() {
+        let detail = RepoDetail {
+            commits: vec![
+                CommitItem {
+                    oid: "abcdef1234567890".to_string(),
+                    short_oid: "abcdef1".to_string(),
+                    summary: "add lib".to_string(),
+                    ..CommitItem::default()
+                },
+                CommitItem {
+                    oid: "1234567890abcdef".to_string(),
+                    short_oid: "1234567".to_string(),
+                    summary: "second".to_string(),
+                    ..CommitItem::default()
+                },
+            ],
+            ..RepoDetail::default()
+        };
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                comparison_base: Some(crate::state::ComparisonTarget::Commit(
+                    "abcdef1234567890".to_string(),
+                )),
+                comparison_source: Some(RepoSubview::Commits),
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ToggleComparisonSelection));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Compare)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_target.clone()),
+            Some(crate::state::ComparisonTarget::Commit(
+                "1234567890abcdef".to_string()
+            ))
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDiff {
+                    repo_id: RepoId::new("repo-1"),
+                    comparison_target: Some(crate::state::ComparisonTarget::Commit(
+                        "abcdef1234567890".to_string(),
+                    )),
+                    compare_with: Some(crate::state::ComparisonTarget::Commit(
+                        "1234567890abcdef".to_string(),
+                    )),
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Comparison,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn clear_comparison_returns_to_history_and_restores_normal_detail_loading() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Compare,
+                comparison_base: Some(crate::state::ComparisonTarget::Commit(
+                    "abcdef1234567890".to_string(),
+                )),
+                comparison_target: Some(crate::state::ComparisonTarget::Commit(
+                    "1234567890abcdef".to_string(),
+                )),
+                comparison_source: Some(RepoSubview::Commits),
+                detail: Some(RepoDetail {
+                    diff: DiffModel {
+                        presentation: DiffPresentation::Comparison,
+                        ..DiffModel::default()
+                    },
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ClearComparison));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_base.clone()),
+            None
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_target.clone()),
+            None
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::ScheduleRender,
+                Effect::LoadRepoDetail {
+                    repo_id: RepoId::new("repo-1"),
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
+            ]
         );
     }
 
@@ -3458,9 +3817,8 @@ mod tests {
                 .state
                 .repo_mode
                 .as_ref()
-                .and_then(|repo_mode| repo_mode.detail.as_ref())
-                .and_then(|detail| detail.comparison_target.clone()),
-            Some(ComparisonTarget::Commit("abcdef1234567890".to_string()))
+                .and_then(|repo_mode| repo_mode.comparison_target.clone()),
+            None
         );
         assert_eq!(
             result

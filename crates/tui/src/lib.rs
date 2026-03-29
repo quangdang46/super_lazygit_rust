@@ -319,6 +319,7 @@ impl TuiApp {
                     RepoSubview::Status
                         | RepoSubview::Branches
                         | RepoSubview::Commits
+                        | RepoSubview::Compare
                         | RepoSubview::Stash
                         | RepoSubview::Reflog
                         | RepoSubview::Worktrees
@@ -369,6 +370,16 @@ impl TuiApp {
                             });
                         }
                     }
+                    (RepoSubview::Branches | RepoSubview::Commits, _, "v") => {
+                        return Some(Action::ToggleComparisonSelection);
+                    }
+                    (
+                        RepoSubview::Branches | RepoSubview::Commits | RepoSubview::Compare,
+                        _,
+                        "x",
+                    ) if repo_mode.comparison_base.is_some() => {
+                        return Some(Action::ClearComparison);
+                    }
                     (RepoSubview::Status, _, "j") => {
                         return Some(Action::SelectNextDiffHunk);
                     }
@@ -397,6 +408,12 @@ impl TuiApp {
                     }
                     (RepoSubview::Commits, _, "k" | "up") => {
                         return Some(Action::SelectPreviousCommit);
+                    }
+                    (RepoSubview::Compare, _, "j" | "down") => {
+                        return Some(Action::ScrollRepoDetailDown);
+                    }
+                    (RepoSubview::Compare, _, "k" | "up") => {
+                        return Some(Action::ScrollRepoDetailUp);
                     }
                     (RepoSubview::Stash, _, "j" | "down") => {
                         return Some(Action::SelectNextStash);
@@ -439,9 +456,10 @@ impl TuiApp {
             "1" => Some(Action::SwitchRepoSubview(RepoSubview::Status)),
             "2" => Some(Action::SwitchRepoSubview(RepoSubview::Branches)),
             "3" => Some(Action::SwitchRepoSubview(RepoSubview::Commits)),
-            "4" => Some(Action::SwitchRepoSubview(RepoSubview::Stash)),
-            "5" => Some(Action::SwitchRepoSubview(RepoSubview::Reflog)),
-            "6" => Some(Action::SwitchRepoSubview(RepoSubview::Worktrees)),
+            "4" => Some(Action::SwitchRepoSubview(RepoSubview::Compare)),
+            "5" => Some(Action::SwitchRepoSubview(RepoSubview::Stash)),
+            "6" => Some(Action::SwitchRepoSubview(RepoSubview::Reflog)),
+            "7" => Some(Action::SwitchRepoSubview(RepoSubview::Worktrees)),
             "r" => Some(Action::RefreshSelectedRepo),
             "f" => Some(Action::FetchSelectedRepo),
             "p" => Some(Action::PullCurrentBranch),
@@ -756,12 +774,26 @@ impl TuiApp {
                 RepoSubview::Branches => repo_branch_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.branches_view.selected_index,
+                    repo_mode.comparison_base.as_ref(),
+                    repo_mode.comparison_target.as_ref(),
+                    repo_mode.comparison_source,
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
                 RepoSubview::Commits => repo_commit_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.commits_view.selected_index,
+                    repo_mode.comparison_base.as_ref(),
+                    repo_mode.comparison_target.as_ref(),
+                    repo_mode.comparison_source,
+                    usize::from(area.height.saturating_sub(2)),
+                    theme,
+                ),
+                RepoSubview::Compare => repo_compare_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.comparison_base.as_ref(),
+                    repo_mode.comparison_target.as_ref(),
+                    repo_mode.diff_scroll,
                     usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
@@ -1433,6 +1465,9 @@ fn workspace_empty_preview_lines(state: &AppState) -> Vec<Line<'static>> {
 fn repo_branch_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
+    comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
+    comparison_source: Option<RepoSubview>,
     is_focused: bool,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -1478,7 +1513,13 @@ fn repo_branch_lines(
             "Upstream: {}",
             selected_branch.upstream.as_deref().unwrap_or("-")
         )),
-        Line::from("Enter checks out. c creates. R renames. d deletes. u sets upstream."),
+        Line::from(comparison_status_line(
+            RepoSubview::Branches,
+            comparison_base,
+            comparison_target,
+            comparison_source,
+        )),
+        Line::from("Enter checks out. v marks compare base/target. c creates. R renames. d deletes. u sets upstream."),
         Line::from(""),
     ];
 
@@ -1732,6 +1773,9 @@ fn repo_worktree_lines(
 fn repo_commit_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
+    comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
+    comparison_source: Option<RepoSubview>,
     viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -1763,14 +1807,6 @@ fn repo_commit_lines(
         .filter(|index| *index < detail.commits.len())
         .unwrap_or(0);
     let selected = &detail.commits[selected_index];
-    let compare_target = detail
-        .comparison_target
-        .as_ref()
-        .map(|target| match target {
-            super_lazygit_core::ComparisonTarget::Branch(name)
-            | super_lazygit_core::ComparisonTarget::Commit(name) => name.as_str(),
-        })
-        .unwrap_or("-");
 
     let mut lines = vec![
         Line::from(vec![Span::styled(
@@ -1785,7 +1821,12 @@ fn repo_commit_lines(
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )]),
-        Line::from(format!("Compare target: {compare_target}")),
+        Line::from(comparison_status_line(
+            RepoSubview::Commits,
+            comparison_base,
+            comparison_target,
+            comparison_source,
+        )),
         Line::from("History:"),
     ];
 
@@ -1840,6 +1881,35 @@ fn repo_commit_lines(
         );
     }
 
+    lines.truncate(viewport_lines.max(1));
+    lines
+}
+
+fn repo_compare_lines(
+    detail: Option<&RepoDetail>,
+    comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
+    comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
+    scroll: usize,
+    viewport_lines: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let base = comparison_base
+        .map(comparison_target_label)
+        .unwrap_or_else(|| "-".to_string());
+    let target = comparison_target
+        .map(comparison_target_label)
+        .unwrap_or_else(|| "-".to_string());
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            format!("Comparing {base} -> {target}"),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from("x clears compare and returns to history."),
+    ];
+    let remaining = viewport_lines.saturating_sub(lines.len()).max(1);
+    lines.extend(repo_diff_lines(detail, scroll, remaining, theme));
     lines.truncate(viewport_lines.max(1));
     lines
 }
@@ -1971,6 +2041,37 @@ fn diff_presentation_label(presentation: DiffPresentation) -> &'static str {
         DiffPresentation::Unstaged => "unstaged",
         DiffPresentation::Staged => "staged",
         DiffPresentation::Comparison => "comparison",
+    }
+}
+
+fn comparison_target_label(target: &super_lazygit_core::ComparisonTarget) -> String {
+    match target {
+        super_lazygit_core::ComparisonTarget::Branch(name)
+        | super_lazygit_core::ComparisonTarget::Commit(name) => name.clone(),
+    }
+}
+
+fn comparison_status_line(
+    subview: RepoSubview,
+    comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
+    comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
+    comparison_source: Option<RepoSubview>,
+) -> String {
+    if comparison_source != Some(subview) {
+        return "Compare: press v to mark a base.".to_string();
+    }
+
+    match (comparison_base, comparison_target) {
+        (Some(base), Some(target)) => format!(
+            "Compare: {} -> {} (press x to clear).",
+            comparison_target_label(base),
+            comparison_target_label(target)
+        ),
+        (Some(base), None) => format!(
+            "Compare base: {} (press v on another item, x clears).",
+            comparison_target_label(base)
+        ),
+        _ => "Compare: press v to mark a base.".to_string(),
     }
 }
 
@@ -2266,6 +2367,7 @@ fn repo_subview_label(subview: RepoSubview) -> &'static str {
         RepoSubview::Status => "Status",
         RepoSubview::Branches => "Branches",
         RepoSubview::Commits => "Commits",
+        RepoSubview::Compare => "Compare",
         RepoSubview::Stash => "Stash",
         RepoSubview::Reflog => "Reflog",
         RepoSubview::Worktrees => "Worktrees",
@@ -2277,9 +2379,10 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
         (RepoSubview::Status, "1 Status"),
         (RepoSubview::Branches, "2 Branches"),
         (RepoSubview::Commits, "3 Commits"),
-        (RepoSubview::Stash, "4 Stash"),
-        (RepoSubview::Reflog, "5 Reflog"),
-        (RepoSubview::Worktrees, "6 Worktrees"),
+        (RepoSubview::Compare, "4 Compare"),
+        (RepoSubview::Stash, "5 Stash"),
+        (RepoSubview::Reflog, "6 Reflog"),
+        (RepoSubview::Worktrees, "7 Worktrees"),
     ];
 
     let mut spans = Vec::with_capacity(all.len() * 2);
@@ -2345,10 +2448,13 @@ fn default_status_text(state: &AppState) -> String {
                         "Status diff focus; j/k scroll through hunks and keep orientation here."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Branches {
-                        "Branches detail focus; j/k move, Enter checks out, c creates, R renames, d deletes, and u sets upstream."
+                        "Branches detail focus; j/k move, v compares refs, x clears compare, Enter checks out, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; j/k browse history and keep the selected commit compare-ready."
+                        "Commits detail focus; j/k browse history, v compares commits, and x clears compare."
+                            .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Compare {
+                        "Compare detail focus; j/k scroll the comparison diff and x clears compare."
                             .to_string()
                     } else {
                         format!(
@@ -2382,23 +2488,25 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  l next pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  l next pane  1-7 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  c commit  A amend HEAD  h/l change pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  c commit  A amend HEAD  h/l change pane  1-7 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  Enter checkout  c create  R rename  d delete  u upstream  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  v compare  x clear compare  Enter checkout  c create  R rename  d delete  u upstream  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  v compare  x clear compare  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Compare {
+                    "Compare pane  j/k scroll diff  x clear compare  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
-                        "{} detail pane  h left pane  1-6 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
+                        "{} detail pane  h left pane  1-7 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
                         repo_subview_label(repo_mode.active_subview)
                     )
                 }
@@ -2699,7 +2807,6 @@ mod tests {
                     },
                 },
             ],
-            comparison_target: Some(ComparisonTarget::Commit("abcdef1234567890".to_string())),
             stashes: vec![
                 super_lazygit_core::StashItem {
                     stash_ref: "stash@{0}".to_string(),
@@ -3505,9 +3612,8 @@ mod tests {
             down.state
                 .repo_mode
                 .as_ref()
-                .and_then(|repo_mode| repo_mode.detail.as_ref())
-                .and_then(|detail| detail.comparison_target.clone()),
-            Some(ComparisonTarget::Commit("1234567890abcdef".to_string()))
+                .and_then(|repo_mode| repo_mode.comparison_target.clone()),
+            None
         );
 
         let up = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
@@ -3520,6 +3626,103 @@ mod tests {
                 .and_then(|repo_mode| repo_mode.commits_view.selected_index),
             Some(0)
         );
+    }
+
+    #[test]
+    fn repo_mode_commit_detail_routes_compare_shortcuts() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let base = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "v".to_string(),
+        })));
+        assert_eq!(
+            base.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_base.clone()),
+            Some(ComparisonTarget::Commit("abcdef1234567890".to_string()))
+        );
+
+        let _ = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        let compare = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "v".to_string(),
+        })));
+        assert_eq!(
+            compare
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Compare)
+        );
+        assert!(compare.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::LoadRepoDiff {
+                comparison_target: Some(ComparisonTarget::Commit(base)),
+                compare_with: Some(ComparisonTarget::Commit(target)),
+                diff_presentation: DiffPresentation::Comparison,
+                ..
+            } if base == "abcdef1234567890" && target == "1234567890abcdef"
+        )));
+    }
+
+    #[test]
+    fn repo_mode_compare_detail_routes_clear_shortcut() {
+        let mut detail = sample_repo_detail();
+        detail.diff.presentation = DiffPresentation::Comparison;
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Compare,
+                comparison_base: Some(ComparisonTarget::Commit("abcdef1234567890".to_string())),
+                comparison_target: Some(ComparisonTarget::Commit("1234567890abcdef".to_string())),
+                comparison_source: Some(RepoSubview::Commits),
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let cleared = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "x".to_string(),
+        })));
+        assert_eq!(
+            cleared
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            cleared
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_base.clone()),
+            None
+        );
+        assert!(cleared.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::LoadRepoDetail {
+                diff_presentation: DiffPresentation::Unstaged,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -4028,6 +4231,8 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: RepoId::new("repo-1"),
                 active_subview: RepoSubview::Commits,
+                comparison_base: Some(ComparisonTarget::Commit("abcdef1234567890".to_string())),
+                comparison_source: Some(RepoSubview::Commits),
                 detail: Some(sample_repo_detail()),
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -4050,9 +4255,73 @@ mod tests {
 
         assert!(rendered.contains("Detail: Commits"));
         assert!(rendered.contains("Selected 1/2"));
-        assert!(rendered.contains("Compare target: abcdef1234567890"));
+        assert!(rendered.contains("Compare base: abcdef1234567890"));
         assert!(rendered.contains("> abcdef1 add lib"));
         assert!(rendered.contains("A src/lib.rs"));
+        assert!(rendered.contains("+pub fn answer() -> u32 {"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_compare_view() {
+        let mut detail = sample_repo_detail();
+        detail.diff = DiffModel {
+            selected_path: None,
+            presentation: DiffPresentation::Comparison,
+            lines: vec![
+                DiffLine {
+                    kind: DiffLineKind::Meta,
+                    content: "diff --git a/src/lib.rs b/src/lib.rs".to_string(),
+                },
+                DiffLine {
+                    kind: DiffLineKind::Addition,
+                    content: "+pub fn answer() -> u32 {".to_string(),
+                },
+            ],
+            hunks: Vec::new(),
+            selected_hunk: None,
+            hunk_count: 0,
+        };
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Compare,
+                comparison_base: Some(ComparisonTarget::Commit("abcdef1234567890".to_string())),
+                comparison_target: Some(ComparisonTarget::Commit("1234567890abcdef".to_string())),
+                comparison_source: Some(RepoSubview::Commits),
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Compare"));
+        assert!(rendered.contains("Comparing abcdef1234567890 -> 1234567890abcdef"));
+        assert!(rendered.contains("x clears compare and returns to history."));
         assert!(rendered.contains("+pub fn answer() -> u32 {"));
     }
 

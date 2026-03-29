@@ -424,6 +424,9 @@ pub struct RepoModeState {
     pub reflog_view: ListViewState,
     pub worktree_view: ListViewState,
     pub operation_progress: OperationProgress,
+    pub comparison_base: Option<ComparisonTarget>,
+    pub comparison_target: Option<ComparisonTarget>,
+    pub comparison_source: Option<RepoSubview>,
     pub detail: Option<RepoDetail>,
 }
 
@@ -443,6 +446,9 @@ impl RepoModeState {
             reflog_view: ListViewState::default(),
             worktree_view: ListViewState::default(),
             operation_progress: OperationProgress::Idle,
+            comparison_base: None,
+            comparison_target: None,
+            comparison_source: None,
             detail: None,
         }
     }
@@ -454,6 +460,7 @@ pub enum RepoSubview {
     Status,
     Branches,
     Commits,
+    Compare,
     Stash,
     Reflog,
     Worktrees,
@@ -574,7 +581,6 @@ pub struct RepoDetail {
     pub worktrees: Vec<WorktreeItem>,
     pub commit_input: String,
     pub merge_state: MergeState,
-    pub comparison_target: Option<ComparisonTarget>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

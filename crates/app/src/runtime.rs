@@ -191,6 +191,37 @@ impl AppRuntime {
                         }));
                     }
                 }
+                Effect::LoadRepoDiff {
+                    repo_id,
+                    comparison_target,
+                    compare_with,
+                    selected_path,
+                    diff_presentation,
+                } => {
+                    let result = self.git.read_diff(super_lazygit_git::DiffRequest {
+                        repo_id: repo_id.clone(),
+                        comparison_target: comparison_target.clone(),
+                        compare_with: compare_with.clone(),
+                        selected_path: selected_path.clone(),
+                        diff_presentation: *diff_presentation,
+                    });
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+
+                    match result {
+                        Ok(diff) => {
+                            follow_up_events.push(Event::Worker(WorkerEvent::RepoDiffLoaded {
+                                repo_id: repo_id.clone(),
+                                diff,
+                            }));
+                        }
+                        Err(error) => {
+                            follow_up_events.push(Event::Worker(WorkerEvent::RepoDiffLoadFailed {
+                                repo_id: repo_id.clone(),
+                                error: error.to_string(),
+                            }));
+                        }
+                    }
+                }
                 Effect::RunGitCommand(request) => {
                     let summary = git_command_summary(&request.command);
                     follow_up_events.push(Event::Worker(WorkerEvent::GitOperationStarted {

@@ -27,6 +27,8 @@ pub enum Action {
     SelectPreviousReflog,
     SelectNextWorktree,
     SelectPreviousWorktree,
+    ToggleComparisonSelection,
+    ClearComparison,
     ScrollRepoDetailUp,
     ScrollRepoDetailDown,
     SelectNextDiffHunk,

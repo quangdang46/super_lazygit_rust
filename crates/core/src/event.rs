@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::action::Action;
-use crate::state::{JobId, RepoDetail, RepoId, RepoSummary, Timestamp};
+use crate::state::{DiffModel, JobId, RepoDetail, RepoId, RepoSummary, Timestamp};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
@@ -51,6 +51,14 @@ pub enum WorkerEvent {
     RepoDetailLoaded {
         repo_id: RepoId,
         detail: RepoDetail,
+    },
+    RepoDiffLoaded {
+        repo_id: RepoId,
+        diff: DiffModel,
+    },
+    RepoDiffLoadFailed {
+        repo_id: RepoId,
+        error: String,
     },
     GitOperationStarted {
         job_id: JobId,
