@@ -374,7 +374,7 @@ impl TuiApp {
                             });
                         }
                     }
-                    (RepoSubview::Branches | RepoSubview::Commits, _, "v") => {
+                    (RepoSubview::Branches | RepoSubview::Commits, "v", "v") => {
                         return Some(Action::ToggleComparisonSelection);
                     }
                     (
@@ -421,6 +421,12 @@ impl TuiApp {
                     }
                     (RepoSubview::Commits, _, "i") => {
                         return Some(Action::StartInteractiveRebase);
+                    }
+                    (RepoSubview::Commits, "C", _) => {
+                        return Some(Action::CherryPickSelectedCommit);
+                    }
+                    (RepoSubview::Commits, "V", _) => {
+                        return Some(Action::RevertSelectedCommit);
                     }
                     (RepoSubview::Commits, "S", _) => {
                         return Some(Action::SoftResetToSelectedCommit);
@@ -1871,7 +1877,8 @@ fn repo_commit_lines(
             comparison_target,
             comparison_source,
         )),
-        Line::from("Actions: i interactive rebase  S soft reset  M mixed reset  H hard reset"),
+        Line::from(history_operation_state_line(&detail.merge_state)),
+        Line::from("Actions: i rebase  C cherry-pick  V revert  S soft  M mixed  H hard"),
         Line::from("History:"),
     ];
 
@@ -2257,6 +2264,12 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Start an interactive rebase at {summary}? The selected commit will be marked edit."
             )
         }
+        super_lazygit_core::ConfirmableOperation::CherryPickCommit { summary, .. } => {
+            format!("Cherry-pick {summary} onto the current HEAD?")
+        }
+        super_lazygit_core::ConfirmableOperation::RevertCommit { summary, .. } => {
+            format!("Revert {summary} with an automatic revert commit?")
+        }
         super_lazygit_core::ConfirmableOperation::ResetToCommit { mode, summary, .. } => {
             match mode {
                 super_lazygit_core::ResetMode::Soft => format!(
@@ -2293,6 +2306,18 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 path.display()
             )
         }
+    }
+}
+
+fn history_operation_state_line(merge_state: &super_lazygit_core::MergeState) -> String {
+    match merge_state {
+        super_lazygit_core::MergeState::None => "State: idle".to_string(),
+        super_lazygit_core::MergeState::MergeInProgress => "State: merge in progress".to_string(),
+        super_lazygit_core::MergeState::RebaseInProgress => "State: rebase in progress".to_string(),
+        super_lazygit_core::MergeState::CherryPickInProgress => {
+            "State: cherry-pick in progress".to_string()
+        }
+        super_lazygit_core::MergeState::RevertInProgress => "State: revert in progress".to_string(),
     }
 }
 
@@ -2628,7 +2653,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Branches detail focus; j/k move, v compares refs, x clears compare, Enter checks out, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; j/k browse history, i starts a rebase, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; j/k browse history, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff and x clears compare."
@@ -3589,6 +3614,23 @@ mod tests {
     }
 
     #[test]
+    fn confirm_modal_renders_history_operation_copy() {
+        let cherry_pick = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::CherryPickCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            },
+        );
+        let revert = confirmation_copy(&super_lazygit_core::ConfirmableOperation::RevertCommit {
+            commit: "1234567890abcdef".to_string(),
+            summary: "1234567 second".to_string(),
+        });
+
+        assert!(cherry_pick.contains("Cherry-pick 1234567 second"));
+        assert!(revert.contains("Revert 1234567 second"));
+    }
+
+    #[test]
     fn repo_mode_routes_subviews_and_focus() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -3708,6 +3750,57 @@ mod tests {
                 .map(|pending| pending.operation.clone()),
             Some(super_lazygit_core::ConfirmableOperation::ResetToCommit {
                 mode: super_lazygit_core::ResetMode::Hard,
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn repo_mode_commit_detail_routes_cherry_pick_and_revert_shortcuts() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut cherry_pick_app = TuiApp::new(state.clone(), AppConfig::default());
+        let cherry_pick =
+            cherry_pick_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "C".to_string(),
+            })));
+        assert_eq!(
+            cherry_pick
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::CherryPickCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut revert_app = TuiApp::new(state, AppConfig::default());
+        let revert = revert_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "V".to_string(),
+        })));
+        assert_eq!(
+            revert
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::RevertCommit {
                 commit: "1234567890abcdef".to_string(),
                 summary: "1234567 second".to_string(),
             })
@@ -4678,9 +4771,56 @@ mod tests {
         assert!(rendered.contains("Detail: Commits"));
         assert!(rendered.contains("Selected 1/2"));
         assert!(rendered.contains("Compare base: abcdef1234567890"));
+        assert!(rendered.contains("State: idle"));
         assert!(rendered.contains("> abcdef1 add lib"));
-        assert!(rendered.contains("S soft reset"));
+        assert!(rendered.contains("C cherry-pick"));
+        assert!(rendered.contains("V revert"));
+        assert!(rendered.contains("S soft"));
         assert!(rendered.contains("A src/lib.rs"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_commit_history_operation_state() {
+        let mut detail = sample_repo_detail();
+        detail.merge_state = super_lazygit_core::MergeState::CherryPickInProgress;
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("State: cherry-pick in progress"));
+        assert!(rendered.contains("C cherry-pick"));
+        assert!(rendered.contains("V revert"));
     }
 
     #[test]

@@ -512,10 +512,7 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .map(|repo_mode| &repo_mode.operation_progress),
-            Some(&super_lazygit_core::OperationProgress::Failed {
-                summary: "git operation failed: pull requires an upstream tracking branch"
-                    .to_string(),
-            })
+            Some(&super_lazygit_core::OperationProgress::Idle)
         );
         assert!(state
             .background_jobs

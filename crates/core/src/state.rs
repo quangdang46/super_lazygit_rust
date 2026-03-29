@@ -107,6 +107,14 @@ pub enum ConfirmableOperation {
         commit: String,
         summary: String,
     },
+    CherryPickCommit {
+        commit: String,
+        summary: String,
+    },
+    RevertCommit {
+        commit: String,
+        summary: String,
+    },
     ResetToCommit {
         mode: ResetMode,
         commit: String,
@@ -766,6 +774,8 @@ pub enum MergeState {
     None,
     MergeInProgress,
     RebaseInProgress,
+    CherryPickInProgress,
+    RevertInProgress,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -64,6 +64,12 @@ pub enum GitCommand {
     StartInteractiveRebase {
         commit: String,
     },
+    CherryPickCommit {
+        commit: String,
+    },
+    RevertCommit {
+        commit: String,
+    },
     ResetToCommit {
         mode: ResetMode,
         target: String,

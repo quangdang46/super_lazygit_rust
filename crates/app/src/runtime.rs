@@ -454,6 +454,8 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::StartInteractiveRebase { .. } => "start_interactive_rebase",
+        GitCommand::CherryPickCommit { .. } => "cherry_pick_commit",
+        GitCommand::RevertCommit { .. } => "revert_commit",
         GitCommand::ResetToCommit { mode, .. } => match mode {
             super_lazygit_core::ResetMode::Soft => "reset_to_commit_soft",
             super_lazygit_core::ResetMode::Mixed => "reset_to_commit_mixed",

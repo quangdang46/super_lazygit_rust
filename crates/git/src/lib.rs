@@ -568,6 +568,22 @@ impl GitBackend for CliGitBackend {
                     .unwrap_or_else(|_| commit.clone());
                 format!("Started interactive rebase at {summary}")
             }
+            GitCommand::CherryPickCommit { commit } => {
+                cherry_pick_commit(&repo_path, commit)?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!("Cherry-picked {short} {subject}")
+            }
+            GitCommand::RevertCommit { commit } => {
+                revert_commit(&repo_path, commit)?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!("Reverted {short} {subject}")
+            }
             GitCommand::ResetToCommit { mode, target } => {
                 reset_to_commit(&repo_path, *mode, target)?;
                 let short = git_stdout(&repo_path, ["rev-parse", "--short", target.as_str()])
@@ -757,6 +773,8 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CommitStaged { .. } => "commit_staged",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::StartInteractiveRebase { .. } => "start_interactive_rebase",
+        GitCommand::CherryPickCommit { .. } => "cherry_pick_commit",
+        GitCommand::RevertCommit { .. } => "revert_commit",
         GitCommand::ResetToCommit { mode, .. } => match mode {
             ResetMode::Soft => "reset_to_commit_soft",
             ResetMode::Mixed => "reset_to_commit_mixed",
@@ -1453,6 +1471,14 @@ fn start_interactive_rebase(repo_path: &Path, commit: &str) -> GitResult<()> {
     )
 }
 
+fn cherry_pick_commit(repo_path: &Path, commit: &str) -> GitResult<()> {
+    git(repo_path, ["cherry-pick", commit])
+}
+
+fn revert_commit(repo_path: &Path, commit: &str) -> GitResult<()> {
+    git(repo_path, ["revert", "--no-edit", commit])
+}
+
 fn discard_path(repo_path: &Path, path: &Path) -> GitResult<()> {
     if path_exists_in_head(repo_path, path)? {
         git_path(
@@ -1942,6 +1968,10 @@ fn read_merge_state(repo_path: &Path) -> MergeState {
         || git_path_exists(repo_path, "rebase-apply")
     {
         MergeState::RebaseInProgress
+    } else if git_path_exists(repo_path, "CHERRY_PICK_HEAD") {
+        MergeState::CherryPickInProgress
+    } else if git_path_exists(repo_path, "REVERT_HEAD") {
+        MergeState::RevertInProgress
     } else {
         MergeState::None
     }
@@ -2975,6 +3005,134 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_cherry_picks_selected_commit() {
+        let (repo, commit) = cherry_pick_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:cherry-pick"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CherryPickCommit {
+                    commit: commit.clone(),
+                },
+            })
+            .expect("cherry-pick should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id.clone());
+        assert!(outcome.summary.contains("feature change"));
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("feature.txt")).expect("read feature.txt"),
+            "feature\n"
+        );
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+    }
+
+    #[test]
+    fn cli_backend_reverts_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let commit = repo.rev_parse("HEAD").expect("head commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:revert"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::RevertCommit { commit },
+            })
+            .expect("revert should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id.clone());
+        assert!(outcome.summary.contains("add lib"));
+        assert!(!repo.path().join("src/lib.rs").exists());
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+    }
+
+    #[test]
+    fn cli_backend_reads_cherry_pick_in_progress_state_after_conflict() {
+        let (repo, commit) = cherry_pick_conflict_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let error = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:cherry-pick-conflict"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CherryPickCommit { commit },
+            })
+            .expect_err("cherry-pick should conflict");
+
+        assert!(matches!(error, GitError::OperationFailed { .. }));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::CherryPickInProgress);
+        assert!(detail
+            .file_tree
+            .iter()
+            .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
+    fn cli_backend_reads_revert_in_progress_state_after_conflict() {
+        let (repo, commit) = revert_conflict_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let error = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:revert-conflict"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::RevertCommit { commit },
+            })
+            .expect_err("revert should conflict");
+
+        assert!(matches!(error, GitError::OperationFailed { .. }));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::RevertInProgress);
+        assert!(detail
+            .file_tree
+            .iter()
+            .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
     fn cli_backend_skips_conflicting_rebase_step() {
         let repo = rebase_in_progress_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -3534,5 +3692,55 @@ mod tests {
             "one\ntwo staged\nthree\nfour\nfive staged\nsix\n",
         )?;
         Ok(repo)
+    }
+
+    fn cherry_pick_repo() -> std::io::Result<(super_lazygit_test_support::TempRepo, String)> {
+        let repo = temp_repo()?;
+        repo.write_file("shared.txt", "base\n")?;
+        repo.commit_all("initial")?;
+
+        repo.checkout_new_branch("feature")?;
+        repo.write_file("feature.txt", "feature\n")?;
+        repo.commit_all("feature change")?;
+        let commit = repo.rev_parse("HEAD")?;
+
+        repo.checkout("main")?;
+        repo.write_file("main.txt", "main\n")?;
+        repo.commit_all("main change")?;
+
+        Ok((repo, commit))
+    }
+
+    fn cherry_pick_conflict_repo() -> std::io::Result<(super_lazygit_test_support::TempRepo, String)>
+    {
+        let repo = temp_repo()?;
+        repo.write_file("conflict.txt", "base\n")?;
+        repo.commit_all("initial")?;
+
+        repo.checkout_new_branch("feature")?;
+        repo.write_file("conflict.txt", "feature\n")?;
+        repo.commit_all("feature change")?;
+        let commit = repo.rev_parse("HEAD")?;
+
+        repo.checkout("main")?;
+        repo.write_file("conflict.txt", "main\n")?;
+        repo.commit_all("main change")?;
+
+        Ok((repo, commit))
+    }
+
+    fn revert_conflict_repo() -> std::io::Result<(super_lazygit_test_support::TempRepo, String)> {
+        let repo = temp_repo()?;
+        repo.write_file("conflict.txt", "base\n")?;
+        repo.commit_all("initial")?;
+
+        repo.write_file("conflict.txt", "feature\n")?;
+        repo.commit_all("feature change")?;
+        let commit = repo.rev_parse("HEAD")?;
+
+        repo.write_file("conflict.txt", "main\n")?;
+        repo.commit_all("main change")?;
+
+        Ok((repo, commit))
     }
 }

@@ -22,6 +22,8 @@ pub enum Action {
     SelectNextCommit,
     SelectPreviousCommit,
     StartInteractiveRebase,
+    CherryPickSelectedCommit,
+    RevertSelectedCommit,
     ContinueRebase,
     AbortRebase,
     SkipRebase,

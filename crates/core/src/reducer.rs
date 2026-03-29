@@ -165,40 +165,55 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::StartInteractiveRebase => {
-            let operation = state.repo_mode.as_ref().and_then(|repo_mode| {
-                let detail = repo_mode.detail.as_ref()?;
-                if detail.merge_state == MergeState::RebaseInProgress {
-                    return None;
-                }
-                let selected_index = repo_mode
-                    .commits_view
-                    .selected_index
-                    .filter(|index| *index < detail.commits.len())
-                    .unwrap_or(0);
+            match pending_history_commit_operation(state, |commit, selected_index| {
                 if selected_index == 0 {
-                    return Some(Err(
+                    return Err(
                         "Select an older commit before starting an interactive rebase.".to_string(),
-                    ));
+                    );
                 }
-                detail.commits.get(selected_index).map(|commit| {
-                    Ok(ConfirmableOperation::StartInteractiveRebase {
-                        commit: commit.oid.clone(),
-                        summary: format!("{} {}", commit.short_oid, commit.summary),
-                    })
+                Ok(ConfirmableOperation::StartInteractiveRebase {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
                 })
-            });
-            match operation {
-                Some(Ok(operation)) => {
-                    let repo_id = state
-                        .repo_mode
-                        .as_ref()
-                        .expect("repo mode exists")
-                        .current_repo_id
-                        .clone();
-                    open_confirmation_modal(state, repo_id, operation);
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
                 }
-                Some(Err(message)) => push_warning(state, message),
-                None => push_warning(state, "A rebase is already in progress."),
+                Ok(None) => push_warning(
+                    state,
+                    "Select a commit before starting an interactive rebase.",
+                ),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::CherryPickSelectedCommit => {
+            match pending_history_commit_operation(state, |commit, _| {
+                Ok(ConfirmableOperation::CherryPickCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before cherry-picking."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::RevertSelectedCommit => {
+            match pending_history_commit_operation(state, |commit, _| {
+                Ok(ConfirmableOperation::RevertCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before reverting."),
+                Err(message) => push_warning(state, message),
             }
             effects.push(Effect::ScheduleRender);
         }
@@ -953,6 +968,10 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 text: error,
                 expires_at: None,
             });
+            effects.push(Effect::RefreshRepoSummary {
+                repo_id: repo_id.clone(),
+            });
+            effects.push(load_repo_detail_effect(state, repo_id));
             effects.push(Effect::ScheduleRender);
         }
     }
@@ -1243,6 +1262,12 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::StartInteractiveRebase { summary, .. } => {
             format!("Start interactive rebase at {summary}")
         }
+        ConfirmableOperation::CherryPickCommit { summary, .. } => {
+            format!("Cherry-pick {summary}")
+        }
+        ConfirmableOperation::RevertCommit { summary, .. } => {
+            format!("Revert {summary}")
+        }
         ConfirmableOperation::ResetToCommit { mode, summary, .. } => {
             format!("{} reset to {summary}", mode.title())
         }
@@ -1280,6 +1305,14 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
         ConfirmableOperation::StartInteractiveRebase { commit, .. } => (
             GitCommand::StartInteractiveRebase { commit },
             "Start interactive rebase",
+        ),
+        ConfirmableOperation::CherryPickCommit { commit, .. } => (
+            GitCommand::CherryPickCommit { commit },
+            "Cherry-pick selected commit",
+        ),
+        ConfirmableOperation::RevertCommit { commit, .. } => (
+            GitCommand::RevertCommit { commit },
+            "Revert selected commit",
         ),
         ConfirmableOperation::ResetToCommit { mode, commit, .. } => (
             GitCommand::ResetToCommit {
@@ -1636,6 +1669,46 @@ fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::Comm
     detail.commits.get(selected_index)
 }
 
+fn pending_history_commit_operation<F>(
+    state: &AppState,
+    build: F,
+) -> Result<Option<(crate::state::RepoId, ConfirmableOperation)>, String>
+where
+    F: FnOnce(&crate::state::CommitItem, usize) -> Result<ConfirmableOperation, String>,
+{
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(message) = history_action_block_reason(&detail.merge_state) {
+        return Err(message.to_string());
+    }
+    let selected_index = repo_mode
+        .commits_view
+        .selected_index
+        .filter(|index| *index < detail.commits.len())
+        .unwrap_or(0);
+    let Some(commit) = detail.commits.get(selected_index) else {
+        return Ok(None);
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        build(commit, selected_index)?,
+    )))
+}
+
+fn history_action_block_reason(merge_state: &MergeState) -> Option<&'static str> {
+    match merge_state {
+        MergeState::None => None,
+        MergeState::MergeInProgress => Some("A merge is already in progress."),
+        MergeState::RebaseInProgress => Some("A rebase is already in progress."),
+        MergeState::CherryPickInProgress => Some("A cherry-pick is already in progress."),
+        MergeState::RevertInProgress => Some("A revert is already in progress."),
+    }
+}
+
 fn open_reset_confirmation(state: &mut AppState, mode: ResetMode) -> bool {
     let Some((repo_id, commit, summary)) = state.repo_mode.as_ref().and_then(|repo_mode| {
         selected_commit_item(repo_mode).map(|commit| {
@@ -1941,6 +2014,8 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CommitStaged { .. } => "commit-staged",
         GitCommand::AmendHead { .. } => "amend-head",
         GitCommand::StartInteractiveRebase { .. } => "start-interactive-rebase",
+        GitCommand::CherryPickCommit { .. } => "cherry-pick-commit",
+        GitCommand::RevertCommit { .. } => "revert-commit",
         GitCommand::ResetToCommit { mode, .. } => match mode {
             ResetMode::Soft => "reset-soft",
             ResetMode::Mixed => "reset-mixed",
@@ -2882,6 +2957,78 @@ mod tests {
                 command: GitCommand::ResetToCommit {
                     mode: crate::state::ResetMode::Hard,
                     target: "1234567890abcdef".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_cherry_pick_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Cherry-pick 1234567 second",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::CherryPickCommit {
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:cherry-pick-commit");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CherryPickCommit {
+                    commit: "1234567890abcdef".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_revert_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Revert 1234567 second",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::RevertCommit {
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:revert-commit");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::RevertCommit {
+                    commit: "1234567890abcdef".to_string(),
                 },
             })]
         );
@@ -4379,6 +4526,100 @@ mod tests {
     }
 
     #[test]
+    fn cherry_pick_selected_commit_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CherryPickSelectedCommit));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::CherryPickCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn revert_selected_commit_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RevertSelectedCommit));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::RevertCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
     fn repo_detail_loaded_switches_into_rebase_view_when_rebase_is_active() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -4634,7 +4875,20 @@ mod tests {
                 .map(|notification| (&notification.level, notification.text.as_str())),
             Some((&MessageLevel::Error, "boom"))
         );
-        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: RepoId::new("repo-1"),
+                },
+                Effect::LoadRepoDetail {
+                    repo_id: RepoId::new("repo-1"),
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
     }
 
     #[test]
