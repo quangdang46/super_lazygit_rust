@@ -1243,6 +1243,8 @@ fn parse_status(status: &str) -> ParsedStatus {
             parsed.file_tree.push(FileStatus {
                 path: path.clone(),
                 kind: FileStatusKind::Untracked,
+                staged_kind: None,
+                unstaged_kind: Some(FileStatusKind::Untracked),
             });
             parsed.first_path.get_or_insert(path);
             continue;
@@ -1261,6 +1263,8 @@ fn parse_status(status: &str) -> ParsedStatus {
         parsed.file_tree.push(FileStatus {
             path: path.clone(),
             kind: status_kind(staged, unstaged),
+            staged_kind: staged_status_kind(staged, unstaged),
+            unstaged_kind: unstaged_status_kind(staged, unstaged),
         });
         parsed.first_path.get_or_insert(path);
     }
@@ -1322,19 +1326,40 @@ fn status_kind(staged: char, unstaged: char) -> FileStatusKind {
         return FileStatusKind::Conflicted;
     }
 
-    let code = if staged != ' ' && staged != '?' {
+    let code = if status_code_kind(staged).is_some() {
         staged
     } else {
         unstaged
     };
 
-    match code {
+    status_code_kind(code).unwrap_or(FileStatusKind::Modified)
+}
+
+fn staged_status_kind(staged: char, unstaged: char) -> Option<FileStatusKind> {
+    if is_conflict_code(staged, unstaged) {
+        None
+    } else {
+        status_code_kind(staged)
+    }
+}
+
+fn unstaged_status_kind(staged: char, unstaged: char) -> Option<FileStatusKind> {
+    if is_conflict_code(staged, unstaged) {
+        Some(FileStatusKind::Conflicted)
+    } else {
+        status_code_kind(unstaged)
+    }
+}
+
+fn status_code_kind(code: char) -> Option<FileStatusKind> {
+    Some(match code {
         'A' => FileStatusKind::Added,
         'D' => FileStatusKind::Deleted,
         'R' => FileStatusKind::Renamed,
         '?' => FileStatusKind::Untracked,
+        ' ' => return None,
         _ => FileStatusKind::Modified,
-    }
+    })
 }
 
 fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
@@ -1956,6 +1981,55 @@ mod tests {
         assert_eq!(summary.staged_count, 1);
         assert_eq!(summary.unstaged_count, 1);
         assert_eq!(summary.untracked_count, 1);
+    }
+
+    #[test]
+    fn cli_backend_repo_detail_tracks_staged_and_unstaged_sections() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+            })
+            .expect("detail succeeds");
+
+        let staged = detail
+            .file_tree
+            .iter()
+            .find(|item| item.path == Path::new("staged.txt"))
+            .expect("staged file tracked");
+        assert_eq!(staged.staged_kind, Some(FileStatusKind::Added));
+        assert_eq!(staged.unstaged_kind, None);
+
+        let tracked = detail
+            .file_tree
+            .iter()
+            .find(|item| item.path == Path::new("tracked.txt"))
+            .expect("tracked file tracked");
+        assert_eq!(tracked.staged_kind, None);
+        assert_eq!(tracked.unstaged_kind, Some(FileStatusKind::Modified));
+
+        let untracked = detail
+            .file_tree
+            .iter()
+            .find(|item| item.path == Path::new("untracked.txt"))
+            .expect("untracked file tracked");
+        assert_eq!(untracked.staged_kind, None);
+        assert_eq!(untracked.unstaged_kind, Some(FileStatusKind::Untracked));
+    }
+
+    #[test]
+    fn parse_status_tracks_both_sections_for_mixed_path() {
+        let parsed = parse_status("## main\nMM src/lib.rs\n");
+        let entry = parsed.file_tree.first().expect("mixed entry");
+
+        assert_eq!(parsed.staged_count, 1);
+        assert_eq!(parsed.unstaged_count, 1);
+        assert_eq!(entry.path, Path::new("src/lib.rs"));
+        assert_eq!(entry.kind, FileStatusKind::Modified);
+        assert_eq!(entry.staged_kind, Some(FileStatusKind::Modified));
+        assert_eq!(entry.unstaged_kind, Some(FileStatusKind::Modified));
     }
 
     #[test]

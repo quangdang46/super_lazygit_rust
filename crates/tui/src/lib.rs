@@ -449,7 +449,8 @@ impl TuiApp {
         };
 
         let lines = repo_unstaged_lines(
-            self.selected_summary(),
+            repo_mode.detail.as_ref(),
+            repo_mode.status_view.selected_index,
             self.state.focused_pane == PaneId::RepoUnstaged,
             &repo_mode.operation_progress,
         );
@@ -466,7 +467,14 @@ impl TuiApp {
 
     fn render_repo_staged(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let lines = repo_staged_lines(
-            self.selected_summary(),
+            self.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref()),
+            self.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.staged_view.selected_index),
             self.state.focused_pane == PaneId::RepoStaged,
         );
 
@@ -1030,8 +1038,26 @@ fn repo_detail_lines(subview: RepoSubview, detail: Option<&RepoDetail>) -> Vec<L
                 "Files: {}",
                 detail.map_or(0, |detail| detail.file_tree.len())
             )),
-            Line::from("Diff viewer and tree interactions land in the next repo-mode beads."),
-            Line::from("Focus here for status details."),
+            Line::from(format!(
+                "Working tree: {}",
+                detail.map_or(0, |detail| {
+                    detail
+                        .file_tree
+                        .iter()
+                        .filter(|item| item.unstaged_kind.is_some())
+                        .count()
+                })
+            )),
+            Line::from(format!(
+                "Staged: {}",
+                detail.map_or(0, |detail| {
+                    detail
+                        .file_tree
+                        .iter()
+                        .filter(|item| item.staged_kind.is_some())
+                        .count()
+                })
+            )),
         ],
         RepoSubview::Branches => vec![
             Line::from(format!(
@@ -1155,7 +1181,7 @@ fn repo_commit_lines(
         lines.extend(selected.changed_files.iter().take(6).map(|file| {
             Line::from(format!(
                 "  {} {}",
-                commit_file_kind_label(file.kind),
+                file_status_kind_label(file.kind),
                 file.path.display()
             ))
         }));
@@ -1253,7 +1279,7 @@ fn repo_diff_lines(
     lines
 }
 
-fn commit_file_kind_label(kind: super_lazygit_core::FileStatusKind) -> &'static str {
+fn file_status_kind_label(kind: super_lazygit_core::FileStatusKind) -> &'static str {
     match kind {
         super_lazygit_core::FileStatusKind::Added => "A",
         super_lazygit_core::FileStatusKind::Deleted => "D",
@@ -1324,58 +1350,105 @@ fn help_text(state: &AppState) -> String {
 }
 
 fn repo_unstaged_lines(
-    summary: Option<&RepoSummary>,
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
     is_focused: bool,
     progress: &super_lazygit_core::OperationProgress,
 ) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::from(if is_focused {
-        "Focus here for status-tree navigation."
-    } else {
-        "Move focus here to inspect working tree changes."
-    })];
-
-    if let Some(summary) = summary {
-        lines.push(Line::from(format!("Modified: {}", summary.unstaged_count)));
-        lines.push(Line::from(format!(
-            "Untracked: {}",
-            summary.untracked_count
-        )));
-        lines.push(Line::from(format!(
-            "Conflicts: {}",
-            if summary.conflicted { "yes" } else { "no" }
-        )));
-        lines.push(Line::from(format!(
-            "Progress: {}",
-            operation_progress_label(progress)
-        )));
-    } else {
-        lines.push(Line::from("Summary pending..."));
-    }
-
+    let mut lines = repo_status_section_lines(
+        detail,
+        selected_index,
+        is_focused,
+        FileStatusSection::Unstaged,
+    );
+    lines.push(Line::from(format!(
+        "Progress: {}",
+        operation_progress_label(progress)
+    )));
     lines
 }
 
-fn repo_staged_lines(summary: Option<&RepoSummary>, is_focused: bool) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::from(if is_focused {
-        "Focus here for staging and commit prep."
-    } else {
-        "Move focus here to prep staged work."
-    })];
+fn repo_staged_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    is_focused: bool,
+) -> Vec<Line<'static>> {
+    repo_status_section_lines(
+        detail,
+        selected_index,
+        is_focused,
+        FileStatusSection::Staged,
+    )
+}
 
-    if let Some(summary) = summary {
-        lines.push(Line::from(format!("Staged: {}", summary.staged_count)));
-        lines.push(Line::from(format!(
-            "Branch: {}",
-            summary.branch.as_deref().unwrap_or("detached")
-        )));
-        lines.push(Line::from(format!(
-            "Remote delta: +{} / -{}",
-            summary.ahead_count, summary.behind_count
-        )));
-    } else {
-        lines.push(Line::from("Summary pending..."));
+#[derive(Clone, Copy)]
+enum FileStatusSection {
+    Staged,
+    Unstaged,
+}
+
+fn repo_status_section_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    is_focused: bool,
+    section: FileStatusSection,
+) -> Vec<Line<'static>> {
+    let (focus_text, empty_text) = match section {
+        FileStatusSection::Unstaged => (
+            if is_focused {
+                "Focus here for status-tree navigation."
+            } else {
+                "Move focus here to inspect working tree changes."
+            },
+            "No working tree changes.",
+        ),
+        FileStatusSection::Staged => (
+            if is_focused {
+                "Focus here for staging and commit prep."
+            } else {
+                "Move focus here to prep staged work."
+            },
+            "No staged changes.",
+        ),
+    };
+
+    let mut lines = vec![Line::from(focus_text)];
+    let Some(detail) = detail else {
+        lines.push(Line::from("Repository detail is still loading."));
+        return lines;
+    };
+
+    let entries = detail
+        .file_tree
+        .iter()
+        .filter_map(|item| {
+            let kind = match section {
+                FileStatusSection::Staged => item.staged_kind,
+                FileStatusSection::Unstaged => item.unstaged_kind,
+            }?;
+            Some((kind, item.path.display().to_string()))
+        })
+        .collect::<Vec<_>>();
+
+    if entries.is_empty() {
+        lines.push(Line::from(empty_text));
+        return lines;
     }
 
+    lines.push(Line::from(format!("Files: {}", entries.len())));
+    lines.extend(
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, (kind, path))| {
+                let marker = if selected_index == Some(index) {
+                    ">"
+                } else {
+                    " "
+                };
+                Line::from(format!("{marker} {} {path}", file_status_kind_label(kind)))
+            }),
+    );
     lines
 }
 
@@ -1516,10 +1589,20 @@ mod tests {
                 FileStatus {
                     path: PathBuf::from("src/lib.rs"),
                     kind: FileStatusKind::Modified,
+                    staged_kind: Some(FileStatusKind::Modified),
+                    unstaged_kind: Some(FileStatusKind::Modified),
                 },
                 FileStatus {
                     path: PathBuf::from("README.md"),
                     kind: FileStatusKind::Untracked,
+                    staged_kind: None,
+                    unstaged_kind: Some(FileStatusKind::Untracked),
+                },
+                FileStatus {
+                    path: PathBuf::from("Cargo.toml"),
+                    kind: FileStatusKind::Added,
+                    staged_kind: Some(FileStatusKind::Added),
+                    unstaged_kind: None,
                 },
             ],
             diff: DiffModel {
@@ -2009,6 +2092,9 @@ mod tests {
         assert!(rendered.contains("Working tree"));
         assert!(rendered.contains("Staged changes"));
         assert!(rendered.contains("Detail: Status"));
+        assert!(rendered.contains("M src/lib.rs"));
+        assert!(rendered.contains("? README.md"));
+        assert!(rendered.contains("A Cargo.toml"));
         assert!(rendered.contains("Path: src/lib.rs"));
         assert!(rendered.contains("Hunks: 1"));
         assert!(rendered.contains("@@ -1,1 +1,2 @@"));

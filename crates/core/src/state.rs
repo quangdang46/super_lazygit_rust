@@ -232,6 +232,7 @@ pub struct RepoModeState {
     pub active_subview: RepoSubview,
     pub diff_scroll: usize,
     pub status_view: ListViewState,
+    pub staged_view: ListViewState,
     pub branches_view: ListViewState,
     pub commits_view: ListViewState,
     pub stash_view: ListViewState,
@@ -249,6 +250,7 @@ impl RepoModeState {
             active_subview: RepoSubview::default(),
             diff_scroll: 0,
             status_view: ListViewState::default(),
+            staged_view: ListViewState::default(),
             branches_view: ListViewState::default(),
             commits_view: ListViewState::default(),
             stash_view: ListViewState::default(),
@@ -380,6 +382,8 @@ pub struct RepoDetail {
 pub struct FileStatus {
     pub path: PathBuf,
     pub kind: FileStatusKind,
+    pub staged_kind: Option<FileStatusKind>,
+    pub unstaged_kind: Option<FileStatusKind>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

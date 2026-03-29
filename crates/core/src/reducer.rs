@@ -290,6 +290,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
             {
                 if let Some(repo_mode) = state.repo_mode.as_mut() {
                     repo_mode.detail = Some(detail);
+                    sync_status_selection(repo_mode);
                     sync_commit_selection(repo_mode);
                     repo_mode.diff_scroll = 0;
                     repo_mode.operation_progress = OperationProgress::Idle;
@@ -478,6 +479,28 @@ fn sync_commit_selection(repo_mode: &mut RepoModeState) {
     });
 }
 
+fn sync_status_selection(repo_mode: &mut RepoModeState) {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        repo_mode.status_view.selected_index = None;
+        repo_mode.staged_view.selected_index = None;
+        return;
+    };
+
+    let unstaged_len = detail
+        .file_tree
+        .iter()
+        .filter(|item| item.unstaged_kind.is_some())
+        .count();
+    repo_mode.status_view.ensure_selection(unstaged_len);
+
+    let staged_len = detail
+        .file_tree
+        .iter()
+        .filter(|item| item.staged_kind.is_some())
+        .count();
+    repo_mode.staged_view.ensure_selection(staged_len);
+}
+
 fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequest {
     let job_id = JobId::new(format!("git:{}:{}", repo_id.0, job_suffix(&command)));
     GitCommandRequest {
@@ -536,8 +559,9 @@ mod tests {
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitFileItem, CommitItem,
-        ComparisonTarget, DiffLine, DiffLineKind, DiffModel, FileStatusKind, JobId, MessageLevel,
-        ModalKind, PaneId, RepoDetail, RepoId, RepoSubview, RepoSummary, Timestamp, WatcherHealth,
+        ComparisonTarget, DiffLine, DiffLineKind, DiffModel, FileStatus, FileStatusKind, JobId,
+        MessageLevel, ModalKind, PaneId, RepoDetail, RepoId, RepoSubview, RepoSummary, Timestamp,
+        WatcherHealth,
     };
 
     use super::reduce;
@@ -1101,6 +1125,20 @@ mod tests {
         )
         .state;
         let detail = RepoDetail {
+            file_tree: vec![
+                FileStatus {
+                    path: std::path::PathBuf::from("src/lib.rs"),
+                    kind: FileStatusKind::Modified,
+                    staged_kind: Some(FileStatusKind::Modified),
+                    unstaged_kind: Some(FileStatusKind::Modified),
+                },
+                FileStatus {
+                    path: std::path::PathBuf::from("README.md"),
+                    kind: FileStatusKind::Untracked,
+                    staged_kind: None,
+                    unstaged_kind: Some(FileStatusKind::Untracked),
+                },
+            ],
             commits: vec![CommitItem {
                 oid: "abcdef1234567890".to_string(),
                 short_oid: "abcdef1".to_string(),
@@ -1135,6 +1173,22 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.commits_view.selected_index),
+            Some(0)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.status_view.selected_index),
+            Some(0)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.staged_view.selected_index),
             Some(0)
         );
         assert_eq!(
