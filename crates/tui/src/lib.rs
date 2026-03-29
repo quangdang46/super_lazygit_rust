@@ -9,18 +9,13 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand,
-    InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
-    Timestamp, WorkerEvent,
+    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, Event, InputEvent,
+    KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoSubview, RepoSummary,
 };
-use super_lazygit_git::GitFacade;
-use super_lazygit_workspace::WorkspaceRegistry;
 
 #[derive(Debug)]
 pub struct TuiApp {
     state: AppState,
-    workspace: WorkspaceRegistry,
-    git: GitFacade,
     config: AppConfig,
     diagnostics: Diagnostics,
     viewport: Viewport,
@@ -43,43 +38,13 @@ impl Default for Viewport {
 
 impl TuiApp {
     #[must_use]
-    pub fn new(
-        state: AppState,
-        workspace: WorkspaceRegistry,
-        git: GitFacade,
-        config: AppConfig,
-    ) -> Self {
+    pub fn new(state: AppState, config: AppConfig) -> Self {
         Self {
             state,
-            workspace,
-            git,
             config,
             diagnostics: Diagnostics::default(),
             viewport: Viewport::default(),
         }
-    }
-
-    pub fn bootstrap(&mut self) -> std::io::Result<DiagnosticsSnapshot> {
-        let started_at = Instant::now();
-
-        self.workspace
-            .mark_watcher_started(usize::from(self.workspace.root().is_some()));
-        self.workspace.record_watcher_refresh(1);
-        self.git.record_operation("bootstrap.git.probe", true);
-        let _ = self.render();
-
-        self.diagnostics
-            .extend_snapshot(self.workspace.diagnostics());
-        self.diagnostics.extend_snapshot(self.git.diagnostics());
-        self.diagnostics
-            .record_startup_stage("tui.bootstrap", started_at.elapsed());
-
-        let snapshot = self.diagnostics.snapshot();
-        if self.config.diagnostics.enabled && self.config.diagnostics.log_samples {
-            log_diagnostics(&snapshot, &self.config);
-        }
-
-        Ok(snapshot)
     }
 
     #[must_use]
@@ -101,75 +66,6 @@ impl TuiApp {
                 result
             }
         }
-    }
-
-    pub fn apply_effects(&mut self, effects: &[Effect]) -> Vec<Event> {
-        let mut follow_up_events = Vec::new();
-
-        for effect in effects {
-            match effect {
-                Effect::StartRepoScan => {
-                    let repo_ids = self
-                        .workspace
-                        .root()
-                        .map(|root| vec![RepoId::new(root.display().to_string())])
-                        .unwrap_or_default();
-                    self.workspace
-                        .record_scan("runtime.start_repo_scan", repo_ids.len());
-                    self.diagnostics
-                        .extend_snapshot(self.workspace.diagnostics());
-                    follow_up_events.push(Event::Worker(WorkerEvent::RepoScanCompleted {
-                        root: self.workspace.root().cloned(),
-                        repo_ids,
-                        scanned_at: Timestamp(1),
-                    }));
-                }
-                Effect::RefreshRepoSummary { repo_id } => {
-                    self.git.record_operation("refresh_repo_summary", true);
-                    self.diagnostics.extend_snapshot(self.git.diagnostics());
-                    follow_up_events.push(Event::Worker(WorkerEvent::RepoSummaryUpdated {
-                        summary: RepoSummary {
-                            repo_id: repo_id.clone(),
-                            display_name: repo_id.0.clone(),
-                            display_path: self
-                                .workspace
-                                .root()
-                                .map(|root| root.display().to_string())
-                                .unwrap_or_else(|| repo_id.0.clone()),
-                            ..RepoSummary::default()
-                        },
-                    }));
-                }
-                Effect::LoadRepoDetail { repo_id } => {
-                    self.git.record_operation("load_repo_detail", true);
-                    self.diagnostics.extend_snapshot(self.git.diagnostics());
-                    follow_up_events.push(Event::Worker(WorkerEvent::RepoDetailLoaded {
-                        repo_id: repo_id.clone(),
-                        detail: RepoDetail::default(),
-                    }));
-                }
-                Effect::RunGitCommand(request) => {
-                    let summary = git_command_summary(&request.command);
-                    self.git.record_operation(summary, true);
-                    self.diagnostics.extend_snapshot(self.git.diagnostics());
-                    follow_up_events.push(Event::Worker(WorkerEvent::GitOperationStarted {
-                        job_id: request.job_id.clone(),
-                        repo_id: request.repo_id.clone(),
-                        summary: summary.to_string(),
-                    }));
-                    follow_up_events.push(Event::Worker(WorkerEvent::GitOperationCompleted {
-                        job_id: request.job_id.clone(),
-                        repo_id: request.repo_id.clone(),
-                        summary: format!("{summary} completed"),
-                    }));
-                }
-                Effect::PersistCache | Effect::PersistConfig | Effect::ScheduleRender => {
-                    let _ = self.render();
-                }
-            }
-        }
-
-        follow_up_events
     }
 
     #[must_use]
@@ -522,7 +418,7 @@ impl TuiApp {
     }
 
     fn workspace_root_label(&self) -> String {
-        self.workspace.root().map_or_else(
+        self.state.workspace.current_root.as_ref().map_or_else(
             || "Root: current directory".to_string(),
             |root| format!("Root: {}", root.display()),
         )
@@ -717,68 +613,10 @@ fn buffer_to_string(buffer: &Buffer) -> String {
         .join("\n")
 }
 
-fn git_command_summary(command: &GitCommand) -> &'static str {
-    match command {
-        GitCommand::StageSelection => "stage_selection",
-        GitCommand::CommitStaged { .. } => "commit_staged",
-        GitCommand::PushCurrentBranch => "push_current_branch",
-        GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
-    }
-}
-
-fn log_diagnostics(snapshot: &DiagnosticsSnapshot, config: &AppConfig) {
-    eprintln!(
-        "[diagnostics] startup_total_ms={} startup_stages={} scans={} git_ops={} watcher_events={} renders={}",
-        snapshot.startup_total.as_millis(),
-        snapshot.startup.len(),
-        snapshot.scans.len(),
-        snapshot.git_operations.len(),
-        snapshot.watcher_churn_count(),
-        snapshot.renders.len()
-    );
-
-    if let Some(render) = snapshot.slowest_render() {
-        let threshold = u128::from(config.diagnostics.slow_render_threshold_ms);
-        if render.elapsed.as_millis() >= threshold {
-            eprintln!(
-                "[diagnostics] slow_render surface={} elapsed_ms={} threshold_ms={}",
-                render.surface,
-                render.elapsed.as_millis(),
-                threshold
-            );
-        }
-    }
-
-    if snapshot.watcher_churn_count() >= config.diagnostics.watcher_burst_threshold {
-        eprintln!(
-            "[diagnostics] watcher_churn count={} threshold={}",
-            snapshot.watcher_churn_count(),
-            config.diagnostics.watcher_burst_threshold
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use super_lazygit_core::{ModalKind, RepoModeState, StatusMessage, WorkspaceState};
-
-    #[test]
-    fn bootstrap_emits_diagnostics_snapshot() {
-        let mut app = TuiApp::new(
-            AppState::default(),
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
-
-        let snapshot = app.bootstrap().expect("bootstrap should succeed");
-
-        assert!(!snapshot.startup.is_empty());
-        assert!(!snapshot.scans.is_empty());
-        assert!(!snapshot.git_operations.is_empty());
-        assert!(!snapshot.renders.is_empty());
-    }
 
     #[test]
     fn render_workspace_shell_shows_status_and_help() {
@@ -813,12 +651,7 @@ mod tests {
             },
         );
 
-        let mut app = TuiApp::new(
-            state,
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
+        let mut app = TuiApp::new(state, AppConfig::default());
         app.resize(80, 20);
 
         let rendered = app.render_to_string();
@@ -841,12 +674,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut app = TuiApp::new(
-            state,
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
+        let mut app = TuiApp::new(state, AppConfig::default());
 
         let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "enter".to_string(),
@@ -859,12 +687,7 @@ mod tests {
 
     #[test]
     fn route_resize_updates_viewport_without_mutating_state() {
-        let mut app = TuiApp::new(
-            AppState::default(),
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
+        let mut app = TuiApp::new(AppState::default(), AppConfig::default());
 
         let result = app.dispatch(Event::Input(InputEvent::Resize {
             width: 101,
@@ -892,12 +715,7 @@ mod tests {
             modal_stack: vec![super_lazygit_core::Modal::new(ModalKind::Help, "Help")],
             ..Default::default()
         };
-        let mut app = TuiApp::new(
-            state,
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
+        let mut app = TuiApp::new(state, AppConfig::default());
         app.resize(80, 20);
 
         let rendered = app.render_to_string();
@@ -913,12 +731,7 @@ mod tests {
             repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
             ..Default::default()
         };
-        let mut app = TuiApp::new(
-            state,
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
+        let mut app = TuiApp::new(state, AppConfig::default());
 
         let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "2".to_string(),
@@ -932,45 +745,35 @@ mod tests {
     }
 
     #[test]
-    fn apply_effects_converts_scan_into_worker_event() {
-        let mut app = TuiApp::new(
-            AppState::default(),
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
+    fn diagnostics_snapshot_includes_render_samples() {
+        let mut app = TuiApp::new(AppState::default(), AppConfig::default());
 
-        let events = app.apply_effects(&[Effect::StartRepoScan]);
+        let _ = app.render();
 
-        assert!(matches!(
-            events.as_slice(),
-            [Event::Worker(WorkerEvent::RepoScanCompleted { .. })]
-        ));
+        assert_eq!(app.diagnostics_snapshot().renders.len(), 1);
     }
 
     #[test]
-    fn apply_effects_converts_git_command_into_worker_lifecycle() {
-        let mut app = TuiApp::new(
-            AppState::default(),
-            WorkspaceRegistry::new(None),
-            GitFacade::default(),
-            AppConfig::default(),
-        );
+    fn render_repo_detail_uses_loaded_detail_counts() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![Default::default(), Default::default()],
+                    ..Default::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(80, 20);
 
-        let events = app.apply_effects(&[Effect::RunGitCommand(
-            super_lazygit_core::GitCommandRequest {
-                job_id: super_lazygit_core::JobId::new("job-1"),
-                repo_id: RepoId::new("repo-1"),
-                command: GitCommand::StageSelection,
-            },
-        )]);
+        let rendered = app.render_to_string();
 
-        assert!(matches!(
-            events.as_slice(),
-            [
-                Event::Worker(WorkerEvent::GitOperationStarted { .. }),
-                Event::Worker(WorkerEvent::GitOperationCompleted { .. })
-            ]
-        ));
+        assert!(rendered.contains("Branches: 2"));
     }
 }

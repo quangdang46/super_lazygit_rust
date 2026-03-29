@@ -1,9 +1,11 @@
-use std::collections::VecDeque;
 use std::time::Instant;
 
 use anyhow::Result;
 use clap::Parser;
 
+mod runtime;
+
+use runtime::AppRuntime;
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{Action, AppState, Diagnostics, Event};
 use super_lazygit_git::GitFacade;
@@ -24,14 +26,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::default();
     let state = AppState::default();
+    let app = TuiApp::new(state, config.clone());
     let workspace = WorkspaceRegistry::new(cli.workspace);
     let git = GitFacade::default();
-    let mut app = TuiApp::new(state, workspace, git, config.clone());
 
     let mut diagnostics = Diagnostics::default();
-    diagnostics.extend_snapshot(app.bootstrap()?);
 
-    let mut runtime = AppRuntime::new(app);
+    let mut runtime = AppRuntime::new(app, workspace, git);
+    diagnostics.extend_snapshot(runtime.bootstrap()?);
     runtime.run([Event::Action(Action::RefreshVisibleRepos)]);
 
     diagnostics.extend_snapshot(runtime.diagnostics_snapshot());
@@ -49,35 +51,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct AppRuntime {
-    app: TuiApp,
-}
-
-impl AppRuntime {
-    fn new(app: TuiApp) -> Self {
-        Self { app }
-    }
-
-    fn run<I>(&mut self, seed_events: I)
-    where
-        I: IntoIterator<Item = Event>,
-    {
-        let mut queue = VecDeque::from_iter(seed_events);
-
-        while let Some(event) = queue.pop_front() {
-            let result = self.app.dispatch(event);
-            for follow_up in self.app.apply_effects(&result.effects) {
-                queue.push_back(follow_up);
-            }
-        }
-    }
-
-    fn diagnostics_snapshot(&self) -> super_lazygit_core::DiagnosticsSnapshot {
-        self.app.diagnostics_snapshot()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,16 +60,16 @@ mod tests {
     fn runtime_processes_effects_until_worker_events_update_state() {
         let config = AppConfig::default();
         let state = AppState::default();
+        let app = TuiApp::new(state, config);
         let workspace = WorkspaceRegistry::new(None);
         let git = GitFacade::default();
-        let app = TuiApp::new(state, workspace, git, config);
-        let mut runtime = AppRuntime::new(app);
+        let mut runtime = AppRuntime::new(app, workspace, git);
 
         runtime.run([Event::Action(Action::RefreshVisibleRepos)]);
 
-        assert_eq!(runtime.app.state().mode, AppMode::Workspace);
+        assert_eq!(runtime.app().state().mode, AppMode::Workspace);
         assert!(matches!(
-            runtime.app.state().workspace.scan_status,
+            runtime.app().state().workspace.scan_status,
             ScanStatus::Complete { .. }
         ));
     }
