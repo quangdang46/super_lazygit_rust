@@ -1,11 +1,10 @@
 use std::collections::VecDeque;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, RepoDetail, RepoId, RepoSummary,
-    Timestamp, WorkerEvent,
+    Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, RepoDetail, Timestamp, WorkerEvent,
 };
-use super_lazygit_git::GitFacade;
+use super_lazygit_git::{GitFacade, RepoSummaryRequest, WorkspaceScanRequest};
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
 
@@ -80,36 +79,45 @@ impl AppRuntime {
         for effect in effects {
             match effect {
                 Effect::StartRepoScan => {
-                    let repo_ids = self
-                        .workspace
-                        .root()
-                        .map(|root| vec![RepoId::new(root.display().to_string())])
-                        .unwrap_or_default();
-                    self.workspace
-                        .record_scan("runtime.start_repo_scan", repo_ids.len());
-                    self.diagnostics
-                        .extend_snapshot(self.workspace.diagnostics());
-                    follow_up_events.push(Event::Worker(WorkerEvent::RepoScanCompleted {
+                    let result = self.git.scan_workspace(WorkspaceScanRequest {
                         root: self.workspace.root().cloned(),
-                        repo_ids,
-                        scanned_at: Timestamp(1),
-                    }));
+                    });
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+
+                    match result {
+                        Ok(scan) => {
+                            self.workspace
+                                .record_scan("runtime.start_repo_scan", scan.repo_ids.len());
+                            self.diagnostics
+                                .extend_snapshot(self.workspace.diagnostics());
+                            follow_up_events.push(Event::Worker(WorkerEvent::RepoScanCompleted {
+                                root: scan.root,
+                                repo_ids: scan.repo_ids,
+                                scanned_at: current_timestamp(),
+                            }));
+                        }
+                        Err(error) => {
+                            self.git.record_operation("scan_workspace_failed", false);
+                            self.diagnostics.extend_snapshot(self.git.diagnostics());
+                            follow_up_events.push(Event::Worker(WorkerEvent::RepoScanCompleted {
+                                root: self.workspace.root().cloned(),
+                                repo_ids: Vec::new(),
+                                scanned_at: current_timestamp(),
+                            }));
+                            let _ = error;
+                        }
+                    }
                 }
                 Effect::RefreshRepoSummary { repo_id } => {
-                    self.git.record_operation("refresh_repo_summary", true);
+                    let result = self.git.read_repo_summary(RepoSummaryRequest {
+                        repo_id: repo_id.clone(),
+                    });
                     self.diagnostics.extend_snapshot(self.git.diagnostics());
-                    follow_up_events.push(Event::Worker(WorkerEvent::RepoSummaryUpdated {
-                        summary: RepoSummary {
-                            repo_id: repo_id.clone(),
-                            display_name: repo_id.0.clone(),
-                            display_path: self
-                                .workspace
-                                .root()
-                                .map(|root| root.display().to_string())
-                                .unwrap_or_else(|| repo_id.0.clone()),
-                            ..RepoSummary::default()
-                        },
-                    }));
+
+                    if let Ok(summary) = result {
+                        follow_up_events
+                            .push(Event::Worker(WorkerEvent::RepoSummaryUpdated { summary }));
+                    }
                 }
                 Effect::LoadRepoDetail { repo_id } => {
                     self.git.record_operation("load_repo_detail", true);
@@ -151,4 +159,13 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::PushCurrentBranch => "push_current_branch",
         GitCommand::RefreshSelectedRepo => "refresh_selected_repo",
     }
+}
+
+fn current_timestamp() -> Timestamp {
+    Timestamp(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    )
 }

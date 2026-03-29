@@ -10,3 +10,6 @@ publish = false
 [dependencies]
 super-lazygit-core = { path = "../core" }
 thiserror.workspace = true
+
+[dev-dependencies]
+super-lazygit-test-support = { path = "../test-support" }

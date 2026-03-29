@@ -493,6 +493,28 @@ fn repo_line(repo_id: &RepoId, summary: Option<&RepoSummary>, is_selected: bool)
 }
 
 fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
+    let remote = match (
+        summary.remote_summary.remote_name.as_deref(),
+        summary.remote_summary.tracking_branch.as_deref(),
+    ) {
+        (_, Some(tracking)) => tracking.to_string(),
+        (Some(remote), None) => remote.to_string(),
+        (None, None) => "-".to_string(),
+    };
+    let fetch_age = summary
+        .last_fetch_at
+        .map(|timestamp| {
+            format!(
+                "{}s",
+                summary
+                    .last_refresh_at
+                    .unwrap_or(timestamp)
+                    .0
+                    .saturating_sub(timestamp.0)
+            )
+        })
+        .unwrap_or_else(|| "never".to_string());
+
     vec![
         Line::from(format!("Path: {}", summary.display_path)),
         Line::from(format!(
@@ -504,9 +526,10 @@ fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
             summary.staged_count, summary.unstaged_count, summary.untracked_count
         )),
         Line::from(format!(
-            "Remote: ahead={} behind={} conflicted={}",
-            summary.ahead_count, summary.behind_count, summary.conflicted
+            "Remote: {} ahead={} behind={} conflicted={}",
+            remote, summary.ahead_count, summary.behind_count, summary.conflicted
         )),
+        Line::from(format!("Fetch age: {}", fetch_age)),
     ]
 }
 

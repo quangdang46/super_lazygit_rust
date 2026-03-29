@@ -182,6 +182,11 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 state.workspace.selected_repo_id =
                     state.workspace.discovered_repo_ids.first().cloned();
             }
+            for repo_id in &state.workspace.discovered_repo_ids {
+                effects.push(Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                });
+            }
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::RepoSummaryUpdated { summary } => {
@@ -493,7 +498,18 @@ mod tests {
             result.state.workspace.last_full_refresh_at,
             Some(Timestamp(42))
         );
-        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: RepoId::new("repo-1"),
+                },
+                Effect::RefreshRepoSummary {
+                    repo_id: RepoId::new("repo-2"),
+                },
+                Effect::ScheduleRender,
+            ]
+        );
     }
 
     #[test]

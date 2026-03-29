@@ -788,6 +788,7 @@ name = "super-lazygit-git"
 version = "0.1.0"
 dependencies = [
  "super-lazygit-core",
+ "super-lazygit-test-support",
  "thiserror",
 ]
 
