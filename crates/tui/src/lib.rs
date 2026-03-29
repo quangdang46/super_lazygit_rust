@@ -9,9 +9,9 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, Action, AppMode, AppState, Diagnostics, DiagnosticsSnapshot, DiffLineKind,
-    DiffPresentation, Event, InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId,
-    RepoSubview, RepoSummary,
+    reduce, Action, AppMode, AppState, CommitBoxMode, Diagnostics, DiagnosticsSnapshot,
+    DiffLineKind, DiffPresentation, Event, InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail,
+    RepoId, RepoSubview, RepoSummary,
 };
 
 #[derive(Debug)]
@@ -165,23 +165,41 @@ impl TuiApp {
                     }
                 }
             }
-            InputEvent::Paste(_) => ReduceResult {
-                state: self.state.clone(),
-                effects: Vec::new(),
-            },
+            InputEvent::Paste(text) => {
+                if self.commit_box_focused() && !text.is_empty() {
+                    let result = reduce(
+                        self.state.clone(),
+                        Event::Action(Action::AppendCommitInput { text }),
+                    );
+                    self.state = result.state.clone();
+                    result
+                } else {
+                    ReduceResult {
+                        state: self.state.clone(),
+                        effects: Vec::new(),
+                    }
+                }
+            }
         }
     }
 
     fn route_key(&self, key: KeyPress) -> Option<Action> {
-        let trimmed = key.key.trim();
-        let normalized = trimmed.to_ascii_lowercase();
+        let raw = key.key.as_str();
 
         if !self.state.modal_stack.is_empty() {
+            let normalized = raw.trim().to_ascii_lowercase();
             return match normalized.as_str() {
                 "esc" | "q" => Some(Action::CloseTopModal),
                 _ => None,
             };
+        };
+
+        if self.commit_box_focused() {
+            return self.route_commit_box_key(raw);
         }
+
+        let trimmed = raw.trim();
+        let normalized = trimmed.to_ascii_lowercase();
 
         match normalized.as_str() {
             "?" => {
@@ -226,6 +244,12 @@ impl TuiApp {
             return Some(Action::PushCurrentBranch);
         }
 
+        if raw == "A" && self.can_open_commit_box() {
+            return Some(Action::OpenCommitBox {
+                mode: CommitBoxMode::Amend,
+            });
+        }
+
         match (self.state.focused_pane, normalized) {
             (PaneId::RepoUnstaged | PaneId::RepoStaged, "j" | "down") => {
                 return Some(Action::SelectNextStatusEntry);
@@ -235,6 +259,11 @@ impl TuiApp {
             }
             (PaneId::RepoUnstaged, "enter") => return Some(Action::StageSelectedFile),
             (PaneId::RepoStaged, "enter") => return Some(Action::UnstageSelectedFile),
+            (PaneId::RepoStaged, "c") if self.can_open_commit_box() => {
+                return Some(Action::OpenCommitBox {
+                    mode: CommitBoxMode::Commit,
+                });
+            }
             _ => {}
         }
 
@@ -345,6 +374,40 @@ impl TuiApp {
             PaneId::RepoStaged => PaneId::RepoDetail,
             _ => PaneId::RepoDetail,
         }))
+    }
+
+    fn commit_box_focused(&self) -> bool {
+        self.state
+            .repo_mode
+            .as_ref()
+            .is_some_and(|repo_mode| repo_mode.commit_box.focused)
+    }
+
+    fn can_open_commit_box(&self) -> bool {
+        self.state.focused_pane == PaneId::RepoStaged
+            && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                repo_mode.active_subview == RepoSubview::Status && repo_mode.detail.is_some()
+            })
+    }
+
+    fn route_commit_box_key(&self, raw: &str) -> Option<Action> {
+        match raw {
+            "esc" => Some(Action::CancelCommitBox),
+            "enter" => Some(Action::SubmitCommitBox),
+            "backspace" => Some(Action::BackspaceCommitInput),
+            "space" | " " => Some(Action::AppendCommitInput {
+                text: " ".to_string(),
+            }),
+            _ => {
+                if raw.chars().count() == 1 {
+                    Some(Action::AppendCommitInput {
+                        text: raw.to_string(),
+                    })
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     fn render_mode(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
@@ -496,26 +559,51 @@ impl TuiApp {
     }
 
     fn render_repo_staged(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
+        let repo_mode = self.state.repo_mode.as_ref();
         let lines = repo_staged_lines(
-            self.state
-                .repo_mode
-                .as_ref()
-                .and_then(|repo_mode| repo_mode.detail.as_ref()),
-            self.state
-                .repo_mode
-                .as_ref()
-                .and_then(|repo_mode| repo_mode.staged_view.selected_index),
+            repo_mode.and_then(|repo_mode| repo_mode.detail.as_ref()),
+            repo_mode.and_then(|repo_mode| repo_mode.staged_view.selected_index),
             self.state.focused_pane == PaneId::RepoStaged,
         );
+        let title = if repo_mode.is_some_and(|repo_mode| repo_mode.commit_box.focused) {
+            match repo_mode.map(|repo_mode| repo_mode.commit_box.mode) {
+                Some(CommitBoxMode::Commit) => "Staged changes · Commit",
+                Some(CommitBoxMode::Amend) => "Staged changes · Amend",
+                None => "Staged changes",
+            }
+        } else {
+            "Staged changes"
+        };
 
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Staged changes")
+                    .title(title)
                     .borders(Borders::ALL)
                     .border_style(self.pane_style(PaneId::RepoStaged, theme)),
             )
             .render(area, buffer);
+
+        if let Some(repo_mode) = repo_mode.filter(|repo_mode| repo_mode.commit_box.focused) {
+            let commit_box_area = centered_rect(area, 92, 56);
+            Clear.render(commit_box_area, buffer);
+            Paragraph::new(commit_box_lines(
+                repo_mode.detail.as_ref(),
+                repo_mode.commit_box.mode,
+                theme,
+            ))
+            .block(
+                Block::default()
+                    .title(commit_box_title(repo_mode.commit_box.mode))
+                    .borders(Borders::ALL)
+                    .border_style(
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+            )
+            .render(commit_box_area, buffer);
+        }
     }
 
     fn render_repo_detail(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
@@ -1457,6 +1545,82 @@ fn repo_staged_lines(
     )
 }
 
+fn commit_box_title(mode: CommitBoxMode) -> &'static str {
+    match mode {
+        CommitBoxMode::Commit => "Commit box",
+        CommitBoxMode::Amend => "Amend HEAD",
+    }
+}
+
+fn commit_box_lines(
+    detail: Option<&RepoDetail>,
+    mode: CommitBoxMode,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from("Repository detail is still loading."),
+            Line::from("Esc cancel"),
+        ];
+    };
+
+    let staged_count = detail
+        .file_tree
+        .iter()
+        .filter(|item| item.staged_kind.is_some())
+        .count();
+    let has_commits = !detail.commits.is_empty();
+    let trimmed = detail.commit_input.trim();
+    let message = if detail.commit_input.is_empty() {
+        "_".to_string()
+    } else {
+        format!("{}_", detail.commit_input)
+    };
+
+    let validation = match mode {
+        CommitBoxMode::Commit if staged_count == 0 => {
+            "Validation: stage at least one file before committing.".to_string()
+        }
+        CommitBoxMode::Commit if trimmed.is_empty() => {
+            "Validation: enter a commit message before confirming.".to_string()
+        }
+        CommitBoxMode::Commit => {
+            format!("Ready: create a commit from {staged_count} staged file(s).")
+        }
+        CommitBoxMode::Amend if !has_commits => {
+            "Validation: no commits available to amend.".to_string()
+        }
+        CommitBoxMode::Amend if trimmed.is_empty() => {
+            "Ready: amend HEAD and keep the current commit message.".to_string()
+        }
+        CommitBoxMode::Amend => "Ready: amend HEAD with the edited message.".to_string(),
+    };
+
+    vec![
+        Line::from(vec![Span::styled(
+            match mode {
+                CommitBoxMode::Commit => "Type a new commit message without leaving status view.",
+                CommitBoxMode::Amend => {
+                    "Type a replacement HEAD message, or leave it blank to reuse it."
+                }
+            },
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!(
+            "Staged files: {staged_count}  Existing commits: {}",
+            detail.commits.len()
+        )),
+        Line::from(vec![
+            Span::styled("Message: ", Style::default().fg(theme.accent)),
+            Span::raw(message),
+        ]),
+        Line::from(validation),
+        Line::from("Enter confirm  Esc cancel  Backspace delete  Paste insert"),
+    ]
+}
+
 #[derive(Clone, Copy)]
 enum FileStatusSection {
     Staged,
@@ -1567,12 +1731,31 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
 fn default_status_text(state: &AppState) -> String {
     match state.mode {
         AppMode::Workspace => "Select a repository and press Enter to open repo mode.".to_string(),
-        AppMode::Repository => match state.focused_pane {
+        AppMode::Repository => {
+            if let Some(repo_mode) = state
+                .repo_mode
+                .as_ref()
+                .filter(|repo_mode| repo_mode.commit_box.focused)
+            {
+                return match repo_mode.commit_box.mode {
+                    CommitBoxMode::Commit => {
+                        "Commit box focused; type a message, Enter commits, and Esc cancels."
+                            .to_string()
+                    }
+                    CommitBoxMode::Amend => {
+                        "Amend box focused; Enter confirms, Esc cancels, and blank input keeps the HEAD message."
+                            .to_string()
+                    }
+                };
+            }
+
+            match state.focused_pane {
             PaneId::RepoUnstaged => {
                 "Working tree focus; j/k move and Enter stages the selected file.".to_string()
             }
             PaneId::RepoStaged => {
-                "Staged focus; j/k move and Enter unstages the selected file.".to_string()
+                "Staged focus; j/k move, Enter unstages, c commits, and A amends HEAD."
+                    .to_string()
             }
             PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
                 || "Repository shell ready.".to_string(),
@@ -1592,17 +1775,33 @@ fn default_status_text(state: &AppState) -> String {
                 },
             ),
             _ => "Repository shell ready.".to_string(),
-        },
+        }
+        }
     }
 }
 
 fn repo_help_text(state: &AppState) -> String {
+    if let Some(repo_mode) = state
+        .repo_mode
+        .as_ref()
+        .filter(|repo_mode| repo_mode.commit_box.focused)
+    {
+        return match repo_mode.commit_box.mode {
+            CommitBoxMode::Commit => {
+                "Commit box  type message  Enter commit  Esc cancel  Backspace delete  Paste insert".to_string()
+            }
+            CommitBoxMode::Amend => {
+                "Amend box  type message  Enter amend HEAD  Esc cancel  Backspace delete  Paste insert".to_string()
+            }
+        };
+    }
+
     match state.focused_pane {
         PaneId::RepoUnstaged => {
             "Working tree pane  j/k move  Enter stage file  l next pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  h/l change pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  c commit  A amend HEAD  h/l change pane  1-6 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
@@ -2148,6 +2347,135 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_staged_pane_opens_commit_and_amend_boxes() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
+
+        let commit = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "c".to_string(),
+        })));
+        assert_eq!(
+            commit
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box.mode),
+            Some(CommitBoxMode::Commit)
+        );
+        assert_eq!(
+            commit
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box.focused),
+            Some(true)
+        );
+
+        let mut amend_app = TuiApp::new(state, AppConfig::default());
+        let amend = amend_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "A".to_string(),
+        })));
+        assert_eq!(
+            amend
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box.mode),
+            Some(CommitBoxMode::Amend)
+        );
+    }
+
+    #[test]
+    fn repo_mode_commit_box_routes_text_input_and_submit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let _ = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "c".to_string(),
+        })));
+        let pasted = app.dispatch(Event::Input(InputEvent::Paste("feat".to_string())));
+        assert_eq!(
+            pasted
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref())
+                .map(|detail| detail.commit_input.as_str()),
+            Some("feat")
+        );
+
+        let _ = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: " ".to_string(),
+        })));
+        let _ = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "x".to_string(),
+        })));
+        let _ = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "backspace".to_string(),
+        })));
+
+        let submit = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert!(submit.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::CommitStaged { message },
+                ..
+            }) if message == "feat"
+        )));
+    }
+
+    #[test]
+    fn repo_mode_commit_box_escape_cancels_without_leaving_repo_mode() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                commit_box: super_lazygit_core::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::Commit,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "esc".to_string(),
+        })));
+
+        assert_eq!(result.state.mode, AppMode::Repository);
+        assert_eq!(result.state.focused_pane, PaneId::RepoStaged);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box.focused),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn repo_mode_status_detail_scrolls_diff_and_preserves_orientation() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -2337,5 +2665,79 @@ mod tests {
         assert!(rendered.contains("> abcdef1 add lib"));
         assert!(rendered.contains("A src/lib.rs"));
         assert!(rendered.contains("+pub fn answer() -> u32 {"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_commit_box_overlay() {
+        let mut detail = sample_repo_detail();
+        detail.commit_input = "feat: land repo commit box".to_string();
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Status,
+                detail: Some(detail),
+                commit_box: super_lazygit_core::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::Commit,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                staged_count: 2,
+                unstaged_count: 3,
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 20);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Staged changes · Commit"));
+        assert!(rendered.contains("Commit box"));
+        assert!(rendered.contains("Type a new commit message"));
+    }
+
+    #[test]
+    fn commit_box_lines_show_message_cursor() {
+        let mut detail = sample_repo_detail();
+        detail.commit_input = "feat: land repo commit box".to_string();
+
+        let rendered = commit_box_lines(
+            Some(&detail),
+            CommitBoxMode::Commit,
+            Theme::from_config(&AppConfig::default()),
+        )
+        .into_iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+        assert!(rendered
+            .iter()
+            .any(|line| line.contains("Message: feat: land repo commit box_")));
     }
 }

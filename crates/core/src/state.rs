@@ -233,6 +233,7 @@ pub struct RepoModeState {
     pub diff_scroll: usize,
     pub status_view: ListViewState,
     pub staged_view: ListViewState,
+    pub commit_box: CommitBoxState,
     pub branches_view: ListViewState,
     pub commits_view: ListViewState,
     pub stash_view: ListViewState,
@@ -251,6 +252,7 @@ impl RepoModeState {
             diff_scroll: 0,
             status_view: ListViewState::default(),
             staged_view: ListViewState::default(),
+            commit_box: CommitBoxState::default(),
             branches_view: ListViewState::default(),
             commits_view: ListViewState::default(),
             stash_view: ListViewState::default(),
@@ -271,6 +273,19 @@ pub enum RepoSubview {
     Stash,
     Reflog,
     Worktrees,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitBoxState {
+    pub focused: bool,
+    pub mode: CommitBoxMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitBoxMode {
+    #[default]
+    Commit,
+    Amend,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

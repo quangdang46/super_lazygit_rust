@@ -4,9 +4,9 @@ use crate::effect::{
 };
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
-    AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, ComparisonTarget,
-    DiffPresentation, JobId, MessageLevel, Notification, OperationProgress, PaneId, RepoModeState,
-    ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
+    AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
+    ComparisonTarget, DiffPresentation, JobId, MessageLevel, Notification, OperationProgress,
+    PaneId, RepoModeState, ScanStatus, SelectedHunk, StatusMessage, WatcherHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +221,40 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunPatchSelection(job));
             }
         }
+        Action::OpenCommitBox { mode } => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.commit_box.focused = true;
+                repo_mode.commit_box.mode = mode;
+                state.focused_pane = PaneId::RepoStaged;
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::CancelCommitBox => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                close_commit_box(repo_mode);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::AppendCommitInput { text } => {
+            if let Some(input) = commit_input_mut(state) {
+                input.push_str(&text);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::BackspaceCommitInput => {
+            if let Some(input) = commit_input_mut(state) {
+                if input.pop().is_some() {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SubmitCommitBox => {
+            if let Some(job) = submit_commit_box(state) {
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::CommitStaged { message } => {
             if let Some(repo_mode) = &state.repo_mode {
                 let job = git_job(
@@ -291,6 +325,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.active_subview = subview;
                 repo_mode.diff_scroll = 0;
+                if !matches!(subview, crate::state::RepoSubview::Status) {
+                    close_commit_box(repo_mode);
+                }
                 if matches!(subview, crate::state::RepoSubview::Commits) {
                     sync_commit_selection(repo_mode);
                 }
@@ -381,6 +418,13 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 .is_some_and(|repo_mode| repo_mode.current_repo_id == repo_id)
             {
                 if let Some(repo_mode) = state.repo_mode.as_mut() {
+                    let commit_input = repo_mode
+                        .detail
+                        .as_ref()
+                        .map(|detail| detail.commit_input.clone())
+                        .unwrap_or_default();
+                    let mut detail = detail;
+                    detail.commit_input = commit_input;
                     repo_mode.detail = Some(detail);
                     sync_status_selection(repo_mode);
                     sync_commit_selection(repo_mode);
@@ -595,6 +639,99 @@ fn step_diff_hunk_selection(repo_mode: &mut RepoModeState, step: isize) -> bool 
         .get(selected)
         .map_or(0, |hunk| hunk.start_line_index);
     true
+}
+
+fn close_commit_box(repo_mode: &mut RepoModeState) {
+    repo_mode.commit_box.focused = false;
+    if let Some(detail) = repo_mode.detail.as_mut() {
+        detail.commit_input.clear();
+    }
+}
+
+fn commit_input_mut(state: &mut AppState) -> Option<&mut String> {
+    state.repo_mode.as_mut().and_then(|repo_mode| {
+        if repo_mode.commit_box.focused {
+            repo_mode
+                .detail
+                .as_mut()
+                .map(|detail| &mut detail.commit_input)
+        } else {
+            None
+        }
+    })
+}
+
+fn staged_file_count(detail: &crate::state::RepoDetail) -> usize {
+    detail
+        .file_tree
+        .iter()
+        .filter(|item| item.staged_kind.is_some())
+        .count()
+}
+
+fn push_warning(state: &mut AppState, text: impl Into<String>) {
+    state.notifications.push_back(Notification {
+        id: 0,
+        level: MessageLevel::Warning,
+        text: text.into(),
+        expires_at: None,
+    });
+}
+
+fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
+    let (repo_id, mode, message, staged_count, has_commits) =
+        state.repo_mode.as_ref().and_then(|repo_mode| {
+            if !repo_mode.commit_box.focused {
+                return None;
+            }
+            repo_mode.detail.as_ref().map(|detail| {
+                (
+                    repo_mode.current_repo_id.clone(),
+                    repo_mode.commit_box.mode,
+                    detail.commit_input.trim().to_string(),
+                    staged_file_count(detail),
+                    !detail.commits.is_empty(),
+                )
+            })
+        })?;
+
+    let command = match mode {
+        CommitBoxMode::Commit => {
+            if staged_count == 0 {
+                push_warning(state, "Stage at least one file before committing.");
+                return None;
+            }
+            if message.is_empty() {
+                push_warning(state, "Enter a commit message before confirming.");
+                return None;
+            }
+            GitCommand::CommitStaged { message }
+        }
+        CommitBoxMode::Amend => {
+            if !has_commits {
+                push_warning(state, "No commits are available to amend.");
+                return None;
+            }
+            GitCommand::AmendHead {
+                message: if message.is_empty() {
+                    None
+                } else {
+                    Some(message)
+                },
+            }
+        }
+    };
+
+    if let Some(repo_mode) = state.repo_mode.as_mut() {
+        close_commit_box(repo_mode);
+    }
+    let summary = match mode {
+        CommitBoxMode::Commit => "Commit staged changes",
+        CommitBoxMode::Amend => "Amend HEAD commit",
+    };
+    let job = git_job(repo_id, command);
+    enqueue_git_job(state, &job, summary);
+    Some(job)
 }
 
 fn sync_commit_selection(repo_mode: &mut RepoModeState) {
@@ -854,10 +991,10 @@ mod tests {
     use crate::effect::{Effect, GitCommand, GitCommandRequest};
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
-        AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitFileItem, CommitItem,
-        ComparisonTarget, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation,
-        FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind, PaneId, RepoDetail, RepoId,
-        RepoSubview, RepoSummary, SelectedHunk, Timestamp, WatcherHealth,
+        AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
+        CommitItem, ComparisonTarget, DiffHunk, DiffLine, DiffLineKind, DiffModel,
+        DiffPresentation, FileStatus, FileStatusKind, JobId, MessageLevel, ModalKind, PaneId,
+        RepoDetail, RepoId, RepoSubview, RepoSummary, SelectedHunk, Timestamp, WatcherHealth,
     };
 
     use super::reduce;
@@ -1542,6 +1679,179 @@ mod tests {
                 job_id,
                 summary: "Unstage Cargo.toml".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn open_commit_box_focuses_staged_pane_and_tracks_mode() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                ..crate::state::RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::OpenCommitBox {
+                mode: CommitBoxMode::Amend,
+            }),
+        );
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoStaged);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box),
+            Some(crate::state::CommitBoxState {
+                focused: true,
+                mode: CommitBoxMode::Amend,
+            })
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn submit_commit_box_queues_commit_when_message_is_valid() {
+        let repo_id = RepoId::new("repo-1");
+        let mut detail = repo_detail_with_file_tree();
+        detail.commit_input = "ship it".to_string();
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(detail),
+                commit_box: crate::state::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::Commit,
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitCommitBox));
+        let job_id = JobId::new("git:repo-1:commit-staged");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: job_id.clone(),
+                repo_id,
+                command: GitCommand::CommitStaged {
+                    message: "ship it".to_string(),
+                },
+            })]
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box.focused),
+            Some(false)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref())
+                .map(|detail| detail.commit_input.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id,
+                summary: "Commit staged changes".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn submit_commit_box_rejects_empty_commit_messages() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                commit_box: crate::state::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::Commit,
+                },
+                ..crate::state::RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitCommitBox));
+
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| (&notification.level, notification.text.as_str())),
+            Some((
+                &MessageLevel::Warning,
+                "Enter a commit message before confirming."
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box.focused),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn submit_commit_box_supports_amend_without_editing_message() {
+        let repo_id = RepoId::new("repo-1");
+        let mut detail = repo_detail_with_file_tree();
+        detail.commits = vec![CommitItem {
+            oid: "abcdef1234567890".to_string(),
+            short_oid: "abcdef1".to_string(),
+            summary: "init".to_string(),
+            changed_files: vec![],
+            diff: DiffModel::default(),
+        }];
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(detail),
+                commit_box: crate::state::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::Amend,
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitCommitBox));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: JobId::new("git:repo-1:amend-head"),
+                repo_id,
+                command: GitCommand::AmendHead { message: None },
+            })]
         );
     }
 
