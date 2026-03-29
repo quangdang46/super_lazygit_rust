@@ -64,8 +64,9 @@ mod tests {
     use super::watcher::{ScriptedWatcherBackend, ScriptedWatcherHandle};
     use super::*;
     use super_lazygit_core::{
-        AppMode, AppWatcherEvent, BackgroundJobState, Event, RepoId, RepoSummary, ScanStatus,
-        Timestamp, WatcherHealth, WorkerEvent, WorkspaceState,
+        AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, Event, RepoId,
+        RepoSummary, ScanStatus, Timestamp, WatcherEventKind, WatcherHealth, WorkerEvent,
+        WorkspaceState,
     };
     use super_lazygit_test_support::clean_repo;
 
@@ -283,6 +284,63 @@ mod tests {
     }
 
     #[test]
+    fn runtime_debounces_watcher_invalidations_into_single_refresh_cycle() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let handle = ScriptedWatcherHandle::new();
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime = AppRuntime::with_watcher(
+            app,
+            workspace,
+            git,
+            ScriptedWatcherBackend::new(handle.clone()),
+        );
+
+        runtime.run([Event::Action(Action::EnterRepoMode {
+            repo_id: repo_id.clone(),
+        })]);
+
+        handle.push_event(AppWatcherEvent::RepoInvalidated {
+            repo_id: repo_id.clone(),
+        });
+        handle.push_event(AppWatcherEvent::RepoInvalidated {
+            repo_id: repo_id.clone(),
+        });
+
+        runtime.run(std::iter::empty());
+
+        let state = runtime.app().state();
+        let repo_refresh_jobs = state
+            .background_jobs
+            .values()
+            .filter(|job| {
+                job.target_repo.as_ref() == Some(&repo_id)
+                    && matches!(job.kind, BackgroundJobKind::RepoRefresh)
+                    && matches!(job.state, BackgroundJobState::Succeeded)
+            })
+            .count();
+        assert_eq!(repo_refresh_jobs, 1);
+        assert!(state.workspace.pending_watcher_invalidations.is_empty());
+        assert!(!state.workspace.watcher_debounce_pending);
+        assert!(state
+            .repo_mode
+            .as_ref()
+            .and_then(|repo_mode| repo_mode.detail.as_ref())
+            .is_some());
+
+        let diagnostics = runtime.diagnostics_snapshot();
+        assert!(diagnostics
+            .watcher_events
+            .iter()
+            .any(|event| { event.kind == WatcherEventKind::Burst && event.path_count == 2 }));
+    }
+
+    #[test]
     fn runtime_drains_health_events_from_watcher_backend() {
         let handle = ScriptedWatcherHandle::new();
 
@@ -315,5 +373,62 @@ mod tests {
             runtime.app().state().workspace.watcher_health,
             WatcherHealth::Healthy
         );
+    }
+
+    #[test]
+    fn runtime_reconfigures_watcher_after_degraded_scan_and_recovers_health() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let handle = ScriptedWatcherHandle::new();
+        handle.set_configure_error("watch backend unavailable");
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime = AppRuntime::with_watcher(
+            app,
+            workspace,
+            git,
+            ScriptedWatcherBackend::new(handle.clone()),
+        );
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![repo_id.clone()],
+            scanned_at: Timestamp(7),
+        })]);
+
+        assert_eq!(
+            runtime.app().state().workspace.watcher_health,
+            WatcherHealth::Degraded {
+                message: "watch backend unavailable".to_string(),
+            }
+        );
+        assert!(handle.registrations().is_empty());
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![repo_id.clone()],
+            scanned_at: Timestamp(8),
+        })]);
+
+        assert_eq!(
+            runtime.app().state().workspace.watcher_health,
+            WatcherHealth::Healthy
+        );
+        assert_eq!(
+            handle.registrations(),
+            vec![watcher::WatchRegistration {
+                repo_id,
+                path: repo.path().to_path_buf(),
+            }]
+        );
+        assert!(runtime
+            .diagnostics_snapshot()
+            .watcher_events
+            .iter()
+            .any(|event| event.kind == WatcherEventKind::Created && event.path_count == 1));
     }
 }
