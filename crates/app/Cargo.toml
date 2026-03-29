@@ -1,0 +1,21 @@
+[package]
+name = "super-lazygit-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "super-lazygit"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+super-lazygit-config = { path = "../config" }
+super-lazygit-core = { path = "../core" }
+super-lazygit-git = { path = "../git" }
+super-lazygit-tui = { path = "../tui" }
+super-lazygit-workspace = { path = "../workspace" }

@@ -1,0 +1,12 @@
+[package]
+name = "super-lazygit-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+super-lazygit-core = { path = "../core" }
+super-lazygit-git = { path = "../git" }
