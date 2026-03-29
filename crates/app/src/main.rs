@@ -431,4 +431,48 @@ mod tests {
             .iter()
             .any(|event| event.kind == WatcherEventKind::Created && event.path_count == 1));
     }
+
+    #[test]
+    fn runtime_surfaces_pull_failure_without_upstream() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let config = AppConfig::default();
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime = AppRuntime::new(app, workspace, git);
+
+        runtime.run([
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+            Event::Action(Action::PullCurrentBranch),
+            Event::Action(Action::ConfirmPendingOperation),
+        ]);
+
+        let state = runtime.app().state();
+        assert_eq!(
+            state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("git operation failed: pull requires an upstream tracking branch")
+        );
+        assert_eq!(
+            state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| &repo_mode.operation_progress),
+            Some(&super_lazygit_core::OperationProgress::Failed {
+                summary: "git operation failed: pull requires an upstream tracking branch"
+                    .to_string(),
+            })
+        );
+        assert!(state
+            .background_jobs
+            .values()
+            .any(|job| matches!(job.state, BackgroundJobState::Failed { .. })));
+    }
 }

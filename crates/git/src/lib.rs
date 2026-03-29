@@ -2353,6 +2353,84 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_pull_requires_upstream_tracking_branch() {
+        let repo = clean_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let error = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-pull-no-upstream"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::PullCurrentBranch,
+            })
+            .expect_err("pull without upstream should fail");
+
+        assert_eq!(
+            error,
+            GitError::OperationFailed {
+                message: "pull requires an upstream tracking branch".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn cli_backend_fetch_surfaces_transport_failure() {
+        let repo = clean_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let missing_remote = repo.path().join("missing-remote.git");
+        let remote = missing_remote.display().to_string();
+        repo.git(["remote", "add", "origin", remote.as_str()])
+            .expect("add remote");
+
+        let error = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-fetch-missing-remote"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::FetchSelectedRepo,
+            })
+            .expect_err("fetch against a missing remote should fail");
+
+        assert!(
+            matches!(error, GitError::OperationFailed { message } if message.contains("missing-remote.git"))
+        );
+    }
+
+    #[test]
+    fn cli_backend_push_requires_attached_branch_head() {
+        let repo = detached_head_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let error = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-push-detached"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::PushCurrentBranch,
+            })
+            .expect_err("push from detached HEAD should fail");
+
+        assert_eq!(
+            error,
+            GitError::OperationFailed {
+                message: "push requires an attached branch HEAD".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn cli_backend_summary_rejects_missing_repo() {
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new("/tmp/definitely-missing-super-lazygit-repo".to_string());
+
+        let error = backend
+            .read_repo_summary(RepoSummaryRequest {
+                repo_id: repo_id.clone(),
+            })
+            .expect_err("missing repo should fail");
+
+        assert_eq!(error, GitError::RepoNotFound { repo_id });
+    }
+
+    #[test]
     fn cli_backend_stages_single_selected_file() {
         let repo = staged_and_unstaged_repo().expect("fixture repo");
         let backend = CliGitBackend;
