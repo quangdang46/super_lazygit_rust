@@ -1057,6 +1057,15 @@ impl TuiApp {
                         ) {
                             return Some(Action::DropSelectedStash);
                         }
+
+                        if self.binding_matches_action(
+                            "switch_repo_subview_worktrees",
+                            raw,
+                            normalized,
+                            &["w"],
+                        ) {
+                            return Some(Action::SwitchRepoSubview(RepoSubview::Worktrees));
+                        }
                     }
                     RepoSubview::Reflog => {
                         if self.binding_matches_action(
@@ -2416,6 +2425,7 @@ fn repo_stash_lines(
         Line::from(format!("Selected: {}", selected_stash.stash_ref)),
         Line::from(selected_stash.label.clone()),
         Line::from("Enter/Space applies. n branches off. r renames. g pops. d drops."),
+        Line::from("w opens worktrees."),
         Line::from(""),
     ];
 
@@ -5806,6 +5816,19 @@ mod tests {
             ))
         );
 
+        let mut worktree_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let worktrees = worktree_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "w".to_string(),
+        })));
+        assert_eq!(
+            worktrees
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Worktrees)
+        );
+
         let mut rename_app = TuiApp::new(state.clone(), AppConfig::default());
         let down = rename_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "j".to_string(),
@@ -6953,6 +6976,7 @@ mod tests {
         assert!(rendered.contains("n branches off."));
         assert!(rendered.contains("r renames."));
         assert!(rendered.contains("g pops."));
+        assert!(rendered.contains("opens worktrees."));
         assert!(rendered.contains("stash@{0}: WIP on main: fixture stash"));
         assert!(rendered.contains("stash@{1}: On feature: prior experiment"));
     }

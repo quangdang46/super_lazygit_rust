@@ -158,6 +158,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `r` | Open rename-stash prompt |
 | `g` | Open pop-stash confirmation |
 | `d` | Open drop-stash confirmation |
+| `w` | Switch to the worktrees subview |
 
 ### Reflog detail subview
 
