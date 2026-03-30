@@ -23,6 +23,7 @@ pub enum Effect {
         repo_id: RepoId,
         selected_path: Option<PathBuf>,
         diff_presentation: DiffPresentation,
+        commit_ref: Option<String>,
     },
     LoadRepoDiff {
         repo_id: RepoId,

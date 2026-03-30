@@ -21,6 +21,7 @@ pub enum Action {
     SelectPreviousBranch,
     SelectNextCommit,
     SelectPreviousCommit,
+    OpenSelectedBranchCommits,
     OpenSelectedCommitFiles,
     CloseSelectedCommitFiles,
     CheckoutSelectedCommit,

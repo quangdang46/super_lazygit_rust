@@ -69,7 +69,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | Key | Action |
 | --- | --- |
 | `Enter` | Run the contextual primary action for the current detail subview |
-| `Space` | Alias the primary action in `Status`, `Branches`, `Stash`, and `Worktrees` |
+| `Space` | Run the contextual checkout/apply action in detail subviews that expose one |
 | `0` | Return to the last active main pane without changing the selected detail subview |
 | `/` | Focus the current subview filter when that subview supports filtering |
 | `w` | Jump directly to the `Worktrees` subview |
@@ -114,7 +114,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next branch |
 | `k` / `Up` | Select the previous branch |
-| `Enter` | Check out the selected branch |
+| `Enter` | Open the selected branch's commit history |
 | `Space` | Check out the selected branch |
 | `-` | Check out the previous branch |
 | `c` | Open checkout-by-name prompt (`-` switches to the previous branch) |

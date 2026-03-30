@@ -322,6 +322,7 @@ pub struct RepoDetailRequest {
     pub repo_id: RepoId,
     pub selected_path: Option<PathBuf>,
     pub diff_presentation: DiffPresentation,
+    pub commit_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -502,7 +503,7 @@ impl GitBackend for CliGitBackend {
             request.selected_path.or(status.first_path.clone()),
             request.diff_presentation,
         )?;
-        let commits = read_commits(&repo_path);
+        let commits = read_commits(&repo_path, request.commit_ref.as_deref());
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
@@ -2118,8 +2119,12 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
     .unwrap_or_default()
 }
 
-fn read_commits(repo_path: &Path) -> Vec<CommitItem> {
-    git_stdout(repo_path, ["log", "--format=%H%x00%s", "-n", "64"])
+fn read_commits(repo_path: &Path, commit_ref: Option<&str>) -> Vec<CommitItem> {
+    let mut args = vec!["log", "--format=%H%x00%s", "-n", "64"];
+    if let Some(commit_ref) = commit_ref {
+        args.push(commit_ref);
+    }
+    git_stdout(repo_path, args)
         .map(|output| {
             output
                 .lines()
@@ -2833,6 +2838,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail succeeds");
 
@@ -2924,6 +2930,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -2944,6 +2951,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3277,6 +3285,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3299,12 +3308,50 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
         assert_eq!(detail.commits[0].summary, "add lib");
         assert_eq!(detail.commits[1].summary, "second");
         assert_eq!(detail.commits[0].short_oid.len(), 7);
+    }
+
+    #[test]
+    fn cli_backend_reads_commit_history_for_selected_branch_ref() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write shared file");
+        repo.commit_all("initial").expect("initial commit");
+
+        repo.checkout_new_branch("feature")
+            .expect("checkout feature branch");
+        repo.write_file("feature.txt", "feature\n")
+            .expect("write feature file");
+        repo.commit_all("feature branch commit")
+            .expect("commit feature branch");
+
+        repo.checkout("main").expect("return to main");
+        repo.write_file("main.txt", "main\n")
+            .expect("write main file");
+        repo.commit_all("main branch commit")
+            .expect("commit main branch");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: Some("feature".to_string()),
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.commits[0].summary, "feature branch commit");
+        assert!(detail
+            .commits
+            .iter()
+            .all(|commit| commit.summary != "main branch commit"));
     }
 
     #[test]
@@ -3317,6 +3364,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3392,6 +3440,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
         let diff = backend
@@ -3470,6 +3519,7 @@ mod tests {
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3517,6 +3567,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3581,6 +3632,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3621,6 +3673,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3657,6 +3710,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3720,6 +3774,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3759,6 +3814,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3795,6 +3851,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3826,6 +3883,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3853,6 +3911,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3884,6 +3943,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -3915,6 +3975,7 @@ mod tests {
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should load");
 
@@ -4097,6 +4158,7 @@ mod tests {
                 repo_id: repo_id.clone(),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             })
             .expect("detail should refresh");
         assert!(detail

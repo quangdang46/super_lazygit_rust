@@ -640,12 +640,21 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "open_selected_branch_commits",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return Some(Action::OpenSelectedBranchCommits);
+                        }
+
+                        if self.binding_matches_action(
                             "checkout_selected_branch",
                             raw,
                             normalized,
-                            &["enter", "space"],
+                            &["space"],
                         ) {
-                            return Some(Action::ActivateRepoSubviewSelection);
+                            return Some(Action::CheckoutSelectedBranch);
                         }
 
                         if self.binding_matches_action(
@@ -2495,7 +2504,7 @@ fn repo_branch_lines(
             comparison_target,
             comparison_source,
         )),
-        Line::from("Context: Enter checkout. 0 main. / filter. w worktrees."),
+        Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
         Line::from("Other: - previous. c checkout by name. n create. R rename."),
         Line::from("       d delete. u upstream. v compare."),
         Line::from(""),
@@ -4296,7 +4305,7 @@ fn repo_help_text(state: &AppState) -> String {
                 if repo_mode.active_subview == RepoSubview::Status {
                     "Status diff pane  j/k scroll diff  Enter apply hunk  0 main pane  w worktrees  D discard file  X nuke working tree  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  Enter checkout  0 main pane  / filter  w worktrees  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  Enter commits  Space checkout  0 main pane  / filter  w worktrees  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
                     "Commits pane  j/k move commit  0 main pane  / filter  w worktrees  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
@@ -5483,7 +5492,46 @@ mod tests {
             Some("fea")
         );
 
-        let mut worktree_app = TuiApp::new(blurred.state, AppConfig::default());
+        let mut commit_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let branch_commits = commit_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            branch_commits
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            branch_commits
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            Some("feature")
+        );
+
+        let mut checkout_app = TuiApp::new(blurred.state, AppConfig::default());
+        let branch_checkout =
+            checkout_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "space".to_string(),
+            })));
+        assert_eq!(
+            branch_checkout.effects,
+            vec![super_lazygit_core::Effect::RunGitCommand(
+                super_lazygit_core::GitCommandRequest {
+                    job_id: super_lazygit_core::JobId::new("git:repo-1:checkout-branch"),
+                    repo_id: repo_id.clone(),
+                    command: super_lazygit_core::GitCommand::CheckoutBranch {
+                        branch_ref: "feature".to_string(),
+                    },
+                }
+            )]
+        );
+
+        let mut worktree_app = TuiApp::new(branch_commits.state, AppConfig::default());
         let worktrees = worktree_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "w".to_string(),
         })));
@@ -6896,6 +6944,7 @@ mod tests {
                     repo_id: RepoId::new("/tmp/repo-1-feature"),
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
                 super_lazygit_core::Effect::ScheduleRender,
             ]
@@ -7829,7 +7878,7 @@ mod tests {
 
         assert!(rendered.contains("Detail: Branches"));
         assert!(rendered.contains("Selected: feature"));
-        assert!(rendered.contains("Context: Enter checkout. 0 main. / filter. w worktrees."));
+        assert!(rendered.contains("Context: Enter commits. Space checkout."));
         assert!(rendered.contains("checkout by name"));
         assert!(rendered.contains("u upstream"));
         assert!(rendered.contains("* main"));
@@ -7881,7 +7930,7 @@ mod tests {
         let rendered = app.render_to_string();
 
         assert!(rendered.contains("Filter /fea_  Matches: 1/2  (focused)"));
-        assert!(rendered.contains("Context: Enter checkout. 0 main. / filter. w worktrees."));
+        assert!(rendered.contains("Context: Enter commits. Space checkout."));
     }
 
     #[test]

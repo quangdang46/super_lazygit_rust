@@ -45,6 +45,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_id,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
             });
             effects.push(Effect::ScheduleRender);
         }
@@ -115,6 +116,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                             repo_id: repo_mode.current_repo_id.clone(),
                             selected_path: Some(selected_path),
                             diff_presentation,
+                            commit_ref: None,
                         });
                     }
                     effects.push(Effect::ScheduleRender);
@@ -131,6 +133,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                             repo_id: repo_mode.current_repo_id.clone(),
                             selected_path: Some(selected_path),
                             diff_presentation,
+                            commit_ref: None,
                         });
                     }
                     effects.push(Effect::ScheduleRender);
@@ -164,6 +167,29 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     effects.push(Effect::ScheduleRender);
                 }
             }
+        }
+        Action::OpenSelectedBranchCommits => {
+            let Some((repo_id, branch_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) else {
+                push_warning(state, "Select a branch before opening its commits.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                clear_repo_subview_filter_focus(repo_mode);
+                repo_mode.active_subview = crate::state::RepoSubview::Commits;
+                repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                repo_mode.commit_history_ref = Some(branch_ref);
+                repo_mode.diff_scroll = 0;
+                close_commit_box(repo_mode);
+                sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
+            }
+            state.focused_pane = PaneId::RepoDetail;
+            effects.push(load_repo_detail_effect(state, repo_id));
+            effects.push(Effect::ScheduleRender);
         }
         Action::OpenSelectedCommitFiles => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
@@ -1112,6 +1138,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             let mut repo_detail_reload = None;
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 clear_repo_subview_filter_focus(repo_mode);
+                repo_mode.commit_history_ref = None;
                 if subview != crate::state::RepoSubview::Commits {
                     repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
                 }
@@ -1527,7 +1554,7 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
             }
         }
         crate::state::RepoSubview::Branches => {
-            reduce_action(state, Action::CheckoutSelectedBranch, effects);
+            reduce_action(state, Action::OpenSelectedBranchCommits, effects);
         }
         crate::state::RepoSubview::Commits => {
             let action = match repo_mode.commit_subview_mode {
@@ -3182,10 +3209,16 @@ fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> E
             }
         })
         .unwrap_or((None, DiffPresentation::Unstaged));
+    let commit_ref = state.repo_mode.as_ref().and_then(|repo_mode| {
+        (repo_mode.active_subview == crate::state::RepoSubview::Commits)
+            .then(|| repo_mode.commit_history_ref.clone())
+            .flatten()
+    });
     Effect::LoadRepoDetail {
         repo_id,
         selected_path,
         diff_presentation,
+        commit_ref,
     }
 }
 
@@ -3781,6 +3814,7 @@ mod tests {
                     repo_id,
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
                 crate::effect::Effect::ScheduleRender,
             ]
@@ -4149,6 +4183,7 @@ mod tests {
                     repo_id: target_repo_id,
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
                 Effect::ScheduleRender,
             ]
@@ -4284,6 +4319,77 @@ mod tests {
             ))
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn open_selected_branch_commits_switches_to_history_and_loads_branch_ref() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: None,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedBranchCommits));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_subview_mode),
+            Some(crate::state::CommitSubviewMode::History)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            Some("feature")
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: Some("feature".to_string()),
+                },
+                Effect::ScheduleRender,
+            ]
+        );
     }
 
     #[test]
@@ -6267,6 +6373,7 @@ mod tests {
                     repo_id,
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
             ]
         );
@@ -6281,6 +6388,43 @@ mod tests {
         let result = reduce(state, Event::Action(Action::RefreshSelectedRepo));
 
         assert_eq!(result.effects, vec![Effect::RefreshRepoSummary { repo_id }]);
+    }
+
+    #[test]
+    fn refresh_selected_repo_preserves_selected_branch_commit_history() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            workspace: crate::state::WorkspaceState {
+                selected_repo_id: Some(repo_id.clone()),
+                ..AppState::default().workspace
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_history_ref: Some("feature".to_string()),
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RefreshSelectedRepo));
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                },
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: Some("feature".to_string()),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -6774,6 +6918,7 @@ mod tests {
                     repo_id: RepoId::new("repo-1"),
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
             ]
         );
@@ -8479,6 +8624,7 @@ mod tests {
                     repo_id: repo_id.clone(),
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
                 Effect::ScheduleRender,
             ]
@@ -8545,6 +8691,7 @@ mod tests {
                     repo_id: RepoId::new("repo-1"),
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
                 Effect::ScheduleRender,
             ]
@@ -8640,6 +8787,7 @@ mod tests {
                     repo_id,
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
             ]
         );
@@ -8765,6 +8913,7 @@ mod tests {
                     repo_id: repo_active,
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
                 Effect::RefreshRepoSummary {
                     repo_id: repo_visible,
@@ -8879,6 +9028,7 @@ mod tests {
                     repo_id: repo_active,
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
                 },
                 Effect::ScheduleRender,
             ]

@@ -187,11 +187,13 @@ impl AppRuntime {
                     repo_id,
                     selected_path,
                     diff_presentation,
+                    commit_ref,
                 } => {
                     let result = self.git.read_repo_detail(RepoDetailRequest {
                         repo_id: repo_id.clone(),
                         selected_path: selected_path.clone(),
                         diff_presentation: *diff_presentation,
+                        commit_ref: commit_ref.clone(),
                     });
                     self.diagnostics.extend_snapshot(self.git.diagnostics());
 

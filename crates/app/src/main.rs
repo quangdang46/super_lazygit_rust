@@ -81,8 +81,8 @@ mod tests {
     use super::*;
     use super_lazygit_core::{
         AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, Event, PaneId, RepoId,
-        RepoSummary, ScanStatus, TimerEvent, Timestamp, WatcherEventKind, WatcherHealth,
-        WorkerEvent, WorkspaceState,
+        RepoSubview, RepoSummary, ScanStatus, TimerEvent, Timestamp, WatcherEventKind,
+        WatcherHealth, WorkerEvent, WorkspaceState,
     };
     use super_lazygit_test_support::{clean_repo, TempRepo};
 
@@ -704,6 +704,12 @@ mod tests {
             "feature-contract",
         ])
         .expect("create feature worktree");
+        std::fs::write(worktree_path.join("tracked.txt"), "feature branch only\n")
+            .expect("update feature worktree file");
+        git_in(&worktree_path, ["add", "tracked.txt"]);
+        git_in(&worktree_path, ["commit", "-m", "feature branch commit"]);
+        repo.git(["checkout", "main"])
+            .expect("return main checkout after feature commit");
 
         let repo_id = RepoId::new(repo.path().display().to_string());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
@@ -722,7 +728,7 @@ mod tests {
 
         harness.press("open branches detail", "2");
         harness.assert_latest_contains("Detail: Branches");
-        harness.assert_latest_contains("Context: Enter checkout. 0 main. / filter. w worktrees.");
+        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
 
         harness.press("focus branches filter", "/");
         harness.paste("filter branches", "fea");
@@ -757,6 +763,22 @@ mod tests {
             },
             "enter should keep the query while leaving the filter field",
         );
+
+        harness.press("open selected branch commits", "enter");
+        harness.assert_latest_contains("Detail: Commits");
+        harness.assert_latest_contains("feature branch commit");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    repo_mode.active_subview == RepoSubview::Commits
+                        && repo_mode.commit_history_ref.as_deref() == Some("feature-contract")
+                })
+            },
+            "enter from branches should drill into the selected branch history",
+        );
+
+        harness.press("return to branches detail", "2");
+        harness.assert_latest_contains("Detail: Branches");
 
         harness.press("open worktrees detail", "w");
         harness.assert_latest_contains("Detail: Worktrees");
