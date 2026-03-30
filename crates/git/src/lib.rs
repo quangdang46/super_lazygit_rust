@@ -2401,25 +2401,7 @@ fn read_commit_files(repo_path: &Path, oid: &str) -> Vec<CommitFileItem> {
         repo_path,
         ["show", "--format=", "--name-status", "--no-renames", oid],
     )
-    .map(|output| {
-        output
-            .lines()
-            .filter_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-
-                let (code, path) = trimmed
-                    .split_once('\t')
-                    .or_else(|| trimmed.split_once(char::is_whitespace))?;
-                Some(CommitFileItem {
-                    path: PathBuf::from(path.trim()),
-                    kind: commit_status_kind(code),
-                })
-            })
-            .collect()
-    })
+    .map(|output| parse_name_status_lines(&output))
     .unwrap_or_default()
 }
 
@@ -2459,11 +2441,45 @@ fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
                         || (line.to_string(), line.to_string()),
                         |(name, summary)| (name.to_string(), format!("{name}: {summary}")),
                     );
-                    StashItem { stash_ref, label }
+                    let changed_files = read_stash_files(repo_path, &stash_ref);
+                    StashItem {
+                        stash_ref,
+                        label,
+                        changed_files,
+                    }
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn read_stash_files(repo_path: &Path, stash_ref: &str) -> Vec<CommitFileItem> {
+    git_stdout(
+        repo_path,
+        ["stash", "show", "--name-status", "--no-renames", stash_ref],
+    )
+    .map(|output| parse_name_status_lines(&output))
+    .unwrap_or_default()
+}
+
+fn parse_name_status_lines(output: &str) -> Vec<CommitFileItem> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+
+            let (code, path) = trimmed
+                .split_once('\t')
+                .or_else(|| trimmed.split_once(char::is_whitespace))?;
+            Some(CommitFileItem {
+                path: PathBuf::from(path.trim()),
+                kind: commit_status_kind(code),
+            })
+        })
+        .collect()
 }
 
 fn read_reflog(repo_path: &Path) -> Vec<ReflogItem> {
@@ -3229,11 +3245,46 @@ mod tests {
         assert!(!detail.branches.is_empty());
         assert!(!detail.commits.is_empty());
         assert!(!detail.stashes.is_empty());
+        assert!(!detail.stashes[0].changed_files.is_empty());
+        assert!(detail.stashes[0]
+            .changed_files
+            .iter()
+            .any(|file| file.path == PathBuf::from("stash.txt")));
         assert!(!detail.reflog_items.is_empty());
         assert!(detail
             .reflog_items
             .iter()
             .any(|entry| !entry.selector.is_empty() && !entry.oid.is_empty()));
+    }
+
+    #[test]
+    fn cli_backend_reads_stash_changed_files_without_rename_coalescing() {
+        let repo = stash_inventory_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+            })
+            .expect("detail should load");
+
+        let changed_files = &detail.stashes[0].changed_files;
+        assert!(changed_files.iter().any(|file| {
+            file.path == PathBuf::from("modified.txt") && file.kind == FileStatusKind::Modified
+        }));
+        assert!(changed_files.iter().any(|file| {
+            file.path == PathBuf::from("deleted.txt") && file.kind == FileStatusKind::Deleted
+        }));
+        assert!(changed_files.iter().any(|file| {
+            file.path == PathBuf::from("renamed-before.txt") && file.kind == FileStatusKind::Deleted
+        }));
+        assert!(changed_files.iter().any(|file| {
+            file.path == PathBuf::from("renamed-after.txt") && file.kind == FileStatusKind::Added
+        }));
     }
 
     #[test]
@@ -5395,6 +5446,21 @@ mod tests {
         repo.git(["stash", "push", "-m", "foo"])?;
         repo.write_file("file.txt", "change to stash2\n")?;
         repo.git(["stash", "push", "-m", "bar"])?;
+        Ok(repo)
+    }
+
+    fn stash_inventory_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file("modified.txt", "base\n")?;
+        repo.write_file("renamed-before.txt", "base\n")?;
+        repo.write_file("deleted.txt", "base\n")?;
+        repo.commit_all("initial")?;
+
+        repo.write_file("modified.txt", "changed\n")?;
+        repo.git(["mv", "renamed-before.txt", "renamed-after.txt"])?;
+        fs::remove_file(repo.path().join("deleted.txt"))?;
+        repo.git(["stash", "push", "-m", "inventory"])?;
+
         Ok(repo)
     }
 

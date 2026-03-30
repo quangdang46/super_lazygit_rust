@@ -222,12 +222,22 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next stash entry |
 | `k` / `Up` | Select the previous stash entry |
-| `Enter` | Apply the selected stash |
+| `Enter` | Open the selected stash's changed-files view |
 | `Space` | Apply the selected stash |
 | `n` | Open create-branch-from-stash prompt |
 | `r` | Open rename-stash prompt |
 | `g` | Open pop-stash confirmation |
 | `d` | Open drop-stash confirmation |
+| `w` | Switch to the worktrees subview |
+
+### Stash files detail mode
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next changed file from the selected stash |
+| `k` / `Up` | Select the previous changed file from the selected stash |
+| `Enter` | Return to the stash list for the same selected stash |
+| `0` | Return focus to the last active main pane |
 | `w` | Switch to the worktrees subview |
 
 ### Reflog detail subview

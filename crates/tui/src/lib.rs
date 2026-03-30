@@ -13,7 +13,7 @@ use super_lazygit_core::{
     reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitHistoryMode,
     CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event,
     InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoModeState, RepoSubview,
-    RepoSummary,
+    RepoSummary, StashSubviewMode,
 };
 
 #[derive(Debug)]
@@ -1305,39 +1305,78 @@ impl TuiApp {
                         }
                     }
                     RepoSubview::Stash => {
-                        if self.binding_matches_action(
-                            "select_next_stash",
-                            raw,
-                            normalized,
-                            &["j", "down"],
-                        ) {
+                        if repo_mode.stash_subview_mode == StashSubviewMode::List
+                            && self.binding_matches_action(
+                                "select_next_stash",
+                                raw,
+                                normalized,
+                                &["j", "down"],
+                            )
+                        {
                             return Some(Action::SelectNextStash);
                         }
 
-                        if self.binding_matches_action(
-                            "select_previous_stash",
-                            raw,
-                            normalized,
-                            &["k", "up"],
-                        ) {
+                        if repo_mode.stash_subview_mode == StashSubviewMode::Files
+                            && self.binding_matches_action(
+                                "select_next_stash_file",
+                                raw,
+                                normalized,
+                                &["j", "down"],
+                            )
+                        {
+                            return Some(Action::SelectNextStashFile);
+                        }
+
+                        if repo_mode.stash_subview_mode == StashSubviewMode::List
+                            && self.binding_matches_action(
+                                "select_previous_stash",
+                                raw,
+                                normalized,
+                                &["k", "up"],
+                            )
+                        {
                             return Some(Action::SelectPreviousStash);
                         }
 
+                        if repo_mode.stash_subview_mode == StashSubviewMode::Files
+                            && self.binding_matches_action(
+                                "select_previous_stash_file",
+                                raw,
+                                normalized,
+                                &["k", "up"],
+                            )
+                        {
+                            return Some(Action::SelectPreviousStashFile);
+                        }
+
                         if self.binding_matches_action(
-                            "apply_selected_stash",
+                            "activate_repo_subview_selection",
                             raw,
                             normalized,
-                            &["enter", "space"],
+                            &["enter"],
                         ) {
                             return Some(Action::ActivateRepoSubviewSelection);
                         }
 
-                        if self.binding_matches_action(
-                            "open_create_branch_from_stash_prompt",
-                            raw,
-                            normalized,
-                            &["n"],
-                        ) {
+                        if repo_mode.stash_subview_mode == StashSubviewMode::List
+                            && self.binding_matches_action(
+                                "apply_selected_stash",
+                                raw,
+                                normalized,
+                                &["space"],
+                            )
+                        {
+                            return Some(Action::ApplySelectedStash);
+                        }
+
+                        if repo_mode.stash_subview_mode == StashSubviewMode::List
+                            && self.binding_matches_action(
+                                "open_create_branch_from_stash_prompt",
+                                raw,
+                                normalized,
+                                &["n"],
+                            )
+                        {
                             if let Some(stash) = selected_stash(
                                 repo_mode.detail.as_ref(),
                                 repo_mode.stash_view.selected_index,
@@ -1351,12 +1390,14 @@ impl TuiApp {
                             }
                         }
 
-                        if self.binding_matches_action(
-                            "open_rename_stash_prompt",
-                            raw,
-                            normalized,
-                            &["r"],
-                        ) {
+                        if repo_mode.stash_subview_mode == StashSubviewMode::List
+                            && self.binding_matches_action(
+                                "open_rename_stash_prompt",
+                                raw,
+                                normalized,
+                                &["r"],
+                            )
+                        {
                             if let Some(stash) = selected_stash(
                                 repo_mode.detail.as_ref(),
                                 repo_mode.stash_view.selected_index,
@@ -1371,21 +1412,25 @@ impl TuiApp {
                             }
                         }
 
-                        if self.binding_matches_action(
-                            "pop_selected_stash",
-                            raw,
-                            normalized,
-                            &["g"],
-                        ) {
+                        if repo_mode.stash_subview_mode == StashSubviewMode::List
+                            && self.binding_matches_action(
+                                "pop_selected_stash",
+                                raw,
+                                normalized,
+                                &["g"],
+                            )
+                        {
                             return Some(Action::PopSelectedStash);
                         }
 
-                        if self.binding_matches_action(
-                            "drop_selected_stash",
-                            raw,
-                            normalized,
-                            &["d"],
-                        ) {
+                        if repo_mode.stash_subview_mode == StashSubviewMode::List
+                            && self.binding_matches_action(
+                                "drop_selected_stash",
+                                raw,
+                                normalized,
+                                &["d"],
+                            )
+                        {
                             return Some(Action::DropSelectedStash);
                         }
                     }
@@ -2051,6 +2096,7 @@ impl TuiApp {
                 RepoSubview::Stash => repo_stash_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.stash_view.selected_index,
+                    repo_mode.stash_files_view.selected_index,
                     repo_mode
                         .subview_filter(RepoSubview::Stash)
                         .map(|filter| filter.query.as_str())
@@ -2058,6 +2104,7 @@ impl TuiApp {
                     repo_mode
                         .subview_filter(RepoSubview::Stash)
                         .is_some_and(|filter| filter.focused),
+                    repo_mode.stash_subview_mode,
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
@@ -3121,7 +3168,9 @@ fn selected_stash(
     selected_index: Option<usize>,
 ) -> Option<&super_lazygit_core::StashItem> {
     let detail = detail?;
-    let selected_index = selected_index.unwrap_or(0);
+    let selected_index = selected_index
+        .filter(|index| *index < detail.stashes.len())
+        .unwrap_or(0);
     detail.stashes.get(selected_index)
 }
 
@@ -3134,8 +3183,10 @@ fn stash_message_label(label: &str) -> String {
 fn repo_stash_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    selected_file_index: Option<usize>,
     filter_query: &str,
     filter_focused: bool,
+    stash_subview_mode: StashSubviewMode,
     is_focused: bool,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -3151,6 +3202,29 @@ fn repo_stash_lines(
         ];
     };
 
+    match stash_subview_mode {
+        StashSubviewMode::List => repo_stash_list_lines(
+            detail,
+            selected_index,
+            filter_query,
+            filter_focused,
+            is_focused,
+            theme,
+        ),
+        StashSubviewMode::Files => {
+            repo_stash_file_lines(detail, selected_index, selected_file_index, theme)
+        }
+    }
+}
+
+fn repo_stash_list_lines(
+    detail: &RepoDetail,
+    selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     let visible_indices = visible_stash_indices(detail, filter_query);
     if visible_indices.is_empty() {
         return vec![
@@ -3194,7 +3268,7 @@ fn repo_stash_lines(
         lines.push(filter_line);
     }
     lines.extend([
-        Line::from("Context: Enter apply. 0 main. / filter. w worktrees."),
+        Line::from("Context: Enter files. Space apply. 0 main. / filter. w worktrees."),
         Line::from("Other: n branches off. r renames. g pops. d drops."),
         Line::from(""),
     ]);
@@ -3209,6 +3283,65 @@ fn repo_stash_lines(
             }
         }
         lines.push(Line::from(Span::styled(stash.label.clone(), style)));
+    }
+
+    lines
+}
+
+fn repo_stash_file_lines(
+    detail: &RepoDetail,
+    selected_stash_index: Option<usize>,
+    selected_file_index: Option<usize>,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(selected_stash) = selected_stash(Some(detail), selected_stash_index) else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Stash files",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("No stash is currently selected."),
+        ];
+    };
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            format!(
+                "Stash files  {}  {}",
+                selected_stash.stash_ref,
+                stash_message_label(&selected_stash.label)
+            ),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(selected_stash.label.clone()),
+        Line::from("Context: Enter stash list. 0 main. w worktrees."),
+        Line::from("Other: apply/pop/drop/rename/new-branch stay on the stash list."),
+        Line::from(""),
+    ];
+
+    if selected_stash.changed_files.is_empty() {
+        lines.push(Line::from("No changed files were reported for this stash."));
+        return lines;
+    }
+
+    let selected_file_index = selected_file_index
+        .filter(|index| *index < selected_stash.changed_files.len())
+        .unwrap_or(0);
+    for (index, file) in selected_stash.changed_files.iter().enumerate() {
+        let prefix = if index == selected_file_index {
+            ">"
+        } else {
+            " "
+        };
+        lines.push(Line::from(format!(
+            "{prefix} {} {}",
+            file_status_kind_label(file.kind),
+            file.path.display()
+        )));
     }
 
     lines
@@ -4890,8 +5023,16 @@ fn default_status_text(state: &AppState) -> String {
                         "Rebase detail focus; c continues, s skips, A aborts, 0 returns to the main pane, and j/k scroll the active step."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Stash {
-                        "Stash detail focus; Enter/Space applies, 0 returns to the main pane, / filters this panel, w opens worktrees, and g/d manage the selected stash."
-                            .to_string()
+                        match repo_mode.stash_subview_mode {
+                            StashSubviewMode::List => {
+                                "Stash detail focus; Enter opens changed files, Space applies, 0 returns to the main pane, / filters this panel, w opens worktrees, and g/d manage the selected stash."
+                                    .to_string()
+                            }
+                            StashSubviewMode::Files => {
+                                "Stash files focus; Enter returns to the stash list, 0 returns to the main pane, and w opens worktrees. Apply/pop/drop/rename/new-branch stay on the stash list."
+                                    .to_string()
+                            }
+                        }
                     } else if repo_mode.active_subview == RepoSubview::Reflog {
                         "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, n branches off it, C cherry-picks, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, w opens worktrees, and u preserves the explicit restore flow."
                             .to_string()
@@ -4964,7 +5105,14 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
                     "Rebase pane  c continue  s skip  A abort  j/k scroll  0 main pane  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Stash {
-                    "Stash pane  j/k move  Enter apply  0 main pane  / filter  w worktrees  n branch  r rename  g pop  d drop  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    match repo_mode.stash_subview_mode {
+                        StashSubviewMode::List => {
+                            "Stash pane  j/k move stash  Enter files  Space apply  0 main pane  / filter  w worktrees  n branch  r rename  g pop  d drop  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                        }
+                        StashSubviewMode::Files => {
+                            "Stash files pane  j/k move file  Enter stash list  0 main pane  w worktrees  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                        }
+                    }
                 } else if repo_mode.active_subview == RepoSubview::Reflog {
                     "Reflog pane  j/k move  Enter commits  Space checkout  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Worktrees {
@@ -5315,10 +5463,30 @@ mod tests {
                 super_lazygit_core::StashItem {
                     stash_ref: "stash@{0}".to_string(),
                     label: "stash@{0}: WIP on main: fixture stash".to_string(),
+                    changed_files: vec![
+                        super_lazygit_core::CommitFileItem {
+                            path: std::path::PathBuf::from("stash.txt"),
+                            kind: super_lazygit_core::FileStatusKind::Modified,
+                        },
+                        super_lazygit_core::CommitFileItem {
+                            path: std::path::PathBuf::from("stash-untracked.txt"),
+                            kind: super_lazygit_core::FileStatusKind::Added,
+                        },
+                    ],
                 },
                 super_lazygit_core::StashItem {
                     stash_ref: "stash@{1}".to_string(),
                     label: "stash@{1}: On feature: prior experiment".to_string(),
+                    changed_files: vec![
+                        super_lazygit_core::CommitFileItem {
+                            path: std::path::PathBuf::from("src/lib.rs"),
+                            kind: super_lazygit_core::FileStatusKind::Modified,
+                        },
+                        super_lazygit_core::CommitFileItem {
+                            path: std::path::PathBuf::from("docs/notes.md"),
+                            kind: super_lazygit_core::FileStatusKind::Deleted,
+                        },
+                    ],
                 },
             ],
             reflog_items: vec![
@@ -7713,17 +7881,6 @@ mod tests {
             Some(1)
         );
 
-        let enter = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
-            key: "enter".to_string(),
-        })));
-        assert!(enter.effects.iter().any(|effect| matches!(
-            effect,
-            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
-                command: super_lazygit_core::GitCommand::ApplyStash { stash_ref },
-                ..
-            }) if stash_ref == "stash@{1}"
-        )));
-
         let mut space_app = TuiApp::new(down.state.clone(), AppConfig::default());
         let space = space_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "space".to_string(),
@@ -7850,6 +8007,121 @@ mod tests {
                 stash_ref: "stash@{1}".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn repo_mode_stash_detail_enter_opens_selected_stash_files() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Stash,
+                detail: Some(sample_repo_detail()),
+                stash_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.stash_subview_mode),
+            Some(StashSubviewMode::Files)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_files_view.selected_index),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn repo_mode_stash_file_detail_enter_returns_to_stash_list() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Stash,
+                stash_subview_mode: StashSubviewMode::Files,
+                detail: Some(sample_repo_detail()),
+                stash_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                stash_files_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.stash_subview_mode),
+            Some(StashSubviewMode::List)
+        );
+    }
+
+    #[test]
+    fn repo_mode_stash_file_detail_routes_file_navigation_only() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Stash,
+                stash_subview_mode: StashSubviewMode::Files,
+                detail: Some(sample_repo_detail()),
+                stash_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                stash_files_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_files_view.selected_index),
+            Some(1)
+        );
+
+        let ignored = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert!(ignored.effects.is_empty());
     }
 
     #[test]
@@ -8968,7 +9240,7 @@ mod tests {
             },
         );
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(100, 18);
+        app.resize(120, 18);
 
         let rendered = app.render_to_string();
 
@@ -9336,11 +9608,64 @@ mod tests {
 
         assert!(rendered.contains("Detail: Stash"));
         assert!(rendered.contains("Selected: stash@{1}"));
-        assert!(rendered.contains("Context: Enter apply. 0 main. / filter. w worktrees."));
+        assert!(rendered.contains("Context: Enter files. Space apply."));
+        assert!(rendered.contains("0 main. / filter."));
+        assert!(rendered.contains("Other: n branches off. r renames. g pops. d drops."));
         assert!(rendered.contains("n branches off"));
         assert!(rendered.contains("g pops"));
         assert!(rendered.contains("stash@{0}: WIP on main: fixture stash"));
         assert!(rendered.contains("stash@{1}: On feature: prior experiment"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_stash_file_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Stash,
+                stash_subview_mode: StashSubviewMode::Files,
+                detail: Some(sample_repo_detail()),
+                stash_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                stash_files_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Stash"));
+        assert!(rendered.contains("Stash files  stash@{1}  prior experiment"));
+        assert!(rendered.contains("Context: Enter stash list. 0 main. w worktrees."));
+        assert!(rendered.contains("> M src/lib.rs"));
+        assert!(rendered.contains("  D docs/notes.md"));
     }
 
     #[test]

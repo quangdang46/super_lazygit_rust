@@ -1152,6 +1152,67 @@ mod tests {
     }
 
     #[test]
+    fn e2e_keyboard_harness_inspects_stash_files_before_applying_older_stash() {
+        let repo = TempRepo::new().expect("repo fixture");
+        repo.write_file("alpha.txt", "base\n")
+            .expect("write alpha base");
+        repo.write_file("beta.txt", "base\n")
+            .expect("write beta base");
+        repo.commit_all("initial commit")
+            .expect("commit initial state");
+
+        repo.write_file("alpha.txt", "alpha stash\n")
+            .expect("write alpha stash");
+        repo.git(["stash", "push", "-m", "alpha stash"])
+            .expect("create alpha stash");
+
+        repo.write_file("beta.txt", "beta stash\n")
+            .expect("write beta stash");
+        repo.git(["stash", "push", "-m", "beta stash"])
+            .expect("create beta stash");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+
+        harness.press("open stash detail", "6");
+        harness.assert_latest_contains("Detail: Stash");
+        harness.assert_latest_contains("Context: Enter files. Space apply.");
+
+        harness.press("select older stash entry", "j");
+        harness.assert_latest_contains("stash@{1}: On main: alpha stash");
+
+        harness.press("open selected stash files", "enter");
+        harness.assert_latest_contains("Stash files  stash@{1}  alpha stash");
+        harness.assert_latest_contains("> M alpha.txt");
+
+        harness.press("return to stash list", "enter");
+        harness.assert_latest_contains("Context: Enter files. Space apply.");
+
+        harness.press("apply selected stash", "space");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "applying a stash should keep the app in repo mode",
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("alpha.txt")).expect("read alpha after apply"),
+            "alpha stash\n",
+            "space from the stash list should apply the selected stash after inspection\n{}",
+            harness.timeline()
+        );
+    }
+
+    #[test]
     fn performance_harness_measures_startup_scan_refresh_and_diff_loads() {
         let fixture = PerfWorkspaceFixture::new(6);
         let budgets = PerfBudgets::from_env();

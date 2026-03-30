@@ -552,6 +552,7 @@ pub struct RepoModeState {
     pub current_repo_id: RepoId,
     pub active_subview: RepoSubview,
     pub commit_subview_mode: CommitSubviewMode,
+    pub stash_subview_mode: StashSubviewMode,
     pub commit_history_mode: CommitHistoryMode,
     pub main_focus: PaneId,
     pub diff_scroll: usize,
@@ -566,6 +567,7 @@ pub struct RepoModeState {
     pub commits_view: ListViewState,
     pub commit_files_view: ListViewState,
     pub stash_view: ListViewState,
+    pub stash_files_view: ListViewState,
     pub reflog_view: ListViewState,
     pub worktree_view: ListViewState,
     pub branches_filter: RepoSubviewFilterState,
@@ -592,6 +594,7 @@ impl RepoModeState {
             current_repo_id,
             active_subview: RepoSubview::default(),
             commit_subview_mode: CommitSubviewMode::default(),
+            stash_subview_mode: StashSubviewMode::default(),
             commit_history_mode: CommitHistoryMode::default(),
             main_focus: PaneId::RepoUnstaged,
             diff_scroll: 0,
@@ -606,6 +609,7 @@ impl RepoModeState {
             commits_view: ListViewState::default(),
             commit_files_view: ListViewState::default(),
             stash_view: ListViewState::default(),
+            stash_files_view: ListViewState::default(),
             reflog_view: ListViewState::default(),
             worktree_view: ListViewState::default(),
             branches_filter: RepoSubviewFilterState::default(),
@@ -636,7 +640,10 @@ impl RepoModeState {
                 CommitSubviewMode::History => &self.commits_filter,
                 CommitSubviewMode::Files => &self.commit_files_filter,
             }),
-            RepoSubview::Stash => Some(&self.stash_filter),
+            RepoSubview::Stash => match self.stash_subview_mode {
+                StashSubviewMode::List => Some(&self.stash_filter),
+                StashSubviewMode::Files => None,
+            },
             RepoSubview::Reflog => Some(&self.reflog_filter),
             RepoSubview::Worktrees => Some(&self.worktree_filter),
             RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
@@ -655,7 +662,10 @@ impl RepoModeState {
                 CommitSubviewMode::History => &mut self.commits_filter,
                 CommitSubviewMode::Files => &mut self.commit_files_filter,
             }),
-            RepoSubview::Stash => Some(&mut self.stash_filter),
+            RepoSubview::Stash => match self.stash_subview_mode {
+                StashSubviewMode::List => Some(&mut self.stash_filter),
+                StashSubviewMode::Files => None,
+            },
             RepoSubview::Reflog => Some(&mut self.reflog_filter),
             RepoSubview::Worktrees => Some(&mut self.worktree_filter),
             RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
@@ -667,6 +677,13 @@ impl RepoModeState {
 pub enum CommitSubviewMode {
     #[default]
     History,
+    Files,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StashSubviewMode {
+    #[default]
+    List,
     Files,
 }
 
@@ -989,6 +1006,7 @@ pub struct CommitFileItem {
 pub struct StashItem {
     pub stash_ref: String,
     pub label: String,
+    pub changed_files: Vec<CommitFileItem>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -353,6 +353,29 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::OpenSelectedStashFiles => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if selected_stash_item(repo_mode).is_some() {
+                    repo_mode.stash_subview_mode = crate::state::StashSubviewMode::Files;
+                    repo_mode.stash_filter.focused = false;
+                    sync_stash_file_selection(repo_mode);
+                    state.focused_pane = PaneId::RepoDetail;
+                    effects.push(Effect::ScheduleRender);
+                } else {
+                    push_warning(state, "Select a stash before opening changed files.");
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CloseSelectedStashFiles => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if repo_mode.stash_subview_mode == crate::state::StashSubviewMode::Files {
+                    repo_mode.stash_subview_mode = crate::state::StashSubviewMode::List;
+                    state.focused_pane = PaneId::RepoDetail;
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::CheckoutSelectedCommit => match pending_checkoutable_history_target(state) {
             Ok(Some((repo_id, commit, summary))) => {
                 let job = git_job(repo_id, GitCommand::CheckoutCommit { commit });
@@ -643,6 +666,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::SelectPreviousStash => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_stash_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectNextStashFile => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_stash_file_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousStashFile => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_stash_file_selection(repo_mode, -1) {
                     effects.push(Effect::ScheduleRender);
                 }
             }
@@ -1444,6 +1481,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_history_mode = CommitHistoryMode::Linear;
                 repo_mode.pending_commit_selection_oid = None;
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                repo_mode.stash_subview_mode = crate::state::StashSubviewMode::List;
                 repo_mode.active_subview = subview;
                 repo_mode.diff_scroll = 0;
                 if !matches!(
@@ -1885,7 +1923,11 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
             reduce_action(state, action, effects);
         }
         crate::state::RepoSubview::Stash => {
-            reduce_action(state, Action::ApplySelectedStash, effects);
+            let action = match repo_mode.stash_subview_mode {
+                crate::state::StashSubviewMode::List => Action::OpenSelectedStashFiles,
+                crate::state::StashSubviewMode::Files => Action::CloseSelectedStashFiles,
+            };
+            reduce_action(state, action, effects);
         }
         crate::state::RepoSubview::Worktrees => {
             let next_repo_id = selected_worktree_item(repo_mode).map(|worktree| {
@@ -2846,6 +2888,26 @@ fn sync_stash_selection(repo_mode: &mut RepoModeState) {
         .or_else(|| visible_indices.first().copied());
 }
 
+fn sync_stash_file_selection(repo_mode: &mut RepoModeState) {
+    let Some(stash) = selected_stash_item(repo_mode) else {
+        repo_mode.stash_files_view.selected_index = None;
+        return;
+    };
+
+    let visible_indices = filtered_stash_file_indices(repo_mode);
+    repo_mode.stash_files_view.selected_index = visible_indices
+        .iter()
+        .copied()
+        .find(|index| repo_mode.stash_files_view.selected_index == Some(*index))
+        .or_else(|| {
+            if stash.changed_files.is_empty() {
+                None
+            } else {
+                visible_indices.first().copied()
+            }
+        });
+}
+
 fn sync_reflog_selection(repo_mode: &mut RepoModeState) {
     if repo_mode.detail.is_none() {
         repo_mode.reflog_view.selected_index = None;
@@ -3125,7 +3187,10 @@ fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::st
             crate::state::CommitSubviewMode::History => sync_commit_selection(repo_mode),
             crate::state::CommitSubviewMode::Files => sync_commit_file_selection(repo_mode),
         },
-        crate::state::RepoSubview::Stash => sync_stash_selection(repo_mode),
+        crate::state::RepoSubview::Stash => match repo_mode.stash_subview_mode {
+            crate::state::StashSubviewMode::List => sync_stash_selection(repo_mode),
+            crate::state::StashSubviewMode::Files => sync_stash_file_selection(repo_mode),
+        },
         crate::state::RepoSubview::Reflog => sync_reflog_selection(repo_mode),
         crate::state::RepoSubview::Worktrees => sync_worktree_selection(repo_mode),
         crate::state::RepoSubview::Status
@@ -3614,6 +3679,24 @@ fn step_stash_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     )
 }
 
+fn step_stash_file_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let Some(stash) = selected_stash_item(repo_mode) else {
+        repo_mode.stash_files_view.selected_index = None;
+        return false;
+    };
+    if stash.changed_files.is_empty() {
+        repo_mode.stash_files_view.selected_index = None;
+        return false;
+    }
+
+    let visible_indices = filtered_stash_file_indices(repo_mode);
+    step_filtered_selection(
+        &mut repo_mode.stash_files_view.selected_index,
+        &visible_indices,
+        step,
+    )
+}
+
 fn step_reflog_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     if repo_mode.detail.is_none() {
         repo_mode.reflog_view.selected_index = None;
@@ -3761,6 +3844,13 @@ fn filtered_stash_indices(repo_mode: &RepoModeState) -> Vec<usize> {
             crate::state::stash_matches_filter(stash, &query).then_some(index)
         })
         .collect()
+}
+
+fn filtered_stash_file_indices(repo_mode: &RepoModeState) -> Vec<usize> {
+    let Some(stash) = selected_stash_item(repo_mode) else {
+        return Vec::new();
+    };
+    (0..stash.changed_files.len()).collect()
 }
 
 fn filtered_reflog_indices(repo_mode: &RepoModeState) -> Vec<usize> {
@@ -5534,10 +5624,18 @@ mod tests {
                         StashItem {
                             stash_ref: "stash@{0}".to_string(),
                             label: "stash@{0}: latest".to_string(),
+                            changed_files: vec![CommitFileItem {
+                                path: std::path::PathBuf::from("stash.txt"),
+                                kind: FileStatusKind::Modified,
+                            }],
                         },
                         StashItem {
                             stash_ref: "stash@{1}".to_string(),
                             label: "stash@{1}: older".to_string(),
+                            changed_files: vec![CommitFileItem {
+                                path: std::path::PathBuf::from("stash-old.txt"),
+                                kind: FileStatusKind::Added,
+                            }],
                         },
                     ],
                     ..RepoDetail::default()
@@ -5558,6 +5656,155 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.stash_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn activate_repo_subview_selection_opens_selected_stash_files() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Stash,
+                detail: Some(RepoDetail {
+                    stashes: vec![StashItem {
+                        stash_ref: "stash@{0}".to_string(),
+                        label: "stash@{0}: latest".to_string(),
+                        changed_files: vec![
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("stash.txt"),
+                                kind: FileStatusKind::Modified,
+                            },
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("new.txt"),
+                                kind: FileStatusKind::Added,
+                            },
+                        ],
+                    }],
+                    ..RepoDetail::default()
+                }),
+                stash_filter: crate::state::RepoSubviewFilterState {
+                    query: "stash".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ActivateRepoSubviewSelection));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.stash_subview_mode),
+            Some(crate::state::StashSubviewMode::Files)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_files_view.selected_index),
+            Some(0)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.stash_filter.focused),
+            Some(false)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn activate_repo_subview_selection_closes_stash_file_view() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Stash,
+                stash_subview_mode: crate::state::StashSubviewMode::Files,
+                detail: Some(RepoDetail {
+                    stashes: vec![StashItem {
+                        stash_ref: "stash@{0}".to_string(),
+                        label: "stash@{0}: latest".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: std::path::PathBuf::from("stash.txt"),
+                            kind: FileStatusKind::Modified,
+                        }],
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ActivateRepoSubviewSelection));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.stash_subview_mode),
+            Some(crate::state::StashSubviewMode::List)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn select_next_stash_file_advances_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Stash,
+                stash_subview_mode: crate::state::StashSubviewMode::Files,
+                detail: Some(RepoDetail {
+                    stashes: vec![StashItem {
+                        stash_ref: "stash@{0}".to_string(),
+                        label: "stash@{0}: latest".to_string(),
+                        changed_files: vec![
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("stash.txt"),
+                                kind: FileStatusKind::Modified,
+                            },
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("other.txt"),
+                                kind: FileStatusKind::Added,
+                            },
+                        ],
+                    }],
+                    ..RepoDetail::default()
+                }),
+                stash_files_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SelectNextStashFile));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_files_view.selected_index),
             Some(1)
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
@@ -5960,6 +6207,10 @@ mod tests {
                     stashes: vec![StashItem {
                         stash_ref: "stash@{0}".to_string(),
                         label: "stash@{0}: latest".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: std::path::PathBuf::from("stash.txt"),
+                            kind: FileStatusKind::Modified,
+                        }],
                     }],
                     ..RepoDetail::default()
                 }),
@@ -6006,6 +6257,10 @@ mod tests {
                     stashes: vec![StashItem {
                         stash_ref: "stash@{0}".to_string(),
                         label: "stash@{0}: latest".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: std::path::PathBuf::from("stash.txt"),
+                            kind: FileStatusKind::Modified,
+                        }],
                     }],
                     ..RepoDetail::default()
                 }),
@@ -6056,6 +6311,10 @@ mod tests {
                     stashes: vec![StashItem {
                         stash_ref: "stash@{0}".to_string(),
                         label: "stash@{0}: latest".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: std::path::PathBuf::from("stash.txt"),
+                            kind: FileStatusKind::Modified,
+                        }],
                     }],
                     ..RepoDetail::default()
                 }),
