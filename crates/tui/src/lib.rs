@@ -611,6 +611,17 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "checkout_previous_branch",
+                            raw,
+                            normalized,
+                            &["-"],
+                        ) {
+                            return Some(Action::CheckoutBranch {
+                                branch_ref: "-".to_string(),
+                            });
+                        }
+
+                        if self.binding_matches_action(
                             "open_rename_branch_prompt",
                             raw,
                             normalized,
@@ -2254,10 +2265,8 @@ fn repo_branch_lines(
             comparison_target,
             comparison_source,
         )),
-        Line::from(
-            "Enter checks out. c prompts checkout by name. n creates. R renames. d deletes. u sets upstream.",
-        ),
-        Line::from("v marks compare base/target."),
+        Line::from("Enter checks out. - previous branch. c prompts by name. n creates. R renames."),
+        Line::from("d deletes. u sets upstream. v marks compare base/target."),
         Line::from(""),
     ];
 
@@ -5160,6 +5169,29 @@ mod tests {
             Some((&super_lazygit_core::InputPromptOperation::CreateBranch, ""))
         );
 
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut previous_app = TuiApp::new(state, AppConfig::default());
+
+        let previous = previous_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "-".to_string(),
+        })));
+        assert!(previous.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::CheckoutBranch { branch_ref },
+                ..
+            }) if branch_ref == "-"
+        )));
+
         let rename = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "R".to_string(),
         })));
@@ -6755,8 +6787,8 @@ mod tests {
         assert!(rendered.contains("Detail: Branches"));
         assert!(rendered.contains("Selected: feature"));
         assert!(rendered.contains("Enter checks out."));
-        assert!(rendered.contains("c prompts checkout by name."));
-        assert!(rendered.contains("n creates."));
+        assert!(rendered.contains("previous"));
+        assert!(rendered.contains("prompts"));
         assert!(rendered.contains("* main"));
         assert!(rendered.contains("feature"));
     }
