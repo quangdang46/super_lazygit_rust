@@ -206,6 +206,13 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next reflog entry |
 | `k` / `Up` | Select the previous reflog entry |
+| `Enter` | Open the selected reflog target in the all-branches commit history view |
+| `Space` | Check out the selected reflog target in detached HEAD |
+| `n` | Open create-branch-from-commit prompt for the selected reflog target |
+| `C` | Open cherry-pick confirmation for the selected reflog target |
+| `S` | Open soft-reset confirmation using the selected reflog selector |
+| `M` | Open mixed-reset confirmation using the selected reflog selector |
+| `H` | Open hard-reset confirmation using the selected reflog selector |
 | `u` | Open restore confirmation for the selected reflog entry |
 
 ### Worktrees detail subview

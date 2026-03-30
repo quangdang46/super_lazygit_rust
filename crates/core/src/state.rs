@@ -554,6 +554,7 @@ pub struct RepoModeState {
     pub commits_filter: RepoSubviewFilterState,
     pub commit_files_filter: RepoSubviewFilterState,
     pub commit_history_ref: Option<String>,
+    pub pending_commit_selection_oid: Option<String>,
     pub stash_filter: RepoSubviewFilterState,
     pub reflog_filter: RepoSubviewFilterState,
     pub worktree_filter: RepoSubviewFilterState,
@@ -589,6 +590,7 @@ impl RepoModeState {
             commits_filter: RepoSubviewFilterState::default(),
             commit_files_filter: RepoSubviewFilterState::default(),
             commit_history_ref: None,
+            pending_commit_selection_oid: None,
             stash_filter: RepoSubviewFilterState::default(),
             reflog_filter: RepoSubviewFilterState::default(),
             worktree_filter: RepoSubviewFilterState::default(),
@@ -937,6 +939,10 @@ pub struct StashItem {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReflogItem {
+    pub selector: String,
+    pub oid: String,
+    pub short_oid: String,
+    pub summary: String,
     pub description: String,
 }
 
@@ -1227,7 +1233,16 @@ pub fn stash_matches_filter(stash: &StashItem, normalized_query: &str) -> bool {
 
 #[must_use]
 pub fn reflog_matches_filter(entry: &ReflogItem, normalized_query: &str) -> bool {
-    fuzzy_matches(&normalize_search_text(&entry.description), normalized_query)
+    [
+        entry.selector.as_str(),
+        entry.oid.as_str(),
+        entry.short_oid.as_str(),
+        entry.summary.as_str(),
+        entry.description.as_str(),
+    ]
+    .into_iter()
+    .map(normalize_search_text)
+    .any(|field| fuzzy_matches(&field, normalized_query))
 }
 
 #[must_use]

@@ -2299,20 +2299,37 @@ fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
 }
 
 fn read_reflog(repo_path: &Path) -> Vec<ReflogItem> {
-    git_stdout(repo_path, ["reflog", "--format=%gD%x00%gs", "-n", "64"])
-        .map(|output| {
-            output
-                .lines()
-                .map(|line| {
-                    let description = line.split_once('\0').map_or_else(
-                        || line.to_string(),
-                        |(name, summary)| format!("{name}: {summary}"),
-                    );
-                    ReflogItem { description }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    git_stdout(
+        repo_path,
+        ["reflog", "--format=%gD%x00%H%x00%h%x00%gs", "-n", "64"],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .map(|line| {
+                let mut parts = line.split('\0');
+                let selector = parts.next().unwrap_or_default().to_string();
+                let oid = parts.next().unwrap_or_default().to_string();
+                let short_oid = parts.next().unwrap_or_default().to_string();
+                let summary = parts.next().unwrap_or_default().to_string();
+                let description = if selector.is_empty() {
+                    line.to_string()
+                } else if summary.is_empty() {
+                    selector.clone()
+                } else {
+                    format!("{selector}: {summary}")
+                };
+                ReflogItem {
+                    selector,
+                    oid,
+                    short_oid,
+                    summary,
+                    description,
+                }
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn read_worktrees(repo_path: &Path) -> Vec<WorktreeItem> {
@@ -3045,6 +3062,10 @@ mod tests {
         assert!(!detail.commits.is_empty());
         assert!(!detail.stashes.is_empty());
         assert!(!detail.reflog_items.is_empty());
+        assert!(detail
+            .reflog_items
+            .iter()
+            .any(|entry| !entry.selector.is_empty() && !entry.oid.is_empty()));
     }
 
     #[test]

@@ -187,6 +187,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
                 repo_mode.commit_history_mode = CommitHistoryMode::Linear;
                 repo_mode.commit_history_ref = Some(branch_ref);
+                repo_mode.pending_commit_selection_oid = None;
                 repo_mode.diff_scroll = 0;
                 close_commit_box(repo_mode);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
@@ -210,6 +211,39 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
                 repo_mode.commit_history_mode = CommitHistoryMode::Graph { reverse };
                 repo_mode.commit_history_ref = None;
+                repo_mode.pending_commit_selection_oid = None;
+                repo_mode.diff_scroll = 0;
+                close_commit_box(repo_mode);
+                sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
+            }
+            state.focused_pane = PaneId::RepoDetail;
+            effects.push(load_repo_detail_effect(state, repo_id));
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenSelectedReflogCommits => {
+            let Some((repo_id, oid)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_reflog_entry(repo_mode).and_then(|(_, entry)| {
+                    (!entry.oid.is_empty())
+                        .then_some((repo_mode.current_repo_id.clone(), entry.oid.clone()))
+                })
+            }) else {
+                push_warning(
+                    state,
+                    "Select a reflog entry that still points to a commit before opening commit history.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                clear_repo_subview_filter_focus(repo_mode);
+                repo_mode.active_subview = crate::state::RepoSubview::Commits;
+                repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                repo_mode.commit_history_mode = CommitHistoryMode::Graph { reverse: false };
+                repo_mode.commit_history_ref = None;
+                repo_mode.pending_commit_selection_oid = Some(oid);
+                repo_mode.commits_filter = crate::state::RepoSubviewFilterState::default();
+                repo_mode.commit_files_filter = crate::state::RepoSubviewFilterState::default();
                 repo_mode.diff_scroll = 0;
                 close_commit_box(repo_mode);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
@@ -241,30 +275,21 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
-        Action::CheckoutSelectedCommit => {
-            match pending_history_commit_operation(state, |_, commit, _| {
-                Ok((
-                    GitCommand::CheckoutCommit {
-                        commit: commit.oid.clone(),
-                    },
-                    format!("Checkout commit {} {}", commit.short_oid, commit.summary),
-                ))
-            }) {
-                Ok(Some((repo_id, (command, summary)))) => {
-                    let job = git_job(repo_id, command);
-                    enqueue_git_job(state, &job, &summary);
-                    effects.push(Effect::RunGitCommand(job));
-                }
-                Ok(None) => {
-                    push_warning(state, "Select a commit before checking it out.");
-                    effects.push(Effect::ScheduleRender);
-                }
-                Err(message) => {
-                    push_warning(state, message);
-                    effects.push(Effect::ScheduleRender);
-                }
+        Action::CheckoutSelectedCommit => match pending_checkoutable_history_target(state) {
+            Ok(Some((repo_id, commit, summary))) => {
+                let job = git_job(repo_id, GitCommand::CheckoutCommit { commit });
+                enqueue_git_job(state, &job, &format!("Checkout commit {summary}"));
+                effects.push(Effect::RunGitCommand(job));
             }
-        }
+            Ok(None) => {
+                push_warning(state, "Select a commit before checking it out.");
+                effects.push(Effect::ScheduleRender);
+            }
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
         Action::CheckoutSelectedCommitFile => match selected_commit_file_checkout_target(state) {
             Ok(Some((repo_id, commit, path))) => {
                 let summary = format!("Checkout {} from {}", path.display(), commit);
@@ -282,14 +307,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         },
         Action::CreateBranchFromSelectedCommit => {
-            match pending_history_commit_operation(state, |_, commit, _| {
-                Ok(InputPromptOperation::CreateBranchFromCommit {
-                    commit: commit.oid.clone(),
-                    summary: format!("{} {}", commit.short_oid, commit.summary),
-                })
-            }) {
-                Ok(Some((repo_id, operation))) => {
-                    open_input_prompt(state, repo_id, operation);
+            match pending_checkoutable_history_target(state) {
+                Ok(Some((repo_id, commit, summary))) => {
+                    open_input_prompt(
+                        state,
+                        repo_id,
+                        InputPromptOperation::CreateBranchFromCommit { commit, summary },
+                    );
                     effects.push(Effect::ScheduleRender);
                 }
                 Ok(None) => {
@@ -409,15 +433,12 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::CherryPickSelectedCommit => {
-            match pending_history_commit_operation(state, |_, commit, _| {
-                Ok(ConfirmableOperation::CherryPickCommit {
-                    commit: commit.oid.clone(),
-                    summary: format!("{} {}", commit.short_oid, commit.summary),
-                })
-            }) {
-                Ok(Some((repo_id, operation))) => {
-                    open_confirmation_modal(state, repo_id, operation)
-                }
+            match pending_checkoutable_history_target(state) {
+                Ok(Some((repo_id, commit, summary))) => open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::CherryPickCommit { commit, summary },
+                ),
                 Ok(None) => push_warning(state, "Select a commit before cherry-picking."),
                 Err(message) => push_warning(state, message),
             }
@@ -439,27 +460,42 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::SoftResetToSelectedCommit => {
-            if open_reset_confirmation(state, ResetMode::Soft) {
-                effects.push(Effect::ScheduleRender);
-            } else {
-                push_warning(state, "Select a commit before resetting HEAD.");
-                effects.push(Effect::ScheduleRender);
+            match open_reset_confirmation(state, ResetMode::Soft) {
+                Ok(true) => effects.push(Effect::ScheduleRender),
+                Ok(false) => {
+                    push_warning(state, "Select a commit before resetting HEAD.");
+                    effects.push(Effect::ScheduleRender);
+                }
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
             }
         }
         Action::MixedResetToSelectedCommit => {
-            if open_reset_confirmation(state, ResetMode::Mixed) {
-                effects.push(Effect::ScheduleRender);
-            } else {
-                push_warning(state, "Select a commit before resetting HEAD.");
-                effects.push(Effect::ScheduleRender);
+            match open_reset_confirmation(state, ResetMode::Mixed) {
+                Ok(true) => effects.push(Effect::ScheduleRender),
+                Ok(false) => {
+                    push_warning(state, "Select a commit before resetting HEAD.");
+                    effects.push(Effect::ScheduleRender);
+                }
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
             }
         }
         Action::HardResetToSelectedCommit => {
-            if open_reset_confirmation(state, ResetMode::Hard) {
-                effects.push(Effect::ScheduleRender);
-            } else {
-                push_warning(state, "Select a commit before resetting HEAD.");
-                effects.push(Effect::ScheduleRender);
+            match open_reset_confirmation(state, ResetMode::Hard) {
+                Ok(true) => effects.push(Effect::ScheduleRender),
+                Ok(false) => {
+                    push_warning(state, "Select a commit before resetting HEAD.");
+                    effects.push(Effect::ScheduleRender);
+                }
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
             }
         }
         Action::ContinueRebase => {
@@ -1167,6 +1203,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 clear_repo_subview_filter_focus(repo_mode);
                 repo_mode.commit_history_ref = None;
                 repo_mode.commit_history_mode = CommitHistoryMode::Linear;
+                repo_mode.pending_commit_selection_oid = None;
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
                 repo_mode.active_subview = subview;
                 repo_mode.diff_scroll = 0;
@@ -1293,6 +1330,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::RepoDetailLoaded { repo_id, detail } => {
+            let mut missing_history_target = false;
             if state
                 .repo_mode
                 .as_ref()
@@ -1315,6 +1353,12 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_reflog_selection(repo_mode);
                     sync_worktree_selection(repo_mode);
                     sync_diff_selection(repo_mode);
+                    if repo_mode.pending_commit_selection_oid.is_some()
+                        && repo_mode.active_subview == crate::state::RepoSubview::Commits
+                    {
+                        repo_mode.pending_commit_selection_oid = None;
+                        missing_history_target = true;
+                    }
                     repo_mode.operation_progress = OperationProgress::Idle;
                     let rebase_in_progress = repo_mode
                         .detail
@@ -1337,6 +1381,12 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                         effects.push(load_comparison_diff_effect(repo_mode));
                     }
                 }
+            }
+            if missing_history_target {
+                push_warning(
+                    state,
+                    "Selected history target is not visible in the current commit view snapshot.",
+                );
             }
             effects.push(Effect::ScheduleRender);
         }
@@ -1600,9 +1650,10 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
                 reduce_action(state, Action::EnterRepoMode { repo_id }, effects);
             }
         }
-        crate::state::RepoSubview::Compare
-        | crate::state::RepoSubview::Rebase
-        | crate::state::RepoSubview::Reflog => {}
+        crate::state::RepoSubview::Reflog => {
+            reduce_action(state, Action::OpenSelectedReflogCommits, effects);
+        }
+        crate::state::RepoSubview::Compare | crate::state::RepoSubview::Rebase => {}
     }
 }
 
@@ -2401,12 +2452,24 @@ fn sync_branch_selection(repo_mode: &mut RepoModeState) {
 }
 
 fn sync_commit_selection(repo_mode: &mut RepoModeState) {
-    if repo_mode.detail.is_none() {
+    let Some(detail) = repo_mode.detail.as_ref() else {
         repo_mode.commits_view.selected_index = None;
         return;
-    }
+    };
 
     let visible_indices = filtered_commit_indices(repo_mode);
+    if let Some(target_oid) = repo_mode.pending_commit_selection_oid.as_deref() {
+        if let Some(index) = visible_indices.iter().copied().find(|index| {
+            detail
+                .commits
+                .get(*index)
+                .is_some_and(|commit| commit.oid == target_oid)
+        }) {
+            repo_mode.commits_view.selected_index = Some(index);
+            repo_mode.pending_commit_selection_oid = None;
+            return;
+        }
+    }
     repo_mode.commits_view.selected_index = visible_indices
         .iter()
         .copied()
@@ -2836,14 +2899,34 @@ fn selected_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::Bran
     detail.branches.get(selected_index)
 }
 
-fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::CommitItem> {
+fn selected_commit_entry(repo_mode: &RepoModeState) -> Option<(usize, &crate::state::CommitItem)> {
     let detail = repo_mode.detail.as_ref()?;
     let selected_index = repo_mode
         .commits_view
         .selected_index
         .filter(|index| filtered_commit_indices(repo_mode).contains(index))
         .or_else(|| filtered_commit_indices(repo_mode).first().copied())?;
-    detail.commits.get(selected_index)
+    detail
+        .commits
+        .get(selected_index)
+        .map(|commit| (selected_index, commit))
+}
+
+fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::CommitItem> {
+    selected_commit_entry(repo_mode).map(|(_, commit)| commit)
+}
+
+fn selected_reflog_entry(repo_mode: &RepoModeState) -> Option<(usize, &crate::state::ReflogItem)> {
+    let detail = repo_mode.detail.as_ref()?;
+    let selected_index = repo_mode
+        .reflog_view
+        .selected_index
+        .filter(|index| filtered_reflog_indices(repo_mode).contains(index))
+        .or_else(|| filtered_reflog_indices(repo_mode).first().copied())?;
+    detail
+        .reflog_items
+        .get(selected_index)
+        .map(|entry| (selected_index, entry))
 }
 
 fn selected_commit_file_item(repo_mode: &RepoModeState) -> Option<&crate::state::CommitFileItem> {
@@ -2901,27 +2984,108 @@ fn selected_reflog_restore_target(
         );
     }
 
-    let selected_index = repo_mode
-        .reflog_view
-        .selected_index
-        .filter(|index| *index < detail.reflog_items.len())
-        .unwrap_or(0);
+    let Some((selected_index, entry)) = selected_reflog_entry(repo_mode) else {
+        return Ok(None);
+    };
     if selected_index == 0 {
         return Err("Select an older reflog entry to restore.".to_string());
     }
-
-    let Some(entry) = detail.reflog_items.get(selected_index) else {
-        return Ok(None);
-    };
-    let Some((target, _)) = entry.description.split_once(':') else {
+    if entry.selector.is_empty() {
         return Err("Selected reflog entry could not be parsed.".to_string());
     };
 
     Ok(Some((
         repo_mode.current_repo_id.clone(),
-        target.trim().to_string(),
+        entry.selector.clone(),
         entry.description.clone(),
     )))
+}
+
+fn reflog_commit_label(entry: &crate::state::ReflogItem) -> String {
+    match (!entry.short_oid.is_empty(), !entry.summary.is_empty()) {
+        (true, true) => format!("{} {}", entry.short_oid, entry.summary),
+        (true, false) => entry.short_oid.clone(),
+        (false, true) => entry.summary.clone(),
+        (false, false) if !entry.oid.is_empty() => entry.oid.clone(),
+        _ => entry.description.clone(),
+    }
+}
+
+fn pending_checkoutable_history_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(message) = history_action_block_reason(&detail.merge_state) {
+        return Err(message.to_string());
+    }
+
+    match repo_mode.active_subview {
+        crate::state::RepoSubview::Reflog => {
+            let Some((_, entry)) = selected_reflog_entry(repo_mode) else {
+                return Ok(None);
+            };
+            if entry.oid.is_empty() {
+                return Err(
+                    "Select a reflog entry that still points to a commit before using history actions."
+                        .to_string(),
+                );
+            }
+            Ok(Some((
+                repo_mode.current_repo_id.clone(),
+                entry.oid.clone(),
+                reflog_commit_label(entry),
+            )))
+        }
+        _ => pending_history_commit_operation(state, |_, commit, _| {
+            Ok((
+                commit.oid.clone(),
+                format!("{} {}", commit.short_oid, commit.summary),
+            ))
+        })
+        .map(|result| result.map(|(repo_id, (commit, summary))| (repo_id, commit, summary))),
+    }
+}
+
+fn pending_reset_history_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(message) = history_action_block_reason(&detail.merge_state) {
+        return Err(message.to_string());
+    }
+
+    match repo_mode.active_subview {
+        crate::state::RepoSubview::Reflog => {
+            let Some((_, entry)) = selected_reflog_entry(repo_mode) else {
+                return Ok(None);
+            };
+            if entry.selector.is_empty() {
+                return Err("Selected reflog entry could not be parsed.".to_string());
+            }
+            Ok(Some((
+                repo_mode.current_repo_id.clone(),
+                entry.selector.clone(),
+                entry.description.clone(),
+            )))
+        }
+        _ => pending_history_commit_operation(state, |_, commit, _| {
+            Ok((
+                commit.oid.clone(),
+                format!("{} {}", commit.short_oid, commit.summary),
+            ))
+        })
+        .map(|result| result.map(|(repo_id, (commit, summary))| (repo_id, commit, summary))),
+    }
 }
 
 fn pending_history_commit_operation<T, F>(
@@ -2940,12 +3104,7 @@ where
     if let Some(message) = history_action_block_reason(&detail.merge_state) {
         return Err(message.to_string());
     }
-    let selected_index = repo_mode
-        .commits_view
-        .selected_index
-        .filter(|index| *index < detail.commits.len())
-        .unwrap_or(0);
-    let Some(commit) = detail.commits.get(selected_index) else {
+    let Some((selected_index, commit)) = selected_commit_entry(repo_mode) else {
         return Ok(None);
     };
     Ok(Some((
@@ -2964,17 +3123,9 @@ fn history_action_block_reason(merge_state: &MergeState) -> Option<&'static str>
     }
 }
 
-fn open_reset_confirmation(state: &mut AppState, mode: ResetMode) -> bool {
-    let Some((repo_id, commit, summary)) = state.repo_mode.as_ref().and_then(|repo_mode| {
-        selected_commit_item(repo_mode).map(|commit| {
-            (
-                repo_mode.current_repo_id.clone(),
-                commit.oid.clone(),
-                format!("{} {}", commit.short_oid, commit.summary),
-            )
-        })
-    }) else {
-        return false;
+fn open_reset_confirmation(state: &mut AppState, mode: ResetMode) -> Result<bool, String> {
+    let Some((repo_id, commit, summary)) = pending_reset_history_target(state)? else {
+        return Ok(false);
     };
 
     open_confirmation_modal(
@@ -2986,7 +3137,7 @@ fn open_reset_confirmation(state: &mut AppState, mode: ResetMode) -> bool {
             summary,
         },
     );
-    true
+    Ok(true)
 }
 
 fn selected_comparison_target(repo_mode: &RepoModeState) -> Option<ComparisonTarget> {
@@ -4665,9 +4816,17 @@ mod tests {
                 detail: Some(RepoDetail {
                     reflog_items: vec![
                         ReflogItem {
+                            selector: "HEAD@{0}".to_string(),
+                            oid: "abcdef1234567890".to_string(),
+                            short_oid: "abcdef1".to_string(),
+                            summary: "checkout".to_string(),
                             description: "HEAD@{0}: checkout".to_string(),
                         },
                         ReflogItem {
+                            selector: "HEAD@{1}".to_string(),
+                            oid: "1234567890abcdef".to_string(),
+                            short_oid: "1234567".to_string(),
+                            summary: "commit".to_string(),
                             description: "HEAD@{1}: commit".to_string(),
                         },
                     ],
@@ -4706,9 +4865,17 @@ mod tests {
                 detail: Some(RepoDetail {
                     reflog_items: vec![
                         ReflogItem {
+                            selector: "HEAD@{0}".to_string(),
+                            oid: "abcdef1234567890".to_string(),
+                            short_oid: "abcdef1".to_string(),
+                            summary: "commit: current".to_string(),
                             description: "HEAD@{0}: commit: current".to_string(),
                         },
                         ReflogItem {
+                            selector: "HEAD@{1}".to_string(),
+                            oid: "1234567890abcdef".to_string(),
+                            short_oid: "1234567".to_string(),
+                            summary: "commit: prior".to_string(),
                             description: "HEAD@{1}: commit: prior".to_string(),
                         },
                     ],
@@ -4760,9 +4927,17 @@ mod tests {
                     }],
                     reflog_items: vec![
                         ReflogItem {
+                            selector: "HEAD@{0}".to_string(),
+                            oid: "abcdef1234567890".to_string(),
+                            short_oid: "abcdef1".to_string(),
+                            summary: "commit: current".to_string(),
                             description: "HEAD@{0}: commit: current".to_string(),
                         },
                         ReflogItem {
+                            selector: "HEAD@{1}".to_string(),
+                            oid: "1234567890abcdef".to_string(),
+                            short_oid: "1234567".to_string(),
+                            summary: "commit: prior".to_string(),
                             description: "HEAD@{1}: commit: prior".to_string(),
                         },
                     ],
@@ -4788,6 +4963,191 @@ mod tests {
             Some("Restore is only available on a clean working tree. Commit or discard changes first.")
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn open_selected_reflog_commits_switches_to_graph_history_and_targets_entry() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Reflog,
+                detail: Some(RepoDetail {
+                    reflog_items: vec![
+                        ReflogItem {
+                            selector: "HEAD@{0}".to_string(),
+                            oid: "abcdef1234567890".to_string(),
+                            short_oid: "abcdef1".to_string(),
+                            summary: "commit: current".to_string(),
+                            description: "HEAD@{0}: commit: current".to_string(),
+                        },
+                        ReflogItem {
+                            selector: "HEAD@{1}".to_string(),
+                            oid: "1234567890abcdef".to_string(),
+                            short_oid: "1234567".to_string(),
+                            summary: "commit: prior".to_string(),
+                            description: "HEAD@{1}: commit: prior".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                reflog_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                commits_filter: crate::state::RepoSubviewFilterState {
+                    query: "stale".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedReflogCommits));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Graph { reverse: false })
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.pending_commit_selection_oid.as_deref()),
+            Some("1234567890abcdef")
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commits_filter.query.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn checkout_selected_reflog_entry_queues_commit_checkout_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Reflog,
+                detail: Some(RepoDetail {
+                    reflog_items: vec![ReflogItem {
+                        selector: "HEAD@{1}".to_string(),
+                        oid: "1234567890abcdef".to_string(),
+                        short_oid: "1234567".to_string(),
+                        summary: "commit: prior".to_string(),
+                        description: "HEAD@{1}: commit: prior".to_string(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                reflog_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CheckoutSelectedCommit));
+
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::RunGitCommand(job)] if job.repo_id == repo_id
+                && matches!(
+                    job.command,
+                    GitCommand::CheckoutCommit { ref commit }
+                    if commit == "1234567890abcdef"
+                )
+        ));
+    }
+
+    #[test]
+    fn hard_reset_selected_reflog_entry_uses_reflog_selector() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Reflog,
+                detail: Some(RepoDetail {
+                    reflog_items: vec![
+                        ReflogItem {
+                            selector: "HEAD@{0}".to_string(),
+                            oid: "abcdef1234567890".to_string(),
+                            short_oid: "abcdef1".to_string(),
+                            summary: "commit: current".to_string(),
+                            description: "HEAD@{0}: commit: current".to_string(),
+                        },
+                        ReflogItem {
+                            selector: "HEAD@{1}".to_string(),
+                            oid: "1234567890abcdef".to_string(),
+                            short_oid: "1234567".to_string(),
+                            summary: "commit: prior".to_string(),
+                            description: "HEAD@{1}: commit: prior".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                reflog_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::HardResetToSelectedCommit));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::ResetToCommit {
+                    mode: crate::state::ResetMode::Hard,
+                    commit: "HEAD@{1}".to_string(),
+                    summary: "HEAD@{1}: commit: prior".to_string(),
+                }
+            ))
+        );
     }
 
     #[test]
@@ -7964,6 +8324,10 @@ mod tests {
                 diff: DiffModel::default(),
             }],
             reflog_items: vec![ReflogItem {
+                selector: "HEAD@{0}".to_string(),
+                oid: "abcdef1234567890".to_string(),
+                short_oid: "abcdef1".to_string(),
+                summary: "commit: add lib".to_string(),
                 description: "HEAD@{0}: commit: add lib".to_string(),
             }],
             ..RepoDetail::default()

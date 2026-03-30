@@ -43,6 +43,7 @@ pub enum Action {
     SelectNextReflog,
     SelectPreviousReflog,
     RestoreSelectedReflogEntry,
+    OpenSelectedReflogCommits,
     SelectNextWorktree,
     SelectPreviousWorktree,
     ToggleComparisonSelection,

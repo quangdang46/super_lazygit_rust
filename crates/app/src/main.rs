@@ -855,6 +855,60 @@ mod tests {
     }
 
     #[test]
+    fn e2e_keyboard_harness_runs_reflog_history_and_detached_checkout_cycle() {
+        let repo = TempRepo::new().expect("repo fixture");
+        repo.write_file("src/lib.rs", "pub fn version() -> u8 {\n    1\n}\n")
+            .expect("write initial source");
+        repo.commit_all("initial commit")
+            .expect("commit initial state");
+        let initial_commit =
+            command_stdout(&repo, ["rev-parse", "HEAD"]).expect("initial commit id");
+
+        repo.write_file("src/lib.rs", "pub fn version() -> u8 {\n    2\n}\n")
+            .expect("write updated source");
+        repo.commit_all("second commit")
+            .expect("commit updated state");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+
+        harness.press("open reflog detail", "7");
+        harness.assert_latest_contains("Detail: Reflog");
+        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
+
+        harness.press("select older reflog entry", "j");
+        harness.assert_latest_contains("HEAD@{1}: commit (initial): initial commit");
+
+        harness.press("open selected reflog entry in commits", "enter");
+        harness.assert_latest_contains("Detail: Commits");
+        harness.assert_latest_contains("initial commit");
+
+        harness.press("return to reflog detail", "7");
+        harness.press("detach checkout selected reflog target", "space");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "reflog detached checkout should keep the app in repo mode",
+        );
+        assert_eq!(
+            command_stdout(&repo, ["rev-parse", "HEAD"]).expect("head after reflog checkout"),
+            initial_commit,
+            "space from reflog should detach HEAD at the selected target\n{}",
+            harness.timeline()
+        );
+    }
+
+    #[test]
     fn performance_harness_measures_startup_scan_refresh_and_diff_loads() {
         let fixture = PerfWorkspaceFixture::new(6);
         let budgets = PerfBudgets::from_env();

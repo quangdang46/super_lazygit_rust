@@ -1243,6 +1243,69 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "open_selected_reflog_commits",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return Some(Action::OpenSelectedReflogCommits);
+                        }
+
+                        if self.binding_matches_action(
+                            "checkout_selected_commit",
+                            raw,
+                            normalized,
+                            &["space"],
+                        ) {
+                            return Some(Action::CheckoutSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_create_branch_from_commit_prompt",
+                            raw,
+                            normalized,
+                            &["n"],
+                        ) {
+                            return Some(Action::CreateBranchFromSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "cherry_pick_selected_commit",
+                            raw,
+                            normalized,
+                            &["C"],
+                        ) {
+                            return Some(Action::CherryPickSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "soft_reset_to_selected_commit",
+                            raw,
+                            normalized,
+                            &["S"],
+                        ) {
+                            return Some(Action::SoftResetToSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "mixed_reset_to_selected_commit",
+                            raw,
+                            normalized,
+                            &["M"],
+                        ) {
+                            return Some(Action::MixedResetToSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "hard_reset_to_selected_commit",
+                            raw,
+                            normalized,
+                            &["H"],
+                        ) {
+                            return Some(Action::HardResetToSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
                             "restore_selected_reflog_entry",
                             raw,
                             normalized,
@@ -2776,6 +2839,17 @@ fn repo_reflog_lines(
                 .unwrap_or(1),
             visible_indices.len()
         )),
+        Line::from(format!(
+            "{}  {}",
+            selected_entry.selector,
+            if selected_entry.short_oid.is_empty() {
+                selected_entry.summary.clone()
+            } else if selected_entry.summary.is_empty() {
+                selected_entry.short_oid.clone()
+            } else {
+                format!("{} {}", selected_entry.short_oid, selected_entry.summary)
+            }
+        )),
         Line::from(selected_entry.description.clone()),
     ];
     if let Some(filter_line) = repo_filter_summary_line(
@@ -2787,9 +2861,11 @@ fn repo_reflog_lines(
         lines.push(filter_line);
     }
     lines.extend([
-        Line::from("Context: 0 main. / filter. w worktrees."),
+        Line::from("Context: Enter commits. Space checkout. n branch. C cherry-pick."),
+        Line::from(
+            "Context: S/M/H reset by reflog target. u restore HEAD. 0 main. / filter. w worktrees.",
+        ),
         Line::from("Use j/k to inspect recent HEAD and ref movement."),
-        Line::from("u restore HEAD to the selected entry on a clean working tree."),
         Line::from("Limits: no working tree undo; redo is manual by selecting another entry."),
         Line::from(""),
     ]);
@@ -4324,7 +4400,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Stash detail focus; Enter/Space applies, 0 returns to the main pane, / filters this panel, w opens worktrees, and g/d manage the selected stash."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Reflog {
-                        "Reflog detail focus; 0 returns to the main pane, / filters this panel, w opens worktrees, and u restores the selected reflog entry."
+                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, n branches off it, C cherry-picks, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, w opens worktrees, and u preserves the explicit restore flow."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Worktrees {
                         "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, and n/o/d manage the selected worktree."
@@ -4397,7 +4473,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Stash {
                     "Stash pane  j/k move  Enter apply  0 main pane  / filter  w worktrees  n branch  r rename  g pop  d drop  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Reflog {
-                    "Reflog pane  j/k move  0 main pane  / filter  w worktrees  u restore  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Reflog pane  j/k move  Enter commits  Space checkout  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Worktrees {
                     "Worktrees pane  j/k move  Enter switch  0 main pane  / filter  n create  o open  d delete  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
@@ -4726,9 +4802,17 @@ mod tests {
             ],
             reflog_items: vec![
                 super_lazygit_core::ReflogItem {
+                    selector: "HEAD@{0}".to_string(),
+                    oid: "abcdef1234567890".to_string(),
+                    short_oid: "abcdef1".to_string(),
+                    summary: "checkout: moving from feature to main".to_string(),
                     description: "HEAD@{0}: checkout: moving from feature to main".to_string(),
                 },
                 super_lazygit_core::ReflogItem {
+                    selector: "HEAD@{1}".to_string(),
+                    oid: "1234567890abcdef".to_string(),
+                    short_oid: "1234567".to_string(),
+                    summary: "commit: add repo-mode stash flows".to_string(),
                     description: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
                 },
             ],
@@ -6971,6 +7055,117 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_reflog_detail_routes_commit_context_and_history_actions() {
+        let mut detail = sample_repo_detail();
+        detail.file_tree.clear();
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Reflog,
+                detail: Some(detail),
+                reflog_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut open_app = TuiApp::new(state.clone(), AppConfig::default());
+        let open = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            open.state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            open.state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Graph { reverse: false })
+        );
+        assert_eq!(
+            open.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commits_view.selected_index),
+            Some(1)
+        );
+
+        let mut checkout_app = TuiApp::new(state.clone(), AppConfig::default());
+        let checkout = checkout_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert!(checkout.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(job)
+                if matches!(
+                    job.command,
+                    super_lazygit_core::GitCommand::CheckoutCommit { ref commit }
+                    if commit == "1234567890abcdef"
+                )
+        )));
+
+        let mut branch_app = TuiApp::new(state.clone(), AppConfig::default());
+        let branch = branch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(
+            branch
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| &prompt.operation),
+            Some(
+                &super_lazygit_core::InputPromptOperation::CreateBranchFromCommit {
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 commit: add repo-mode stash flows".to_string(),
+                }
+            )
+        );
+
+        let mut cherry_pick_app = TuiApp::new(state.clone(), AppConfig::default());
+        let cherry_pick =
+            cherry_pick_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "C".to_string(),
+            })));
+        assert_eq!(
+            cherry_pick
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::CherryPickCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 commit: add repo-mode stash flows".to_string(),
+            })
+        );
+
+        let mut reset_app = TuiApp::new(state, AppConfig::default());
+        let reset = reset_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "S".to_string(),
+        })));
+        assert_eq!(
+            reset
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::ResetToCommit {
+                mode: super_lazygit_core::ResetMode::Soft,
+                commit: "HEAD@{1}".to_string(),
+                summary: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
+            })
+        );
+    }
+
+    #[test]
     fn repo_mode_worktree_detail_routes_selection_switch_create_open_and_remove() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -8207,8 +8402,10 @@ mod tests {
 
         assert!(rendered.contains("Detail: Reflog"));
         assert!(rendered.contains("Selected 2/2"));
+        assert!(rendered.contains("HEAD@{1}  1234567 commit: add repo-mode stash flows"));
+        assert!(rendered.contains("Context: Enter commits. Space checkout."));
+        assert!(rendered.contains("Context: S/M/H reset by reflog target. u restore HEAD."));
         assert!(rendered.contains("Use j/k to inspect recent HEAD and ref movement."));
-        assert!(rendered.contains("u restore HEAD to the selected entry"));
         assert!(rendered.contains("Limits: no working tree undo"));
         assert!(rendered.contains("HEAD@{0}: checkout: moving from feature to main"));
         assert!(rendered.contains("HEAD@{1}: commit: add repo-mode stash flows"));
