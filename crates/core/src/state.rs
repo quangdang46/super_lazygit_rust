@@ -140,6 +140,9 @@ pub enum ConfirmableOperation {
     DeleteBranch {
         branch_name: String,
     },
+    PopStash {
+        stash_ref: String,
+    },
     DropStash {
         stash_ref: String,
     },

@@ -717,6 +717,10 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["stash", "apply", stash_ref.as_str()])?;
                 format!("Applied {stash_ref}")
             }
+            GitCommand::PopStash { stash_ref } => {
+                git(&repo_path, ["stash", "pop", stash_ref.as_str()])?;
+                format!("Popped {stash_ref}")
+            }
             GitCommand::DropStash { stash_ref } => {
                 git(&repo_path, ["stash", "drop", stash_ref.as_str()])?;
                 format!("Dropped {stash_ref}")
@@ -892,6 +896,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
             ..
         } => "create_stash_unstaged",
         GitCommand::ApplyStash { .. } => "apply_stash",
+        GitCommand::PopStash { .. } => "pop_stash",
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",
@@ -2930,6 +2935,36 @@ mod tests {
         assert_eq!(dropped.repo_id, repo_id);
         assert_eq!(dropped.summary, "Dropped stash@{0}");
         assert!(repo.stash_list().expect("stash list").trim().is_empty());
+    }
+
+    #[test]
+    fn cli_backend_pops_stash_entries() {
+        let repo = stashed_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let popped = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-pop-stash"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::PopStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
+            })
+            .expect("stash pop should succeed");
+
+        assert_eq!(popped.repo_id, repo_id);
+        assert_eq!(popped.summary, "Popped stash@{0}");
+        assert!(repo.stash_list().expect("stash list").trim().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("stash.txt")).expect("read stash.txt"),
+            "base\nstashed\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("stash-untracked.txt"))
+                .expect("read stash-untracked.txt"),
+            "untracked\n"
+        );
     }
 
     #[test]

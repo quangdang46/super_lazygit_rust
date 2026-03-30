@@ -966,6 +966,15 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "pop_selected_stash",
+                            raw,
+                            normalized,
+                            &["g"],
+                        ) {
+                            return Some(Action::PopSelectedStash);
+                        }
+
+                        if self.binding_matches_action(
                             "drop_selected_stash",
                             raw,
                             normalized,
@@ -2293,7 +2302,7 @@ fn repo_stash_lines(
         )]),
         Line::from(format!("Selected: {}", selected_stash.stash_ref)),
         Line::from(selected_stash.label.clone()),
-        Line::from("Enter applies. d drops."),
+        Line::from("Enter applies. g pops. d drops."),
         Line::from(""),
     ];
 
@@ -3044,6 +3053,9 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
             format!(
                 "Delete local branch {branch_name}? Git will refuse if it is not safely merged."
             )
+        }
+        super_lazygit_core::ConfirmableOperation::PopStash { stash_ref } => {
+            format!("Pop {stash_ref}? This applies it and removes it from the stash list.")
         }
         super_lazygit_core::ConfirmableOperation::DropStash { stash_ref } => {
             format!("Drop {stash_ref}? This permanently removes the stash entry.")
@@ -4337,7 +4349,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "e".to_string(),
@@ -4407,7 +4419,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let entered = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "enter".to_string(),
@@ -4517,7 +4529,7 @@ mod tests {
             repo_id.clone(),
             workspace_repo_summary(&repo_id.0, "repo-1"),
         );
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "e".to_string(),
@@ -4554,7 +4566,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let focused = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "/".to_string(),
@@ -5463,7 +5475,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_mode_stash_detail_routes_selection_apply_and_drop() {
+    fn repo_mode_stash_detail_routes_selection_apply_pop_and_drop() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
@@ -5474,7 +5486,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "j".to_string(),
@@ -5498,7 +5510,33 @@ mod tests {
             }) if stash_ref == "stash@{1}"
         )));
 
-        let drop = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+        let pop = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert_eq!(pop.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            pop.state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::PopStash {
+                stash_ref: "stash@{1}".to_string(),
+            })
+        );
+
+        let mut drop_app = TuiApp::new(state, AppConfig::default());
+        let down = drop_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_view.selected_index),
+            Some(1)
+        );
+
+        let drop = drop_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "d".to_string(),
         })));
         assert_eq!(drop.state.focused_pane, PaneId::Modal);
@@ -6531,7 +6569,7 @@ mod tests {
 
         assert!(rendered.contains("Detail: Stash"));
         assert!(rendered.contains("Selected: stash@{1}"));
-        assert!(rendered.contains("Enter applies. d drops."));
+        assert!(rendered.contains("Enter applies. g pops. d drops."));
         assert!(rendered.contains("stash@{0}: WIP on main: fixture stash"));
         assert!(rendered.contains("stash@{1}: On feature: prior experiment"));
     }
@@ -6596,6 +6634,17 @@ mod tests {
 
         assert!(copy.contains("git reset --hard HEAD@{1}"));
         assert!(copy.contains("Working tree edits and untracked files are not undone"));
+    }
+
+    #[test]
+    fn pop_stash_confirmation_copy_mentions_apply_and_drop() {
+        let copy = confirmation_copy(&super_lazygit_core::ConfirmableOperation::PopStash {
+            stash_ref: "stash@{1}".to_string(),
+        });
+
+        assert!(copy.contains("Pop stash@{1}?"));
+        assert!(copy.contains("applies it"));
+        assert!(copy.contains("removes it from the stash list"));
     }
 
     #[test]

@@ -122,6 +122,9 @@ pub enum GitCommand {
     ApplyStash {
         stash_ref: String,
     },
+    PopStash {
+        stash_ref: String,
+    },
     DropStash {
         stash_ref: String,
     },

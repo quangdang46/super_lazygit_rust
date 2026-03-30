@@ -613,6 +613,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
             ..
         } => "create_stash_unstaged",
         GitCommand::ApplyStash { .. } => "apply_stash",
+        GitCommand::PopStash { .. } => "pop_stash",
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",

@@ -843,6 +843,19 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunGitCommand(job));
             }
         }
+        Action::PopSelectedStash => {
+            if let Some((repo_id, stash_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_stash_item(repo_mode)
+                    .map(|stash| (repo_mode.current_repo_id.clone(), stash.stash_ref.clone()))
+            }) {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::PopStash { stash_ref },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::DropSelectedStash => {
             if let Some((repo_id, stash_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_stash_item(repo_mode)
@@ -1672,6 +1685,7 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::DeleteBranch { branch_name } => {
             format!("Delete branch {branch_name}")
         }
+        ConfirmableOperation::PopStash { stash_ref } => format!("Pop stash {stash_ref}"),
         ConfirmableOperation::DropStash { stash_ref } => format!("Drop stash {stash_ref}"),
         ConfirmableOperation::RemoveWorktree { path } => {
             format!("Remove worktree {}", path.display())
@@ -1747,6 +1761,12 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 branch_name: branch_name.clone(),
             },
             "Delete branch",
+        ),
+        ConfirmableOperation::PopStash { stash_ref } => (
+            GitCommand::PopStash {
+                stash_ref: stash_ref.clone(),
+            },
+            "Pop stash",
         ),
         ConfirmableOperation::DropStash { stash_ref } => (
             GitCommand::DropStash {
@@ -2907,6 +2927,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
             ..
         } => "create-stash-unstaged",
         GitCommand::ApplyStash { .. } => "apply-stash",
+        GitCommand::PopStash { .. } => "pop-stash",
         GitCommand::DropStash { .. } => "drop-stash",
         GitCommand::CreateWorktree { .. } => "create-worktree",
         GitCommand::RemoveWorktree { .. } => "remove-worktree",
@@ -3753,6 +3774,56 @@ mod tests {
     }
 
     #[test]
+    fn pop_selected_stash_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Stash,
+                detail: Some(RepoDetail {
+                    stashes: vec![StashItem {
+                        stash_ref: "stash@{0}".to_string(),
+                        label: "stash@{0}: latest".to_string(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                stash_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::PopSelectedStash));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::PopStash {
+                    stash_ref: "stash@{0}".to_string()
+                }
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .modal_stack
+                .last()
+                .map(|modal| (&modal.kind, modal.title.as_str())),
+            Some((&ModalKind::Confirm, "Pop stash stash@{0}"))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
     fn create_worktree_opens_input_prompt() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -4560,6 +4631,52 @@ mod tests {
                 job_id,
                 repo_id,
                 command: GitCommand::DropStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_pop_stash_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Pop stash stash@{0}",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::PopStash {
+                    stash_ref: "stash@{0}".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:pop-stash");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::PopStash {
                     stash_ref: "stash@{0}".to_string(),
                 },
             })]

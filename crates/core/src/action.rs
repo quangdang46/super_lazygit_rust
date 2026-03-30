@@ -88,6 +88,7 @@ pub enum Action {
     DeleteSelectedBranch,
     StashAllChanges,
     ApplySelectedStash,
+    PopSelectedStash,
     DropSelectedStash,
     CreateWorktree,
     RemoveSelectedWorktree,
