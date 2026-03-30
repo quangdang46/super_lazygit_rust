@@ -14,7 +14,7 @@ use super_lazygit_core::{
     DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
     GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode, RebaseKind,
     RebaseStartMode, RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary,
-    ResetMode, SelectedHunk, StashItem, Timestamp, WatcherFreshness, WorktreeItem,
+    ResetMode, SelectedHunk, StashItem, StashMode, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -674,14 +674,20 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
                 format!("Deleted {branch_name}")
             }
-            GitCommand::CreateStash {
-                message,
-                include_untracked,
-            } => {
+            GitCommand::CreateStash { message, mode } => {
                 let mut command = Command::new("git");
                 command.arg("stash").arg("push").current_dir(&repo_path);
-                if *include_untracked {
-                    command.arg("--include-untracked");
+                match mode {
+                    StashMode::Tracked => {}
+                    StashMode::IncludeUntracked => {
+                        command.arg("--include-untracked");
+                    }
+                    StashMode::Staged => {
+                        command.arg("--staged");
+                    }
+                    StashMode::Unstaged => {
+                        command.arg("--keep-index");
+                    }
                 }
                 if let Some(message) = message {
                     command.arg("-m").arg(message);
@@ -690,13 +696,25 @@ impl GitBackend for CliGitBackend {
                 if !output.status.success() {
                     return Err(command_failure(output));
                 }
-                match (include_untracked, message) {
-                    (true, Some(message)) => {
+                match (mode, message) {
+                    (StashMode::Tracked, Some(message)) => {
+                        format!("Stashed tracked changes: {message}")
+                    }
+                    (StashMode::Tracked, None) => "Stashed tracked changes".to_string(),
+                    (StashMode::IncludeUntracked, Some(message)) => {
                         format!("Stashed all changes including untracked: {message}")
                     }
-                    (true, None) => "Stashed all changes including untracked".to_string(),
-                    (false, Some(message)) => format!("Stashed tracked changes: {message}"),
-                    (false, None) => "Stashed tracked changes".to_string(),
+                    (StashMode::IncludeUntracked, None) => {
+                        "Stashed all changes including untracked".to_string()
+                    }
+                    (StashMode::Staged, Some(message)) => {
+                        format!("Stashed staged changes: {message}")
+                    }
+                    (StashMode::Staged, None) => "Stashed staged changes".to_string(),
+                    (StashMode::Unstaged, Some(message)) => {
+                        format!("Stashed unstaged changes: {message}")
+                    }
+                    (StashMode::Unstaged, None) => "Stashed unstaged changes".to_string(),
                 }
             }
             GitCommand::ApplyStash { stash_ref } => {
@@ -858,13 +876,21 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
         GitCommand::CreateStash {
-            include_untracked: true,
+            mode: StashMode::Tracked,
+            ..
+        } => "create_stash",
+        GitCommand::CreateStash {
+            mode: StashMode::IncludeUntracked,
             ..
         } => "create_stash_including_untracked",
         GitCommand::CreateStash {
-            include_untracked: false,
+            mode: StashMode::Staged,
             ..
-        } => "create_stash",
+        } => "create_stash_staged",
+        GitCommand::CreateStash {
+            mode: StashMode::Unstaged,
+            ..
+        } => "create_stash_unstaged",
         GitCommand::ApplyStash { .. } => "apply_stash",
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
@@ -2876,7 +2902,7 @@ mod tests {
                 repo_id: repo_id.clone(),
                 command: GitCommand::CreateStash {
                     message: Some("checkpoint".to_string()),
-                    include_untracked: false,
+                    mode: StashMode::Tracked,
                 },
             })
             .expect("stash push should succeed");
@@ -2902,7 +2928,7 @@ mod tests {
                 repo_id: repo_id.clone(),
                 command: GitCommand::CreateStash {
                     message: Some("full checkpoint".to_string()),
-                    include_untracked: true,
+                    mode: StashMode::IncludeUntracked,
                 },
             })
             .expect("stash push should succeed");
@@ -2917,6 +2943,67 @@ mod tests {
             .expect("stash list")
             .contains("full checkpoint"));
         assert_eq!(repo.status_porcelain().expect("status"), "");
+    }
+
+    #[test]
+    fn cli_backend_creates_staged_only_stash_entry() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let stashed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-stash-staged"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateStash {
+                    message: Some("index checkpoint".to_string()),
+                    mode: StashMode::Staged,
+                },
+            })
+            .expect("stash push --staged should succeed");
+
+        assert_eq!(stashed.repo_id, repo_id);
+        assert_eq!(stashed.summary, "Stashed staged changes: index checkpoint");
+        assert!(repo
+            .stash_list()
+            .expect("stash list")
+            .contains("index checkpoint"));
+        assert_eq!(
+            repo.status_porcelain().expect("status"),
+            "M tracked.txt\n?? untracked.txt"
+        );
+    }
+
+    #[test]
+    fn cli_backend_creates_unstaged_only_stash_entry() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let stashed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-stash-unstaged"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateStash {
+                    message: Some("worktree checkpoint".to_string()),
+                    mode: StashMode::Unstaged,
+                },
+            })
+            .expect("stash push --keep-index should succeed");
+
+        assert_eq!(stashed.repo_id, repo_id);
+        assert_eq!(
+            stashed.summary,
+            "Stashed unstaged changes: worktree checkpoint"
+        );
+        assert!(repo
+            .stash_list()
+            .expect("stash list")
+            .contains("worktree checkpoint"));
+        assert_eq!(
+            repo.status_porcelain().expect("status"),
+            "A  staged.txt\n?? untracked.txt"
+        );
     }
 
     #[test]

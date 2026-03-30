@@ -166,7 +166,7 @@ pub enum InputPromptOperation {
         branch_name: String,
     },
     CreateStash {
-        include_untracked: bool,
+        mode: StashMode,
     },
     CreateWorktree,
     RewordCommit {
@@ -187,6 +187,14 @@ pub struct PendingMenu {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuOperation {
     StashOptions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StashMode {
+    Tracked,
+    IncludeUntracked,
+    Staged,
+    Unstaged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -7,7 +7,7 @@ use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
     ComparisonTarget, ConfirmableOperation, DiffLineKind, DiffPresentation, InputPromptOperation,
     JobId, MenuOperation, MergeState, MessageLevel, Notification, OperationProgress, PaneId,
-    PendingInputPrompt, PendingMenu, RepoModeState, ResetMode, ScanStatus, SelectedHunk,
+    PendingInputPrompt, PendingMenu, RepoModeState, ResetMode, ScanStatus, SelectedHunk, StashMode,
     StatusMessage, WatcherHealth,
 };
 
@@ -823,7 +823,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                         state,
                         repo_id,
                         InputPromptOperation::CreateStash {
-                            include_untracked: false,
+                            mode: StashMode::Tracked,
                         },
                     );
                 } else {
@@ -1463,13 +1463,15 @@ fn staged_file_count(detail: &crate::state::RepoDetail) -> usize {
         .count()
 }
 
-fn has_stashable_changes(detail: &crate::state::RepoDetail) -> bool {
+fn has_unstaged_tracked_changes(detail: &crate::state::RepoDetail) -> bool {
     detail.file_tree.iter().any(|item| {
-        item.staged_kind.is_some()
-            || item
-                .unstaged_kind
-                .is_some_and(|kind| kind != crate::state::FileStatusKind::Untracked)
+        item.unstaged_kind
+            .is_some_and(|kind| kind != crate::state::FileStatusKind::Untracked)
     })
+}
+
+fn has_stashable_changes(detail: &crate::state::RepoDetail) -> bool {
+    staged_file_count(detail) > 0 || has_unstaged_tracked_changes(detail)
 }
 
 fn has_local_changes(detail: &crate::state::RepoDetail) -> bool {
@@ -1477,6 +1479,47 @@ fn has_local_changes(detail: &crate::state::RepoDetail) -> bool {
         .file_tree
         .iter()
         .any(|item| item.staged_kind.is_some() || item.unstaged_kind.is_some())
+}
+
+fn stash_mode_available(detail: &crate::state::RepoDetail, mode: StashMode) -> bool {
+    match mode {
+        StashMode::Tracked => has_stashable_changes(detail),
+        StashMode::IncludeUntracked => has_local_changes(detail),
+        StashMode::Staged => staged_file_count(detail) > 0,
+        StashMode::Unstaged => has_unstaged_tracked_changes(detail),
+    }
+}
+
+fn stash_mode_unavailable_message(mode: StashMode) -> &'static str {
+    match mode {
+        StashMode::Tracked => "No tracked changes are available to stash.",
+        StashMode::IncludeUntracked => "No local changes are available to stash.",
+        StashMode::Staged => "No staged changes are available to stash.",
+        StashMode::Unstaged => "No unstaged tracked changes are available to stash.",
+    }
+}
+
+fn stash_prompt_title(mode: StashMode) -> &'static str {
+    match mode {
+        StashMode::Tracked => "Stash tracked changes",
+        StashMode::IncludeUntracked => "Stash all changes including untracked",
+        StashMode::Staged => "Stash staged changes",
+        StashMode::Unstaged => "Stash unstaged changes",
+    }
+}
+
+fn stash_operation_summary(mode: StashMode, message: Option<&str>) -> String {
+    let prefix = match mode {
+        StashMode::Tracked => "Stashed tracked changes",
+        StashMode::IncludeUntracked => "Stashed all changes including untracked",
+        StashMode::Staged => "Stashed staged changes",
+        StashMode::Unstaged => "Stashed unstaged changes",
+    };
+
+    match message {
+        Some(message) => format!("{prefix}: {message}"),
+        None => prefix.to_string(),
+    }
 }
 
 fn push_warning(state: &mut AppState, text: impl Into<String>) {
@@ -1761,13 +1804,7 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Set upstream for {branch_name}")
         }
-        InputPromptOperation::CreateStash { include_untracked } => {
-            if *include_untracked {
-                "Stash all changes including untracked".to_string()
-            } else {
-                "Stash tracked changes".to_string()
-            }
-        }
+        InputPromptOperation::CreateStash { mode } => stash_prompt_title(*mode).to_string(),
         InputPromptOperation::CreateWorktree => "Create worktree".to_string(),
         InputPromptOperation::RewordCommit { summary, .. } => format!("Reword {summary}"),
     }
@@ -1778,9 +1815,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
-        InputPromptOperation::CreateStash {
-            include_untracked: _,
-        } => String::new(),
+        InputPromptOperation::CreateStash { mode: _ } => String::new(),
         InputPromptOperation::CreateWorktree => String::new(),
         InputPromptOperation::RewordCommit {
             initial_message, ..
@@ -1794,9 +1829,7 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
     if value.is_empty()
         && !matches!(
             pending.operation,
-            InputPromptOperation::CreateStash {
-                include_untracked: _
-            }
+            InputPromptOperation::CreateStash { mode: _ }
         )
     {
         state.pending_input_prompt = Some(pending);
@@ -1829,26 +1862,16 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
             },
             format!("Set upstream for {branch_name}"),
         ),
-        InputPromptOperation::CreateStash { include_untracked } => (
+        InputPromptOperation::CreateStash { mode } => (
             GitCommand::CreateStash {
                 message: if value.is_empty() {
                     None
                 } else {
                     Some(value.clone())
                 },
-                include_untracked,
+                mode,
             },
-            if include_untracked {
-                if value.is_empty() {
-                    "Stash all changes including untracked".to_string()
-                } else {
-                    format!("Stash all changes including untracked: {value}")
-                }
-            } else if value.is_empty() {
-                "Stash tracked changes".to_string()
-            } else {
-                format!("Stash tracked changes: {value}")
-            },
+            stash_operation_summary(mode, if value.is_empty() { None } else { Some(&value) }),
         ),
         InputPromptOperation::CreateWorktree => {
             let Some((path, branch_ref)) = parse_create_worktree_input(&value) else {
@@ -1899,7 +1922,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
 
 fn menu_item_count(operation: MenuOperation) -> usize {
     match operation {
-        MenuOperation::StashOptions => 2,
+        MenuOperation::StashOptions => 4,
     }
 }
 
@@ -1921,8 +1944,13 @@ fn submit_menu_selection(state: &mut AppState) -> bool {
         return false;
     };
 
-    let include_untracked = match menu.operation {
-        MenuOperation::StashOptions => menu.selected_index == 1,
+    let mode = match menu.operation {
+        MenuOperation::StashOptions => match menu.selected_index {
+            0 => StashMode::Tracked,
+            1 => StashMode::IncludeUntracked,
+            2 => StashMode::Staged,
+            _ => StashMode::Unstaged,
+        },
     };
 
     let Some(detail) = state
@@ -1933,8 +1961,8 @@ fn submit_menu_selection(state: &mut AppState) -> bool {
         return false;
     };
 
-    if !include_untracked && !has_stashable_changes(detail) {
-        push_warning(state, "No tracked changes are available to stash.");
+    if !stash_mode_available(detail, mode) {
+        push_warning(state, stash_mode_unavailable_message(mode));
         return true;
     }
 
@@ -1948,7 +1976,7 @@ fn submit_menu_selection(state: &mut AppState) -> bool {
     open_input_prompt(
         state,
         menu.repo_id,
-        InputPromptOperation::CreateStash { include_untracked },
+        InputPromptOperation::CreateStash { mode },
     );
     true
 }
@@ -2852,13 +2880,21 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::RenameBranch { .. } => "rename-branch",
         GitCommand::DeleteBranch { .. } => "delete-branch",
         GitCommand::CreateStash {
-            include_untracked: true,
+            mode: StashMode::Tracked,
+            ..
+        } => "create-stash",
+        GitCommand::CreateStash {
+            mode: StashMode::IncludeUntracked,
             ..
         } => "create-stash-including-untracked",
         GitCommand::CreateStash {
-            include_untracked: false,
+            mode: StashMode::Staged,
             ..
-        } => "create-stash",
+        } => "create-stash-staged",
+        GitCommand::CreateStash {
+            mode: StashMode::Unstaged,
+            ..
+        } => "create-stash-unstaged",
         GitCommand::ApplyStash { .. } => "apply-stash",
         GitCommand::DropStash { .. } => "drop-stash",
         GitCommand::CreateWorktree { .. } => "create-worktree",
@@ -2935,7 +2971,7 @@ mod tests {
         DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId, MenuOperation,
         MergeState, MessageLevel, ModalKind, PaneId, RebaseKind, RebaseState, ReflogItem,
         RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, ScanStatus, SelectedHunk,
-        StashItem, Timestamp, WatcherHealth, WorkspaceFilterMode, WorktreeItem,
+        StashItem, StashMode, Timestamp, WatcherHealth, WorkspaceFilterMode, WorktreeItem,
     };
 
     use super::reduce;
@@ -3769,7 +3805,7 @@ mod tests {
             Some((
                 repo_id,
                 InputPromptOperation::CreateStash {
-                    include_untracked: false,
+                    mode: StashMode::Tracked,
                 },
                 String::new(),
                 PaneId::RepoUnstaged
@@ -3895,10 +3931,194 @@ mod tests {
             Some((
                 repo_id,
                 InputPromptOperation::CreateStash {
-                    include_untracked: true,
+                    mode: StashMode::IncludeUntracked,
                 },
                 PaneId::RepoStaged,
             ))
+        );
+    }
+
+    #[test]
+    fn submit_stash_options_selection_opens_staged_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Stash options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::StashOptions,
+                selected_index: 2,
+                return_focus: PaneId::RepoStaged,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("staged.txt"),
+                        kind: FileStatusKind::Added,
+                        staged_kind: Some(FileStatusKind::Added),
+                        unstaged_kind: None,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.return_focus,
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::CreateStash {
+                    mode: StashMode::Staged,
+                },
+                PaneId::RepoStaged,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_stash_options_selection_warns_when_staged_scope_is_unavailable() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Stash options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id,
+                operation: MenuOperation::StashOptions,
+                selected_index: 2,
+                return_focus: PaneId::RepoStaged,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("tracked.txt"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("No staged changes are available to stash.")
+        );
+    }
+
+    #[test]
+    fn submit_stash_options_selection_opens_unstaged_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Stash options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::StashOptions,
+                selected_index: 3,
+                return_focus: PaneId::RepoUnstaged,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("tracked.txt"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.return_focus,
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::CreateStash {
+                    mode: StashMode::Unstaged,
+                },
+                PaneId::RepoUnstaged,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_stash_options_selection_warns_when_unstaged_scope_is_unavailable() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Stash options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id,
+                operation: MenuOperation::StashOptions,
+                selected_index: 3,
+                return_focus: PaneId::RepoUnstaged,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("untracked.txt"),
+                        kind: FileStatusKind::Untracked,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Untracked),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("No unstaged tracked changes are available to stash.")
         );
     }
 
@@ -4089,7 +4309,7 @@ mod tests {
             pending_input_prompt: Some(crate::state::PendingInputPrompt {
                 repo_id: repo_id.clone(),
                 operation: crate::state::InputPromptOperation::CreateStash {
-                    include_untracked: false,
+                    mode: StashMode::Tracked,
                 },
                 value: "checkpoint".to_string(),
                 return_focus: PaneId::RepoStaged,
@@ -4111,7 +4331,7 @@ mod tests {
                 repo_id,
                 command: GitCommand::CreateStash {
                     message: Some("checkpoint".to_string()),
-                    include_untracked: false,
+                    mode: StashMode::Tracked,
                 },
             })]
         );
@@ -4130,7 +4350,7 @@ mod tests {
             pending_input_prompt: Some(crate::state::PendingInputPrompt {
                 repo_id: repo_id.clone(),
                 operation: crate::state::InputPromptOperation::CreateStash {
-                    include_untracked: false,
+                    mode: StashMode::Tracked,
                 },
                 value: "   ".to_string(),
                 return_focus: PaneId::RepoUnstaged,
@@ -4152,7 +4372,7 @@ mod tests {
                 repo_id,
                 command: GitCommand::CreateStash {
                     message: None,
-                    include_untracked: false,
+                    mode: StashMode::Tracked,
                 },
             })]
         );

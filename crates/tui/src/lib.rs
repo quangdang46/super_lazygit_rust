@@ -3081,15 +3081,24 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         super_lazygit_core::InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Enter the upstream ref for {branch_name}, for example origin/main.")
         }
-        super_lazygit_core::InputPromptOperation::CreateStash { include_untracked } => {
-            if *include_untracked {
-                "Enter an optional stash message. Leave it blank to use Git's default stash message while including untracked files."
-                    .to_string()
-            } else {
+        super_lazygit_core::InputPromptOperation::CreateStash { mode } => match mode {
+            super_lazygit_core::StashMode::Tracked => {
                 "Enter an optional stash message. Leave it blank to use Git's default tracked-changes stash message."
                     .to_string()
             }
-        }
+            super_lazygit_core::StashMode::IncludeUntracked => {
+                "Enter an optional stash message. Leave it blank to use Git's default stash message while including untracked files."
+                    .to_string()
+            }
+            super_lazygit_core::StashMode::Staged => {
+                "Enter an optional stash message. Leave it blank to stash only the current index state."
+                    .to_string()
+            }
+            super_lazygit_core::StashMode::Unstaged => {
+                "Enter an optional stash message. Leave it blank to stash only tracked worktree changes and keep staged changes in place."
+                    .to_string()
+            }
+        },
         super_lazygit_core::InputPromptOperation::CreateWorktree => {
             "Enter worktree details as: <path> <branch>. Example: ../repo-feature feature."
                 .to_string()
@@ -3105,7 +3114,7 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
 fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
     match operation {
         super_lazygit_core::MenuOperation::StashOptions => {
-            "Choose whether to stash tracked changes only or include untracked files too."
+            "Choose which stash scope to save from the current repository state."
         }
     }
 }
@@ -3115,6 +3124,8 @@ fn menu_lines(menu: &super_lazygit_core::PendingMenu, theme: Theme) -> Vec<Line<
         super_lazygit_core::MenuOperation::StashOptions => &[
             "Stash tracked changes",
             "Stash all changes including untracked",
+            "Stash staged changes",
+            "Stash unstaged changes",
         ],
     };
 
@@ -3581,10 +3592,10 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  s stash tracked  S stash options  D discard file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  s stash tracked changes  S stash options  D discard file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  s stash tracked  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
@@ -5283,7 +5294,7 @@ mod tests {
                 .map(|prompt| (&prompt.operation, prompt.return_focus)),
             Some((
                 &super_lazygit_core::InputPromptOperation::CreateStash {
-                    include_untracked: true,
+                    mode: super_lazygit_core::StashMode::IncludeUntracked,
                 },
                 PaneId::RepoStaged,
             ))
@@ -5764,7 +5775,7 @@ mod tests {
                 .map(|prompt| (&prompt.operation, prompt.return_focus)),
             Some((
                 &super_lazygit_core::InputPromptOperation::CreateStash {
-                    include_untracked: false,
+                    mode: super_lazygit_core::StashMode::Tracked,
                 },
                 PaneId::RepoStaged
             ))
@@ -5802,7 +5813,7 @@ mod tests {
                 .map(|prompt| (&prompt.operation, prompt.return_focus)),
             Some((
                 &super_lazygit_core::InputPromptOperation::CreateStash {
-                    include_untracked: false,
+                    mode: super_lazygit_core::StashMode::Tracked,
                 },
                 PaneId::RepoUnstaged
             ))

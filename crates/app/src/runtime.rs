@@ -593,13 +593,21 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
         GitCommand::CreateStash {
-            include_untracked: true,
+            mode: super_lazygit_core::StashMode::Tracked,
+            ..
+        } => "create_stash",
+        GitCommand::CreateStash {
+            mode: super_lazygit_core::StashMode::IncludeUntracked,
             ..
         } => "create_stash_including_untracked",
         GitCommand::CreateStash {
-            include_untracked: false,
+            mode: super_lazygit_core::StashMode::Staged,
             ..
-        } => "create_stash",
+        } => "create_stash_staged",
+        GitCommand::CreateStash {
+            mode: super_lazygit_core::StashMode::Unstaged,
+            ..
+        } => "create_stash_unstaged",
         GitCommand::ApplyStash { .. } => "apply_stash",
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",

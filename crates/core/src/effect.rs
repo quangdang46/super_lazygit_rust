@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{ComparisonTarget, DiffPresentation, JobId, RepoId, ResetMode, SelectedHunk};
+use crate::state::{
+    ComparisonTarget, DiffPresentation, JobId, RepoId, ResetMode, SelectedHunk, StashMode,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
@@ -115,7 +117,7 @@ pub enum GitCommand {
     },
     CreateStash {
         message: Option<String>,
-        include_untracked: bool,
+        mode: StashMode,
     },
     ApplyStash {
         stash_ref: String,

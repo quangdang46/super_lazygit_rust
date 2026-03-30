@@ -71,7 +71,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `w` in `Staged changes` | Open the no-verify commit box |
 | `C` in `Working tree` or `Staged changes` | Commit staged changes using the configured Git editor |
 | `s` in `Working tree` or `Staged changes` | Open the tracked-changes stash prompt |
-| `S` in `Working tree` or `Staged changes` | Open the stash-options menu, then choose tracked-only or include-untracked stash creation |
+| `S` in `Working tree` or `Staged changes` | Open the stash-options menu, then choose tracked, include-untracked, staged, or unstaged stash creation |
 | `A` in `Staged changes` | Open the amend commit box |
 | `D` | Open discard confirmation for the selected file |
 | `e` | Open the selected file in the configured editor |
