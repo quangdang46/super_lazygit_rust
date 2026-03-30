@@ -109,6 +109,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `u` | Open set-upstream prompt |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
+| `w` | Switch to the worktrees subview |
 
 ### Commits detail subview
 

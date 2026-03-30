@@ -636,6 +636,15 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "switch_repo_subview_worktrees",
+                            raw,
+                            normalized,
+                            &["w"],
+                        ) {
+                            return Some(Action::SwitchRepoSubview(RepoSubview::Worktrees));
+                        }
+
+                        if self.binding_matches_action(
                             "open_rename_branch_prompt",
                             raw,
                             normalized,
@@ -2312,6 +2321,7 @@ fn repo_branch_lines(
             "Enter/Space checks out. - previous branch. c prompts by name. n creates. R renames.",
         ),
         Line::from("d deletes. u sets upstream. v marks compare base/target."),
+        Line::from("w opens worktrees."),
         Line::from(""),
     ];
 
@@ -5270,6 +5280,19 @@ mod tests {
                 "feature"
             ))
         );
+
+        let mut worktree_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let worktrees = worktree_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "w".to_string(),
+        })));
+        assert_eq!(
+            worktrees
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Worktrees)
+        );
     }
 
     #[test]
@@ -6926,6 +6949,7 @@ mod tests {
         assert!(rendered.contains("checks out."));
         assert!(rendered.contains("previous"));
         assert!(rendered.contains("prompts"));
+        assert!(rendered.contains("opens worktrees."));
         assert!(rendered.contains("* main"));
         assert!(rendered.contains("feature"));
     }
