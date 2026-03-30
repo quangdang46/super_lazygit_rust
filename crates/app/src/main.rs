@@ -788,6 +788,41 @@ mod tests {
                 .expect("worktree path should stay utf8 in test fixture"),
         );
 
+        harness.press("focus worktree filter", "/");
+        harness.paste("filter worktrees", "feature");
+        harness.assert_latest_contains("Filter /feature_");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_worktree = repo_mode
+                        .worktree_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.worktrees.get(index))
+                        })
+                        .map(|worktree| worktree.path.as_path());
+                    repo_mode.worktree_filter.focused
+                        && repo_mode.worktree_filter.query == "feature"
+                        && selected_worktree == Some(worktree_path.as_path())
+                })
+            },
+            "filtering worktrees should focus the contextual query and reselect the matching row",
+        );
+
+        harness.press("blur worktree filter", "enter");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    !repo_mode.worktree_filter.focused
+                        && repo_mode.worktree_filter.query == "feature"
+                })
+            },
+            "enter should keep the query while leaving the worktree filter field",
+        );
+
         harness.press("return to main pane", "0");
         harness.assert_state(
             |state| state.focused_pane == PaneId::RepoUnstaged,

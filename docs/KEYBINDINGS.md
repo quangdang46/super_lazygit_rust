@@ -277,11 +277,13 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next worktree |
 | `k` / `Up` | Select the previous worktree |
-| `Space` | Switch to the selected worktree |
+| `Enter` / `Space` | Switch to the selected worktree |
 | `n` | Open create-worktree prompt |
 | `c` | Open create-worktree prompt (legacy alias) |
 | `o` | Open the selected worktree in the configured editor |
 | `d` | Open remove-worktree confirmation |
+| `/` | Focus the worktree filter |
+| `0` | Return focus to the last active main pane |
 
 ### Submodules detail subview
 

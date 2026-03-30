@@ -2984,6 +2984,7 @@ fn workspace_empty_preview_lines(state: &AppState) -> Vec<Line<'static>> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn repo_branch_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
@@ -3475,6 +3476,7 @@ fn stash_message_label(label: &str) -> String {
         .map_or_else(|| label.to_string(), |(_, message)| message.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn repo_stash_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
@@ -3957,6 +3959,7 @@ fn repo_submodule_lines(
     lines
 }
 
+#[allow(clippy::too_many_arguments)]
 fn repo_commit_lines(
     detail: Option<&RepoDetail>,
     selected_commit_index: Option<usize>,
@@ -4132,6 +4135,7 @@ fn repo_commit_lines(
     lines
 }
 
+#[allow(clippy::too_many_arguments)]
 fn repo_commit_file_lines(
     selected_commit: &super_lazygit_core::CommitItem,
     selected_file_index: Option<usize>,
@@ -9020,20 +9024,63 @@ mod tests {
             }),
             ..Default::default()
         };
-        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
-        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
-            key: "j".to_string(),
-        })));
+        let mut focus_filter_app = TuiApp::new(state.clone(), AppConfig::default());
+        let focused_filter =
+            focus_filter_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "/".to_string(),
+            })));
         assert_eq!(
-            down.state
+            focused_filter
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.focused),
+            Some(true)
+        );
+
+        let mut filter_app = TuiApp::new(focused_filter.state, AppConfig::default());
+        let filtered = filter_app.dispatch(Event::Input(InputEvent::Paste("feature".to_string())));
+        assert_eq!(
+            filtered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.query.as_str()),
+            Some("feature")
+        );
+        assert_eq!(
+            filtered
+                .state
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
             Some(1)
         );
 
-        let mut switch_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let mut blur_filter_app = TuiApp::new(filtered.state.clone(), AppConfig::default());
+        let blurred_filter =
+            blur_filter_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "enter".to_string(),
+            })));
+        assert_eq!(
+            blurred_filter
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.focused),
+            Some(false)
+        );
+        assert_eq!(
+            blurred_filter
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.query.as_str()),
+            Some("feature")
+        );
+
+        let mut switch_app = TuiApp::new(blurred_filter.state.clone(), AppConfig::default());
         let switch = switch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "space".to_string(),
         })));
@@ -9059,7 +9106,7 @@ mod tests {
             ]
         );
 
-        let mut create_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let mut create_app = TuiApp::new(blurred_filter.state.clone(), AppConfig::default());
         let create = create_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "n".to_string(),
         })));
@@ -9073,7 +9120,7 @@ mod tests {
             Some(super_lazygit_core::InputPromptOperation::CreateWorktree)
         );
 
-        let mut open_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let mut open_app = TuiApp::new(blurred_filter.state.clone(), AppConfig::default());
         let open = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "o".to_string(),
         })));
@@ -9085,7 +9132,7 @@ mod tests {
             }]
         );
 
-        let mut remove_app = TuiApp::new(down.state, AppConfig::default());
+        let mut remove_app = TuiApp::new(blurred_filter.state, AppConfig::default());
         let remove = remove_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "d".to_string(),
         })));
@@ -10681,6 +10728,52 @@ mod tests {
         assert!(rendered.contains("d remove"));
         assert!(rendered.contains("/tmp/repo-1  [main]"));
         assert!(rendered.contains("/tmp/repo-1-feature  [feature]"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_worktree_filter_empty_state() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(sample_repo_detail()),
+                worktree_filter: super_lazygit_core::RepoSubviewFilterState {
+                    query: "qxz".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Worktrees"));
+        assert!(rendered.contains("Filter /qxz_"));
+        assert!(rendered.contains("No worktrees match /qxz."));
     }
 
     #[test]

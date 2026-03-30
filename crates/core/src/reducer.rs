@@ -6838,6 +6838,159 @@ mod tests {
     }
 
     #[test]
+    fn worktree_filter_lifecycle_updates_visible_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(RepoDetail {
+                    worktrees: vec![
+                        WorktreeItem {
+                            path: std::path::PathBuf::from("/tmp/repo-main"),
+                            branch: Some("main".to_string()),
+                        },
+                        WorktreeItem {
+                            path: std::path::PathBuf::from("/tmp/repo-feature"),
+                            branch: Some("feature".to_string()),
+                        },
+                        WorktreeItem {
+                            path: std::path::PathBuf::from("/tmp/repo-release"),
+                            branch: Some("release".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                worktree_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let focused = reduce(state, Event::Action(Action::FocusRepoSubviewFilter));
+        assert_eq!(
+            focused
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.focused),
+            Some(true)
+        );
+
+        let filtered = reduce(
+            focused.state,
+            Event::Action(Action::AppendRepoSubviewFilter {
+                text: "feature".to_string(),
+            }),
+        );
+        assert_eq!(
+            filtered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.query.as_str()),
+            Some("feature")
+        );
+        assert_eq!(
+            filtered
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
+            Some(1)
+        );
+
+        let blurred = reduce(filtered.state, Event::Action(Action::BlurRepoSubviewFilter));
+        assert_eq!(
+            blurred
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.focused),
+            Some(false)
+        );
+        assert_eq!(
+            blurred
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.query.as_str()),
+            Some("feature")
+        );
+
+        let cancelled = reduce(
+            blurred.state,
+            Event::Action(Action::CancelRepoSubviewFilter),
+        );
+        assert_eq!(
+            cancelled
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.query.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            cancelled
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
+            Some(1)
+        );
+
+        let refocused = reduce(
+            cancelled.state,
+            Event::Action(Action::FocusRepoSubviewFilter),
+        );
+        let emptied = reduce(
+            refocused.state,
+            Event::Action(Action::AppendRepoSubviewFilter {
+                text: "qxz".to_string(),
+            }),
+        );
+        assert_eq!(
+            emptied
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.query.as_str()),
+            Some("qxz")
+        );
+        assert_eq!(
+            emptied
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
+            None
+        );
+
+        let recovered = reduce(
+            emptied.state,
+            Event::Action(Action::CancelRepoSubviewFilter),
+        );
+        assert_eq!(
+            recovered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.worktree_filter.query.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            recovered
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn apply_selected_stash_queues_git_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {

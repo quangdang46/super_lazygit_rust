@@ -25,6 +25,7 @@ pub struct KeyPress {
     pub key: String,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkerEvent {
     RepoScanFailed {

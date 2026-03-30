@@ -3578,7 +3578,7 @@ mod tests {
         assert!(detail.stashes[0]
             .changed_files
             .iter()
-            .any(|file| file.path == PathBuf::from("stash.txt")));
+            .any(|file| file.path == Path::new("stash.txt")));
         assert!(!detail.reflog_items.is_empty());
         assert!(detail
             .reflog_items
@@ -3603,16 +3603,16 @@ mod tests {
 
         let changed_files = &detail.stashes[0].changed_files;
         assert!(changed_files.iter().any(|file| {
-            file.path == PathBuf::from("modified.txt") && file.kind == FileStatusKind::Modified
+            file.path == Path::new("modified.txt") && file.kind == FileStatusKind::Modified
         }));
         assert!(changed_files.iter().any(|file| {
-            file.path == PathBuf::from("deleted.txt") && file.kind == FileStatusKind::Deleted
+            file.path == Path::new("deleted.txt") && file.kind == FileStatusKind::Deleted
         }));
         assert!(changed_files.iter().any(|file| {
-            file.path == PathBuf::from("renamed-before.txt") && file.kind == FileStatusKind::Deleted
+            file.path == Path::new("renamed-before.txt") && file.kind == FileStatusKind::Deleted
         }));
         assert!(changed_files.iter().any(|file| {
-            file.path == PathBuf::from("renamed-after.txt") && file.kind == FileStatusKind::Added
+            file.path == Path::new("renamed-after.txt") && file.kind == FileStatusKind::Added
         }));
     }
 
@@ -4993,7 +4993,7 @@ mod tests {
             .map(|branch| branch.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(remote_names, vec!["origin/feature", "origin/main"]);
-        assert!(!remote_names.iter().any(|name| *name == "origin/HEAD"));
+        assert!(!remote_names.contains(&"origin/HEAD"));
     }
 
     #[test]
