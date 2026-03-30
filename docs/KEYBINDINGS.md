@@ -23,6 +23,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `f` | Cycle workspace filter: `all -> dirty -> ahead -> behind -> conflicts` |
 | `s` | Cycle workspace sort: `attention -> name -> path -> activity` |
 | `Enter` | Open the selected repository in repo mode |
+| `e` | Open the selected repository root in the configured editor |
 | `r` | Refresh visible repositories |
 
 ### Workspace search overlay
@@ -69,6 +70,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `c` in `Staged changes` | Open the commit box |
 | `A` in `Staged changes` | Open the amend commit box |
 | `D` | Open discard confirmation for the selected file |
+| `e` | Open the selected file in the configured editor |
 
 ### Status detail subview
 
@@ -84,6 +86,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `Enter` | Stage or unstage the selected hunk, depending on diff orientation |
 | `L` | Stage or unstage the selected line range, depending on diff orientation |
 | `D` | Open discard confirmation for the selected file |
+| `e` | Open the selected diff file in the configured editor |
 | `X` | Open destructive confirmation for nuking the working tree |
 
 ### Branches detail subview

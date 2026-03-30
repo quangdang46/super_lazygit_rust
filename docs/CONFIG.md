@@ -32,7 +32,14 @@ Behavior details:
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `command` | `String` | `"vim"` | Editor command surface |
-| `args` | `Vec<String>` | `[]` | Extra editor arguments |
+| `args` | `Vec<String>` | `[]` | Extra editor arguments; the selected repo or file path is appended after these |
+
+Editor launch behavior:
+
+- Workspace mode passes the selected repository root to the configured command.
+- Repo mode passes the selected status-file path to the configured command.
+- The runtime sets the editor process current working directory to the selected repository root.
+- When the app is running on a real TTY, the TUI temporarily leaves raw mode and the alternate screen while the editor process runs, then restores the TUI afterward.
 
 ### `theme`
 
@@ -70,10 +77,10 @@ Supported routed action IDs:
 
 - Global: `open_help`, `next_focus`, `previous_focus`, `leave_repo_mode`
 - Modal and prompt overlays: `confirm_pending_operation`, `close_top_modal`, `submit_prompt_input`, `backspace_prompt_input`
-- Workspace: `focus_workspace_search`, `select_next_repo`, `select_previous_repo`, `focus_workspace_preview`, `focus_workspace_list`, `cycle_workspace_filter`, `cycle_workspace_sort`, `enter_repo_mode`, `refresh_visible_repos`, `cancel_workspace_search`, `blur_workspace_search`, `backspace_workspace_search`
+- Workspace: `focus_workspace_search`, `select_next_repo`, `select_previous_repo`, `focus_workspace_preview`, `focus_workspace_list`, `cycle_workspace_filter`, `cycle_workspace_sort`, `enter_repo_mode`, `open_in_editor`, `refresh_visible_repos`, `cancel_workspace_search`, `blur_workspace_search`, `backspace_workspace_search`
 - Repo navigation: `focus_repo_left`, `focus_repo_right`, `switch_repo_subview_status`, `switch_repo_subview_branches`, `switch_repo_subview_commits`, `switch_repo_subview_compare`, `switch_repo_subview_rebase`, `switch_repo_subview_stash`, `switch_repo_subview_reflog`, `switch_repo_subview_worktrees`, `refresh_selected_repo`, `fetch_selected_repo`, `pull_current_branch`, `push_current_branch`
-- Repo status panes: `select_next_status_entry`, `select_previous_status_entry`, `stage_selected_file`, `unstage_selected_file`, `open_commit_box`, `open_amend_commit_box`, `discard_selected_file`
-- Status detail: `select_next_diff_line`, `select_previous_diff_line`, `select_next_diff_hunk`, `select_previous_diff_hunk`, `toggle_diff_line_anchor`, `scroll_repo_detail_down`, `scroll_repo_detail_up`, `apply_selected_hunk`, `apply_selected_lines`, `nuke_working_tree`
+- Repo status panes: `select_next_status_entry`, `select_previous_status_entry`, `stage_selected_file`, `unstage_selected_file`, `open_commit_box`, `open_amend_commit_box`, `discard_selected_file`, `open_in_editor`
+- Status detail: `select_next_diff_line`, `select_previous_diff_line`, `select_next_diff_hunk`, `select_previous_diff_hunk`, `toggle_diff_line_anchor`, `scroll_repo_detail_down`, `scroll_repo_detail_up`, `apply_selected_hunk`, `apply_selected_lines`, `open_in_editor`, `nuke_working_tree`
 - Branches detail: `select_next_branch`, `select_previous_branch`, `checkout_selected_branch`, `open_create_branch_prompt`, `open_rename_branch_prompt`, `delete_selected_branch`, `open_set_branch_upstream_prompt`, `toggle_comparison_selection`, `clear_comparison`
 - Commits detail: `select_next_commit`, `select_previous_commit`, `start_interactive_rebase`, `amend_selected_commit`, `fixup_selected_commit`, `reword_selected_commit`, `cherry_pick_selected_commit`, `revert_selected_commit`, `soft_reset_to_selected_commit`, `mixed_reset_to_selected_commit`, `hard_reset_to_selected_commit`, `toggle_comparison_selection`, `clear_comparison`
 - Rebase detail: `continue_rebase`, `skip_rebase`, `abort_rebase`, `scroll_repo_detail_down`, `scroll_repo_detail_up`

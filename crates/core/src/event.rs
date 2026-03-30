@@ -76,6 +76,9 @@ pub enum WorkerEvent {
         repo_id: RepoId,
         error: String,
     },
+    EditorLaunchFailed {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

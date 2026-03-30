@@ -59,6 +59,11 @@ impl TuiApp {
     }
 
     #[must_use]
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    #[must_use]
     pub fn viewport(&self) -> Viewport {
         self.viewport
     }
@@ -414,6 +419,10 @@ impl TuiApp {
                 .map(|repo_id| Action::EnterRepoMode { repo_id });
         }
 
+        if self.binding_matches_action("open_in_editor", raw, normalized, &["e"]) {
+            return Some(Action::OpenInEditor);
+        }
+
         if self.binding_matches_action("refresh_visible_repos", raw, normalized, &["r"]) {
             return Some(Action::RefreshVisibleRepos);
         }
@@ -456,6 +465,10 @@ impl TuiApp {
 
                 if self.binding_matches_action("discard_selected_file", raw, normalized, &["D"]) {
                     return Some(Action::DiscardSelectedFile);
+                }
+
+                if self.binding_matches_action("open_in_editor", raw, normalized, &["e"]) {
+                    return Some(Action::OpenInEditor);
                 }
 
                 if self.state.focused_pane == PaneId::RepoUnstaged
@@ -703,6 +716,10 @@ impl TuiApp {
                             &["D"],
                         ) {
                             return Some(Action::DiscardSelectedFile);
+                        }
+
+                        if self.binding_matches_action("open_in_editor", raw, normalized, &["e"]) {
+                            return Some(Action::OpenInEditor);
                         }
 
                         if self.binding_matches_action("nuke_working_tree", raw, normalized, &["X"])
@@ -4151,6 +4168,37 @@ mod tests {
     }
 
     #[test]
+    fn route_workspace_editor_binding_opens_selected_repo_root() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from(&repo_id.0);
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "e".to_string(),
+        })));
+
+        assert_eq!(
+            result.effects,
+            vec![super_lazygit_core::Effect::OpenEditor {
+                cwd: repo_root.clone(),
+                target: repo_root,
+            }]
+        );
+    }
+
+    #[test]
     fn route_workspace_override_accepts_legacy_action_name_and_replaces_enter() {
         let state = AppState {
             workspace: WorkspaceState {
@@ -4287,6 +4335,47 @@ mod tests {
             Some(ModalKind::Confirm)
         ));
         assert!(override_key.state.pending_confirmation.is_some());
+    }
+
+    #[test]
+    fn route_repo_editor_binding_opens_selected_status_file() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from(&repo_id.0);
+        let mut detail = sample_repo_detail();
+        detail.diff.selected_path = Some(std::path::PathBuf::from("src/lib.rs"));
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(detail),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            repo_id.clone(),
+            workspace_repo_summary(&repo_id.0, "repo-1"),
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "e".to_string(),
+        })));
+
+        assert_eq!(
+            result.effects,
+            vec![super_lazygit_core::Effect::OpenEditor {
+                cwd: repo_root.clone(),
+                target: repo_root.join("src/lib.rs"),
+            }]
+        );
     }
 
     #[test]

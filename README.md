@@ -20,6 +20,7 @@ That means:
 - Workspace triage signals such as dirty/conflicted/ahead/behind counts
 - Workspace search, filter, sort, and selection behavior
 - Repo-mode shell with working tree, staged changes, and detail panes
+- External editor handoff from the workspace repo list and repo status views
 - File stage and unstage flows
 - Commit and amend commit-box flows
 - Fetch, pull, and push flows with confirmation overlays

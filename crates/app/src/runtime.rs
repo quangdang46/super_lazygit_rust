@@ -1,6 +1,7 @@
 use std::cmp;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -228,6 +229,11 @@ impl AppRuntime {
                         }
                     }
                 }
+                Effect::OpenEditor { cwd, target } => {
+                    if let Some(event) = self.open_editor(cwd, target) {
+                        follow_up_events.push(event);
+                    }
+                }
                 Effect::RunGitCommand(request) => {
                     let summary = git_command_summary(&request.command);
                     follow_up_events.push(Event::Worker(WorkerEvent::GitOperationStarted {
@@ -416,6 +422,31 @@ impl AppRuntime {
         }
 
         follow_up_events
+    }
+
+    fn open_editor(&self, cwd: &PathBuf, target: &PathBuf) -> Option<Event> {
+        let editor = &self.app.config().editor;
+        if editor.command.trim().is_empty() {
+            return Some(Event::Worker(WorkerEvent::EditorLaunchFailed {
+                error: "Editor command is empty.".to_string(),
+            }));
+        }
+
+        let mut command = Command::new(&editor.command);
+        command.current_dir(cwd);
+        command.args(&editor.args);
+        command.arg(target);
+
+        crate::terminal::run_external_command(&mut command)
+            .err()
+            .map(|error| {
+                Event::Worker(WorkerEvent::EditorLaunchFailed {
+                    error: format!(
+                        "Failed to open {} in the configured editor: {error}",
+                        target.display()
+                    ),
+                })
+            })
     }
 }
 

@@ -50,6 +50,17 @@ Other details that matter:
 
 See [CONFIG.md](CONFIG.md) for the supported action IDs.
 
+## The editor key does nothing or returns immediately
+
+The editor action only works when there is a concrete selection:
+
+- in workspace mode, select a repository first
+- in repo mode, focus the working tree, staged pane, or status detail and select a file first
+
+If the binding is correct but launch still fails, check the configured editor command and args. The runtime appends the selected repo or file path after `editor.args`, so wrapper scripts should expect the target as the final argument.
+
+For terminal editors such as `vim`, `nvim`, or `hx`, the app temporarily suspends the TUI and restores it after the editor exits when both stdin and stdout are real TTYs.
+
 ## Watch state says `polling`
 
 `polling` means the watcher backend degraded and the runtime fell back to periodic refresh. That is a supported degraded mode, not a silent failure.

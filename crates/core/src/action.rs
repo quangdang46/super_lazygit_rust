@@ -54,6 +54,7 @@ pub enum Action {
     AppendPromptInput { text: String },
     BackspacePromptInput,
     SubmitPromptInput,
+    OpenInEditor,
     RefreshSelectedRepo,
     RefreshVisibleRepos,
     StageSelection,

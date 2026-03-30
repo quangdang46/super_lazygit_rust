@@ -898,6 +898,66 @@ mod tests {
         )
     }
 
+    #[test]
+    fn open_in_editor_runs_configured_command_from_selected_repo_root() {
+        let root = tempfile::tempdir().expect("workspace root");
+        let repo_root = root.path().join("repo-a");
+        fs::create_dir_all(repo_root.join(".git")).expect("repo fixture");
+        fs::write(repo_root.join("README.md"), "fixture").expect("repo file");
+        let log_path = root.path().join("editor.log");
+        let repo_id = RepoId::new(repo_root.display().to_string());
+
+        let config = AppConfig {
+            editor: super_lazygit_config::EditorConfig {
+                command: "sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "printf '%s\\n' \"$PWD\" > \"$1\"\nprintf '%s\\n' \"$2\" >> \"$1\"".to_string(),
+                    "editor-open".to_string(),
+                    log_path.display().to_string(),
+                ],
+            },
+            ..AppConfig::default()
+        };
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-a".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id),
+                ..WorkspaceState::default()
+            },
+            ..AppState::default()
+        };
+        let mut app = TuiApp::new(state, config);
+        app.resize(120, 32);
+        let mut runtime = AppRuntime::new(
+            app,
+            WorkspaceRegistry::new(Some(root.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        runtime.run([Event::Action(Action::OpenInEditor)]);
+
+        let log = fs::read_to_string(&log_path).expect("editor log");
+        let lines = log.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                repo_root.display().to_string(),
+                repo_root.display().to_string()
+            ]
+        );
+    }
+
     fn latest_git_timing_since(
         before: &super_lazygit_core::DiagnosticsSnapshot,
         after: &super_lazygit_core::DiagnosticsSnapshot,

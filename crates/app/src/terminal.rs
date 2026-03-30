@@ -1,4 +1,5 @@
-use std::io::{self, Stdout};
+use std::io::{self, IsTerminal, Stdout};
+use std::process::{Command, ExitStatus};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -117,6 +118,40 @@ impl Drop for TerminalSession {
             DisableBracketedPaste,
             LeaveAlternateScreen
         );
+    }
+}
+
+pub fn run_external_command(command: &mut Command) -> io::Result<()> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return command.status().and_then(require_success);
+    }
+
+    suspend_terminal()?;
+    let status = command.status();
+    let resume = resume_terminal();
+    resume?;
+    status.and_then(require_success)
+}
+
+fn suspend_terminal() -> io::Result<()> {
+    disable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, Show, DisableBracketedPaste, LeaveAlternateScreen)
+}
+
+fn resume_terminal() -> io::Result<()> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, Hide)
+}
+
+fn require_success(status: ExitStatus) -> io::Result<()> {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "editor exited with status {status}"
+        )))
     }
 }
 

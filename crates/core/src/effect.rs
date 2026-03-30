@@ -29,6 +29,10 @@ pub enum Effect {
         selected_path: Option<PathBuf>,
         diff_presentation: DiffPresentation,
     },
+    OpenEditor {
+        cwd: PathBuf,
+        target: PathBuf,
+    },
     RunGitCommand(GitCommandRequest),
     RunPatchSelection(PatchSelectionJob),
     PersistCache,

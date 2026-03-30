@@ -513,6 +513,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::OpenInEditor => match selected_editor_target(state) {
+            Ok((cwd, target)) => effects.push(Effect::OpenEditor { cwd, target }),
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
         Action::RefreshSelectedRepo => {
             if let Some(repo_id) = state.workspace.selected_repo_id.clone() {
                 effects.push(Effect::RefreshRepoSummary {
@@ -1089,6 +1096,10 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 repo_id: repo_id.clone(),
             });
             effects.push(load_repo_detail_effect(state, repo_id));
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::EditorLaunchFailed { error } => {
+            push_warning(state, error);
             effects.push(Effect::ScheduleRender);
         }
     }
@@ -2006,6 +2017,63 @@ fn selected_status_detail_request(
     selected_status_path(repo_mode, pane).map(|path| (path, diff_presentation_for_pane(pane)))
 }
 
+fn selected_editor_target(
+    state: &AppState,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    match state.mode {
+        AppMode::Workspace => {
+            let Some(repo_id) = state.workspace.selected_repo_id.as_ref() else {
+                return Err("Select a repository before opening it in the editor.".to_string());
+            };
+            let repo_root = repo_root_for_id(state, repo_id);
+            Ok((repo_root.clone(), repo_root))
+        }
+        AppMode::Repository => {
+            let Some(repo_mode) = state.repo_mode.as_ref() else {
+                return Err("Open a repository before using the editor.".to_string());
+            };
+            let repo_root = repo_root_for_id(state, &repo_mode.current_repo_id);
+            let Some(target) = selected_repo_editor_path(state, repo_mode, &repo_root) else {
+                return Err("Select a status file before opening it in the editor.".to_string());
+            };
+            Ok((repo_root, target))
+        }
+    }
+}
+
+fn repo_root_for_id(state: &AppState, repo_id: &crate::state::RepoId) -> std::path::PathBuf {
+    state
+        .workspace
+        .repo_summaries
+        .get(repo_id)
+        .map(|summary| summary.real_path.clone())
+        .unwrap_or_else(|| std::path::PathBuf::from(&repo_id.0))
+}
+
+fn selected_repo_editor_path(
+    state: &AppState,
+    repo_mode: &RepoModeState,
+    repo_root: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let path = match state.focused_pane {
+        PaneId::RepoUnstaged => selected_status_path(repo_mode, PaneId::RepoUnstaged),
+        PaneId::RepoStaged => selected_status_path(repo_mode, PaneId::RepoStaged),
+        PaneId::RepoDetail if repo_mode.active_subview == crate::state::RepoSubview::Status => {
+            repo_mode
+                .detail
+                .as_ref()
+                .and_then(|detail| detail.diff.selected_path.clone())
+        }
+        _ => None,
+    }?;
+
+    Some(if path.is_absolute() {
+        path
+    } else {
+        repo_root.join(path)
+    })
+}
+
 fn selected_discard_path(state: &AppState) -> Option<(crate::state::RepoId, std::path::PathBuf)> {
     let repo_mode = state.repo_mode.as_ref()?;
     let path = match state.focused_pane {
@@ -2588,6 +2656,104 @@ mod tests {
             display_path: repo_id.to_string(),
             ..RepoSummary::default()
         }
+    }
+
+    #[test]
+    fn open_in_editor_from_workspace_targets_selected_repo_root() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let state = AppState {
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id),
+                ..crate::state::WorkspaceState::default()
+            },
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenInEditor));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::OpenEditor {
+                cwd: repo_root.clone(),
+                target: repo_root,
+            }]
+        );
+    }
+
+    #[test]
+    fn open_in_editor_from_repo_mode_targets_selected_status_file() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..crate::state::WorkspaceState::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail {
+                    diff: DiffModel {
+                        selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                        presentation: DiffPresentation::Unstaged,
+                        ..DiffModel::default()
+                    },
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenInEditor));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::OpenEditor {
+                cwd: repo_root.clone(),
+                target: repo_root.join("src/lib.rs"),
+            }]
+        );
+    }
+
+    #[test]
+    fn open_in_editor_without_selection_pushes_warning() {
+        let result = reduce(AppState::default(), Event::Action(Action::OpenInEditor));
+
+        assert!(result.effects.contains(&Effect::ScheduleRender));
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select a repository before opening it in the editor.")
+        );
     }
 
     #[test]
