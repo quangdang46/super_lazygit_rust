@@ -21,7 +21,7 @@ super-lazygit-core = { path = "../core" }
 super-lazygit-git = { path = "../git" }
 super-lazygit-tui = { path = "../tui" }
 super-lazygit-workspace = { path = "../workspace" }
+tempfile.workspace = true
 
 [dev-dependencies]
 super-lazygit-test-support = { path = "../test-support" }
-tempfile.workspace = true

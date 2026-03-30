@@ -22,7 +22,7 @@ That means:
 - Repo-mode shell with working tree, staged changes, and detail panes
 - External editor handoff from the workspace repo list and repo status views
 - File stage and unstage flows
-- Commit and amend commit-box flows
+- Commit and amend commit-box flows, plus Git-editor commit and reword flows
 - Fetch, pull, and push flows with confirmation overlays
 - Commit history detail view with compare-target context
 - Branch detail view with checkout, create, rename, delete, and upstream-setting actions

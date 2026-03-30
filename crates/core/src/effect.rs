@@ -70,8 +70,12 @@ pub enum GitCommand {
     CommitStaged {
         message: String,
     },
+    CommitStagedWithEditor,
     AmendHead {
         message: Option<String>,
+    },
+    RewordCommitWithEditor {
+        commit: String,
     },
     StartCommitRebase {
         commit: String,

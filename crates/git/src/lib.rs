@@ -555,12 +555,22 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["commit", "-m", message.as_str()])?;
                 format!("Committed staged changes: {message}")
             }
+            GitCommand::CommitStagedWithEditor => {
+                return Err(GitError::OperationFailed {
+                    message: "interactive commit must run through the app runtime".to_string(),
+                });
+            }
             GitCommand::AmendHead { message } => {
                 match message.as_deref() {
                     Some(message) => git(&repo_path, ["commit", "--amend", "-m", message])?,
                     None => git(&repo_path, ["commit", "--amend", "--no-edit"])?,
                 }
                 "Amended HEAD commit".to_string()
+            }
+            GitCommand::RewordCommitWithEditor { .. } => {
+                return Err(GitError::OperationFailed {
+                    message: "interactive reword must run through the app runtime".to_string(),
+                });
             }
             GitCommand::StartCommitRebase { commit, mode } => {
                 start_commit_rebase(&repo_path, commit, mode)?;
@@ -790,7 +800,9 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::DiscardFile { .. } => "discard_file",
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
+        GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             RebaseStartMode::Interactive => "start_interactive_rebase",
             RebaseStartMode::Amend => "start_amend_rebase",

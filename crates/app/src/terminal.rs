@@ -122,15 +122,21 @@ impl Drop for TerminalSession {
 }
 
 pub fn run_external_command(command: &mut Command) -> io::Result<()> {
+    run_external_command_named(command, "editor")
+}
+
+pub fn run_external_command_named(command: &mut Command, label: &str) -> io::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return command.status().and_then(require_success);
+        return command
+            .status()
+            .and_then(|status| require_success(status, label));
     }
 
     suspend_terminal()?;
     let status = command.status();
     let resume = resume_terminal();
     resume?;
-    status.and_then(require_success)
+    status.and_then(|status| require_success(status, label))
 }
 
 fn suspend_terminal() -> io::Result<()> {
@@ -145,12 +151,12 @@ fn resume_terminal() -> io::Result<()> {
     execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, Hide)
 }
 
-fn require_success(status: ExitStatus) -> io::Result<()> {
+fn require_success(status: ExitStatus, label: &str) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
         Err(io::Error::other(format!(
-            "editor exited with status {status}"
+            "{label} exited with status {status}"
         )))
     }
 }

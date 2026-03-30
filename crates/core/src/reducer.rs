@@ -243,6 +243,33 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::RewordSelectedCommitWithEditor => {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before starting reword.".to_string());
+                }
+                Ok((
+                    GitCommand::RewordCommitWithEditor {
+                        commit: commit.oid.clone(),
+                    },
+                    format!("Reword {} {}", commit.short_oid, commit.summary),
+                ))
+            }) {
+                Ok(Some((repo_id, (command, summary)))) => {
+                    let job = git_job(repo_id, command);
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => {
+                    push_warning(state, "Select a commit before starting reword.");
+                    effects.push(Effect::ScheduleRender);
+                }
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::CherryPickSelectedCommit => {
             match pending_history_commit_operation(state, |_, commit, _| {
                 Ok(ConfirmableOperation::CherryPickCommit {
@@ -651,6 +678,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::SubmitCommitBox => {
             if let Some(job) = submit_commit_box(state) {
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::CommitStagedWithEditor => {
+            if let Some(job) = commit_with_editor_job(state) {
                 effects.push(Effect::RunGitCommand(job));
             } else {
                 effects.push(Effect::ScheduleRender);
@@ -1409,6 +1443,24 @@ fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
     };
     let job = git_job(repo_id, command);
     enqueue_git_job(state, &job, summary);
+    Some(job)
+}
+
+fn commit_with_editor_job(state: &mut AppState) -> Option<GitCommandRequest> {
+    let (repo_id, staged_count) = state.repo_mode.as_ref().and_then(|repo_mode| {
+        repo_mode
+            .detail
+            .as_ref()
+            .map(|detail| (repo_mode.current_repo_id.clone(), staged_file_count(detail)))
+    })?;
+
+    if staged_count == 0 {
+        push_warning(state, "Stage at least one file before committing.");
+        return None;
+    }
+
+    let job = git_job(repo_id, GitCommand::CommitStagedWithEditor);
+    enqueue_git_job(state, &job, "Commit staged changes with editor");
     Some(job)
 }
 
@@ -2546,7 +2598,9 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::DiscardFile { .. } => "discard-file",
         GitCommand::UnstageFile { .. } => "unstage-file",
         GitCommand::CommitStaged { .. } => "commit-staged",
+        GitCommand::CommitStagedWithEditor => "commit-staged-editor",
         GitCommand::AmendHead { .. } => "amend-head",
+        GitCommand::RewordCommitWithEditor { .. } => "reword-commit-editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             RebaseStartMode::Interactive => "start-interactive-rebase",
             RebaseStartMode::Amend => "start-amend-rebase",
@@ -5395,6 +5449,74 @@ mod tests {
     }
 
     #[test]
+    fn commit_staged_with_editor_queues_job_when_staged_changes_exist() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CommitStagedWithEditor));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: JobId::new("git:repo-1:commit-staged-editor"),
+                repo_id,
+                command: GitCommand::CommitStagedWithEditor,
+            })]
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: JobId::new("git:repo-1:commit-staged-editor"),
+                summary: "Commit staged changes with editor".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_staged_with_editor_warns_without_staged_changes() {
+        let mut detail = repo_detail_with_file_tree();
+        for item in &mut detail.file_tree {
+            item.staged_kind = None;
+        }
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(detail),
+                ..crate::state::RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CommitStagedWithEditor));
+
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| (&notification.level, notification.text.as_str())),
+            Some((
+                &MessageLevel::Warning,
+                "Stage at least one file before committing."
+            ))
+        );
+    }
+
+    #[test]
     fn git_operation_started_marks_job_running() {
         let repo_id = RepoId::new("repo-1");
         let job_id = JobId::new("git:repo-1:stage-selection");
@@ -5791,6 +5913,53 @@ mod tests {
                 summary: "old1234 older commit".to_string(),
                 initial_message: "older commit".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn reword_selected_commit_with_editor_queues_job_for_selected_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RewordSelectedCommitWithEditor));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: JobId::new("git:repo-1:reword-commit-editor"),
+                repo_id,
+                command: GitCommand::RewordCommitWithEditor {
+                    commit: "older".to_string(),
+                },
+            })]
         );
     }
 

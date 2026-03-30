@@ -501,6 +501,11 @@ impl TuiApp {
                         mode: CommitBoxMode::Commit,
                     });
                 }
+
+                if self.binding_matches_action("commit_staged_with_editor", raw, normalized, &["C"])
+                {
+                    return Some(Action::CommitStagedWithEditor);
+                }
             }
             _ => {}
         }
@@ -779,7 +784,7 @@ impl TuiApp {
                             normalized,
                             &["R"],
                         ) {
-                            return Some(Action::RewordSelectedCommit);
+                            return Some(Action::RewordSelectedCommitWithEditor);
                         }
 
                         if self.binding_matches_action(
@@ -4741,18 +4746,13 @@ mod tests {
         let reword = reword_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "R".to_string(),
         })));
-        assert_eq!(
-            reword
-                .state
-                .pending_input_prompt
-                .as_ref()
-                .map(|prompt| prompt.operation.clone()),
-            Some(super_lazygit_core::InputPromptOperation::RewordCommit {
-                commit: "1234567890abcdef".to_string(),
-                summary: "1234567 second".to_string(),
-                initial_message: "second".to_string(),
-            })
-        );
+        assert!(reword.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::RewordCommitWithEditor { commit },
+                ..
+            }) if commit == "1234567890abcdef"
+        )));
 
         let mut revert_app = TuiApp::new(state, AppConfig::default());
         let revert = revert_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
@@ -5456,7 +5456,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_mode_staged_pane_opens_commit_and_amend_boxes() {
+    fn repo_mode_status_panes_route_commit_shortcuts() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoStaged,
@@ -5488,6 +5488,18 @@ mod tests {
             Some(true)
         );
 
+        let mut editor_app = TuiApp::new(state.clone(), AppConfig::default());
+        let editor_commit = editor_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "C".to_string(),
+        })));
+        assert!(editor_commit.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::CommitStagedWithEditor,
+                ..
+            })
+        )));
+
         let mut amend_app = TuiApp::new(state, AppConfig::default());
         let amend = amend_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "A".to_string(),
@@ -5500,6 +5512,52 @@ mod tests {
                 .map(|repo_mode| repo_mode.commit_box.mode),
             Some(CommitBoxMode::Amend)
         );
+    }
+
+    #[test]
+    fn repo_mode_commit_pane_rewords_selected_commit_with_editor() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Commits,
+                detail: Some(super_lazygit_core::RepoDetail {
+                    commits: vec![
+                        super_lazygit_core::CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..Default::default()
+                        },
+                        super_lazygit_core::CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "R".to_string(),
+        })));
+
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::RewordCommitWithEditor { commit },
+                ..
+            }) if commit == "older"
+        )));
     }
 
     #[test]

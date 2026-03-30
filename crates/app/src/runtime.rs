@@ -1,5 +1,8 @@
 use std::cmp;
 use std::collections::VecDeque;
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc;
@@ -15,11 +18,12 @@ use super_lazygit_core::{
     WorkerEvent,
 };
 use super_lazygit_git::{
-    GitFacade, GitResult, PatchSelectionRequest, RepoDetailRequest, RepoSummaryRequest,
-    WorkspaceScanRequest,
+    GitCommandOutcome, GitError, GitFacade, GitResult, PatchSelectionRequest, RepoDetailRequest,
+    RepoSummaryRequest, WorkspaceScanRequest,
 };
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
+use tempfile::tempdir;
 
 const SUMMARY_REFRESH_WORKER_LIMIT: usize = 4;
 
@@ -242,9 +246,13 @@ impl AppRuntime {
                         summary: summary.to_string(),
                     }));
 
-                    match self.git.run_command(request.clone()) {
+                    let result = self
+                        .run_interactive_git_command(request)
+                        .unwrap_or_else(|| self.git.run_command(request.clone()));
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+
+                    match result {
                         Ok(outcome) => {
-                            self.diagnostics.extend_snapshot(self.git.diagnostics());
                             follow_up_events.push(Event::Worker(
                                 WorkerEvent::GitOperationCompleted {
                                     job_id: request.job_id.clone(),
@@ -254,7 +262,6 @@ impl AppRuntime {
                             ));
                         }
                         Err(error) => {
-                            self.diagnostics.extend_snapshot(self.git.diagnostics());
                             follow_up_events.push(Event::Worker(WorkerEvent::GitOperationFailed {
                                 job_id: request.job_id.clone(),
                                 repo_id: request.repo_id.clone(),
@@ -448,6 +455,77 @@ impl AppRuntime {
                 })
             })
     }
+
+    fn run_interactive_git_command(
+        &mut self,
+        request: &super_lazygit_core::GitCommandRequest,
+    ) -> Option<GitResult<GitCommandOutcome>> {
+        match &request.command {
+            GitCommand::CommitStagedWithEditor => {
+                Some(self.commit_staged_with_editor(&request.repo_id))
+            }
+            GitCommand::RewordCommitWithEditor { commit } => {
+                Some(self.reword_commit_with_editor(&request.repo_id, commit))
+            }
+            _ => None,
+        }
+    }
+
+    fn commit_staged_with_editor(&mut self, repo_id: &RepoId) -> GitResult<GitCommandOutcome> {
+        let repo_path = self.repo_path(repo_id);
+        let mut command = Command::new("git");
+        command.arg("commit").current_dir(&repo_path);
+
+        let result = crate::terminal::run_external_command_named(&mut command, "git")
+            .map_err(io_error_to_git);
+        self.git
+            .record_operation("interactive_commit_staged_with_editor", result.is_ok());
+
+        result?;
+        Ok(GitCommandOutcome {
+            repo_id: repo_id.clone(),
+            summary: "Committed staged changes with editor".to_string(),
+        })
+    }
+
+    fn reword_commit_with_editor(
+        &mut self,
+        repo_id: &RepoId,
+        commit: &str,
+    ) -> GitResult<GitCommandOutcome> {
+        let repo_path = self.repo_path(repo_id);
+        let tempdir = tempdir().map_err(io_error_to_git)?;
+        let sequence_editor = tempdir.path().join("sequence-editor.sh");
+        write_executable_script(
+            &sequence_editor,
+            "#!/bin/sh\nset -eu\nfile=\"$1\"\ntmp=\"$1.tmp\"\nawk 'BEGIN{done=0} { if (!done && $1 == \"pick\") { sub(/^pick /, \"reword \"); done=1 } print }' \"$file\" > \"$tmp\"\nmv \"$tmp\" \"$file\"\n",
+        )?;
+
+        let mut command = Command::new("git");
+        command.arg("rebase").arg("-i").current_dir(&repo_path);
+        command.env("GIT_SEQUENCE_EDITOR", &sequence_editor);
+        for arg in rebase_base_args(&repo_path, commit)? {
+            command.arg(arg);
+        }
+
+        let result = crate::terminal::run_external_command_named(&mut command, "git")
+            .map_err(io_error_to_git);
+        self.git
+            .record_operation("interactive_reword_commit_with_editor", result.is_ok());
+
+        result?;
+        Ok(GitCommandOutcome {
+            repo_id: repo_id.clone(),
+            summary: "Reworded selected commit with editor".to_string(),
+        })
+    }
+
+    fn repo_path(&self, repo_id: &RepoId) -> PathBuf {
+        self.workspace
+            .repo_path(repo_id)
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from(&repo_id.0))
+    }
 }
 
 #[derive(Debug)]
@@ -489,7 +567,9 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::DiscardFile { .. } => "discard_file",
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
+        GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             super_lazygit_core::RebaseStartMode::Interactive => "start_interactive_rebase",
             super_lazygit_core::RebaseStartMode::Amend => "start_amend_rebase",
@@ -538,4 +618,119 @@ fn current_timestamp() -> Timestamp {
             .unwrap_or_default()
             .as_secs(),
     )
+}
+
+fn rebase_base_args(repo_path: &std::path::Path, commit: &str) -> GitResult<Vec<String>> {
+    let parent_spec = format!("{commit}^");
+    let output = Command::new("git")
+        .args(["rev-parse", parent_spec.as_str()])
+        .current_dir(repo_path)
+        .output()
+        .map_err(io_error_to_git)?;
+    if output.status.success() {
+        Ok(vec![String::from_utf8(output.stdout)
+            .map_err(|error| GitError::OperationFailed {
+                message: error.to_string(),
+            })?
+            .trim()
+            .to_string()])
+    } else {
+        Ok(vec!["--root".to_string()])
+    }
+}
+
+fn write_executable_script(path: &std::path::Path, contents: &str) -> GitResult<()> {
+    fs::write(path, contents).map_err(io_error_to_git)?;
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(path).map_err(io_error_to_git)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).map_err(io_error_to_git)?;
+    }
+    Ok(())
+}
+
+fn io_error_to_git(error: std::io::Error) -> GitError {
+    GitError::OperationFailed {
+        message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+    use super_lazygit_config::AppConfig;
+    use super_lazygit_core::{AppState, GitCommandRequest};
+    use super_lazygit_test_support::{history_preview_repo, staged_and_unstaged_repo};
+
+    #[test]
+    fn interactive_commit_uses_git_editor() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        repo.write_file(
+            "editor.sh",
+            "#!/bin/sh\nprintf 'editor commit\\n' > \"$1\"\n",
+        )?;
+        repo.git(["config", "core.editor", "sh editor.sh"])?;
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let events = runtime.apply_effects(&[Effect::RunGitCommand(GitCommandRequest {
+            job_id: JobId::new("git:repo:commit-staged-editor"),
+            repo_id: repo_id.clone(),
+            command: GitCommand::CommitStagedWithEditor,
+        })]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationCompleted { summary, .. })
+            if summary == "Committed staged changes with editor"
+        )));
+
+        let log = String::from_utf8(repo.git_capture(["log", "--format=%s", "-n", "1"])?.stdout)
+            .map_err(io::Error::other)?;
+        assert_eq!(log.trim(), "editor commit");
+        Ok(())
+    }
+
+    #[test]
+    fn interactive_reword_uses_git_editor() -> io::Result<()> {
+        let repo = history_preview_repo()?;
+        repo.write_file(
+            "editor.sh",
+            "#!/bin/sh\nprintf 'rewritten second\\n\\n' > \"$1\"\n",
+        )?;
+        repo.git(["config", "core.editor", "sh editor.sh"])?;
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1")?;
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let events = runtime.apply_effects(&[Effect::RunGitCommand(GitCommandRequest {
+            job_id: JobId::new("git:repo:reword-commit-editor"),
+            repo_id: repo_id.clone(),
+            command: GitCommand::RewordCommitWithEditor { commit: target },
+        })]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationCompleted { summary, .. })
+            if summary == "Reworded selected commit with editor"
+        )));
+
+        let log = String::from_utf8(repo.git_capture(["log", "--format=%s", "-n", "3"])?.stdout)
+            .map_err(io::Error::other)?;
+        assert!(log.lines().any(|line| line == "rewritten second"));
+        Ok(())
+    }
 }

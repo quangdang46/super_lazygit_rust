@@ -68,6 +68,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `Enter` in `Working tree` | Stage the selected file |
 | `Enter` in `Staged changes` | Unstage the selected file |
 | `c` in `Staged changes` | Open the commit box |
+| `C` in `Working tree` or `Staged changes` | Commit staged changes using the configured Git editor |
 | `A` in `Staged changes` | Open the amend commit box |
 | `D` | Open discard confirmation for the selected file |
 | `e` | Open the selected file in the configured editor |
@@ -112,7 +113,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `i` | Start interactive rebase from the selected commit |
 | `A` | Open amend-selected-commit confirmation |
 | `F` | Open fixup-selected-commit confirmation |
-| `R` | Open reword-selected-commit prompt |
+| `R` | Reword the selected commit using the configured Git editor |
 | `C` | Open cherry-pick confirmation |
 | `V` | Open revert confirmation |
 | `S` | Open soft-reset confirmation |
