@@ -614,11 +614,21 @@ pub struct RepoModeState {
     pub worktree_filter: RepoSubviewFilterState,
     pub submodules_filter: RepoSubviewFilterState,
     pub operation_progress: OperationProgress,
+    pub ignore_whitespace_in_diff: bool,
+    pub diff_context_lines: u16,
+    pub rename_similarity_threshold: u8,
     pub comparison_base: Option<ComparisonTarget>,
     pub comparison_target: Option<ComparisonTarget>,
     pub comparison_source: Option<RepoSubview>,
     pub detail: Option<RepoDetail>,
 }
+
+pub const DEFAULT_DIFF_CONTEXT_LINES: u16 = 3;
+pub const MIN_DIFF_CONTEXT_LINES: u16 = 0;
+pub const DEFAULT_RENAME_SIMILARITY_THRESHOLD: u8 = 50;
+pub const MIN_RENAME_SIMILARITY_THRESHOLD: u8 = 5;
+pub const MAX_RENAME_SIMILARITY_THRESHOLD: u8 = 100;
+pub const RENAME_SIMILARITY_THRESHOLD_STEP: u8 = 5;
 
 impl RepoModeState {
     #[must_use]
@@ -666,6 +676,9 @@ impl RepoModeState {
             worktree_filter: RepoSubviewFilterState::default(),
             submodules_filter: RepoSubviewFilterState::default(),
             operation_progress: OperationProgress::Idle,
+            ignore_whitespace_in_diff: false,
+            diff_context_lines: DEFAULT_DIFF_CONTEXT_LINES,
+            rename_similarity_threshold: DEFAULT_RENAME_SIMILARITY_THRESHOLD,
             comparison_base: None,
             comparison_target: None,
             comparison_source: None,
@@ -1472,7 +1485,7 @@ mod tests {
     use super::{
         workspace_attention_score, ListViewState, OperationProgress, RemoteSummary, RepoId,
         RepoModeState, RepoSubview, RepoSummary, Timestamp, WorkspaceFilterMode, WorkspaceSortMode,
-        WorkspaceState,
+        WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -1581,6 +1594,12 @@ mod tests {
         assert_eq!(state.diff_line_cursor, None);
         assert_eq!(state.diff_line_anchor, None);
         assert_eq!(state.operation_progress, OperationProgress::Idle);
+        assert!(!state.ignore_whitespace_in_diff);
+        assert_eq!(state.diff_context_lines, DEFAULT_DIFF_CONTEXT_LINES);
+        assert_eq!(
+            state.rename_similarity_threshold,
+            DEFAULT_RENAME_SIMILARITY_THRESHOLD
+        );
         assert!(state.detail.is_none());
     }
 

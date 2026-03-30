@@ -66,7 +66,10 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `:` | Open the shell-command prompt for the current repository root |
 | `@` | Open the command-log menu for recent session messages |
 | `Ctrl+S` in filterable `Repo detail` subviews | Open the filter-options menu for the active detail panel |
-| `W` / `Ctrl+E` in `Branches`, `Commits`, or `Compare` detail | Open the diffing-options menu for shipped comparison flows |
+| `W` / `Ctrl+E` in `Status`, `Branches`, `Commits`, or `Compare` detail | Open the diffing-options menu for the current diff/comparison context |
+| `Ctrl+W` in `Status`, `Commits`, or `Compare` detail | Toggle whitespace visibility in the current diff |
+| `}` / `{` in `Status`, `Commits`, or `Compare` detail | Increase or decrease diff context lines |
+| `)` / `(` in `Status`, `Commits`, or `Compare` detail | Increase or decrease rename similarity threshold |
 | `m` in `Commits` or `Rebase` detail | Open the merge/rebase options menu for the shipped flows in the current context |
 | `Ctrl+P` in `Status detail` | Open the patch-options menu for shipped hunk/line patch flows |
 | `f` | Open fetch confirmation |
@@ -118,6 +121,10 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Up` | Scroll the detail pane up |
 | `Enter` or `Space` | Stage or unstage the selected hunk, depending on diff orientation |
 | `L` | Stage or unstage the selected line range, depending on diff orientation |
+| `Ctrl+W` | Toggle whitespace visibility in the current diff |
+| `}` / `{` | Increase or decrease diff context lines |
+| `)` / `(` | Increase or decrease rename similarity threshold |
+| `W` or `Ctrl+E` | Open the diffing-options menu for the current status diff |
 | `Ctrl+P` | Open the patch-options menu for the currently selected diff |
 | `D` | Open discard confirmation for the selected file |
 | `e` | Open the selected diff file in the configured editor |
@@ -142,7 +149,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
 | `Ctrl+S` | Open the filter-options menu for the branch list |
-| `W` or `Ctrl+E` | Open the diffing-options menu for branch comparison flows |
+| `W` or `Ctrl+E` | Open the diffing-options menu for branch comparison flows and diff settings |
 | `w` | Switch to the worktrees subview |
 
 ### Remotes detail subview
@@ -209,8 +216,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `H` | Open hard-reset confirmation |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
+| `Ctrl+W` | Toggle whitespace visibility in the current diff |
+| `}` / `{` | Increase or decrease diff context lines |
+| `)` / `(` | Increase or decrease rename similarity threshold |
 | `Ctrl+S` | Open the filter-options menu for the commit history or commit-files list |
-| `W` or `Ctrl+E` | Open the diffing-options menu for commit comparison flows |
+| `W` or `Ctrl+E` | Open the diffing-options menu for commit comparison flows and diff settings |
 | `/` | Focus the commit-history filter |
 | `w` | Switch to the worktrees subview |
 | `0` | Return focus to the last active main pane |
@@ -234,6 +244,9 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Scroll down |
 | `k` / `Up` | Scroll up |
+| `Ctrl+W` | Toggle whitespace visibility in the active comparison |
+| `}` / `{` | Increase or decrease diff context lines |
+| `)` / `(` | Increase or decrease rename similarity threshold |
 | `W` or `Ctrl+E` | Open the diffing-options menu for the active comparison |
 | `x` | Clear the active comparison |
 

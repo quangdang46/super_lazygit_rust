@@ -26,6 +26,9 @@ pub enum Effect {
         diff_presentation: DiffPresentation,
         commit_ref: Option<String>,
         commit_history_mode: CommitHistoryMode,
+        ignore_whitespace_in_diff: bool,
+        diff_context_lines: u16,
+        rename_similarity_threshold: u8,
     },
     LoadRepoDiff {
         repo_id: RepoId,
@@ -33,6 +36,9 @@ pub enum Effect {
         compare_with: Option<ComparisonTarget>,
         selected_path: Option<PathBuf>,
         diff_presentation: DiffPresentation,
+        ignore_whitespace_in_diff: bool,
+        diff_context_lines: u16,
+        rename_similarity_threshold: u8,
     },
     OpenEditor {
         cwd: PathBuf,

@@ -206,6 +206,9 @@ impl AppRuntime {
                     diff_presentation,
                     commit_ref,
                     commit_history_mode,
+                    ignore_whitespace_in_diff,
+                    diff_context_lines,
+                    rename_similarity_threshold,
                 } => {
                     let result = self.git.read_repo_detail(RepoDetailRequest {
                         repo_id: repo_id.clone(),
@@ -213,6 +216,9 @@ impl AppRuntime {
                         diff_presentation: *diff_presentation,
                         commit_ref: commit_ref.clone(),
                         commit_history_mode: *commit_history_mode,
+                        ignore_whitespace_in_diff: *ignore_whitespace_in_diff,
+                        diff_context_lines: *diff_context_lines,
+                        rename_similarity_threshold: *rename_similarity_threshold,
                     });
                     self.diagnostics.extend_snapshot(self.git.diagnostics());
 
@@ -229,6 +235,9 @@ impl AppRuntime {
                     compare_with,
                     selected_path,
                     diff_presentation,
+                    ignore_whitespace_in_diff,
+                    diff_context_lines,
+                    rename_similarity_threshold,
                 } => {
                     let result = self.git.read_diff(super_lazygit_git::DiffRequest {
                         repo_id: repo_id.clone(),
@@ -236,6 +245,9 @@ impl AppRuntime {
                         compare_with: compare_with.clone(),
                         selected_path: selected_path.clone(),
                         diff_presentation: *diff_presentation,
+                        ignore_whitespace_in_diff: *ignore_whitespace_in_diff,
+                        diff_context_lines: *diff_context_lines,
+                        rename_similarity_threshold: *rename_similarity_threshold,
                     });
                     self.diagnostics.extend_snapshot(self.git.diagnostics());
 

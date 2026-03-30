@@ -530,12 +530,55 @@ impl TuiApp {
             && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
                 matches!(
                     repo_mode.active_subview,
-                    RepoSubview::Branches | RepoSubview::Commits | RepoSubview::Compare
+                    RepoSubview::Status
+                        | RepoSubview::Branches
+                        | RepoSubview::Commits
+                        | RepoSubview::Compare
                 )
             })
             && self.binding_matches_action("open_diff_options", raw, normalized, &["W", "ctrl+e"])
         {
             return Some(Action::OpenDiffOptions);
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                matches!(
+                    repo_mode.active_subview,
+                    RepoSubview::Status | RepoSubview::Commits | RepoSubview::Compare
+                )
+            })
+        {
+            if self.binding_matches_action(
+                "toggle_whitespace_in_diff",
+                raw,
+                normalized,
+                &["ctrl+w"],
+            ) {
+                return Some(Action::ToggleWhitespaceInDiff);
+            }
+            if self.binding_matches_action("increase_diff_context", raw, normalized, &["}"]) {
+                return Some(Action::IncreaseDiffContext);
+            }
+            if self.binding_matches_action("decrease_diff_context", raw, normalized, &["{"]) {
+                return Some(Action::DecreaseDiffContext);
+            }
+            if self.binding_matches_action(
+                "increase_rename_similarity_threshold",
+                raw,
+                normalized,
+                &[")"],
+            ) {
+                return Some(Action::IncreaseRenameSimilarityThreshold);
+            }
+            if self.binding_matches_action(
+                "decrease_rename_similarity_threshold",
+                raw,
+                normalized,
+                &["("],
+            ) {
+                return Some(Action::DecreaseRenameSimilarityThreshold);
+            }
         }
 
         if self.state.focused_pane == PaneId::RepoDetail
@@ -5327,6 +5370,41 @@ fn diff_menu_lines(state: &AppState) -> Vec<String> {
         }
     }
 
+    entries.push(format!(
+        "{} whitespace changes in diff",
+        if repo_mode.ignore_whitespace_in_diff {
+            "Show"
+        } else {
+            "Ignore"
+        }
+    ));
+    entries.push(format!(
+        "Increase diff context (currently {} line{})",
+        repo_mode.diff_context_lines,
+        if repo_mode.diff_context_lines == 1 {
+            ""
+        } else {
+            "s"
+        }
+    ));
+    entries.push(format!(
+        "Decrease diff context (currently {} line{})",
+        repo_mode.diff_context_lines,
+        if repo_mode.diff_context_lines == 1 {
+            ""
+        } else {
+            "s"
+        }
+    ));
+    entries.push(format!(
+        "Increase rename similarity threshold (currently {}%)",
+        repo_mode.rename_similarity_threshold
+    ));
+    entries.push(format!(
+        "Decrease rename similarity threshold (currently {}%)",
+        repo_mode.rename_similarity_threshold
+    ));
+
     entries
 }
 
@@ -5807,7 +5885,7 @@ fn default_status_text(state: &AppState) -> String {
                 || "Repository shell ready.".to_string(),
                 |repo_mode| {
                     if repo_mode.active_subview == RepoSubview::Status {
-                        "Status diff focus; Enter/Space applies the current hunk, a/A open the all-branches graph, 0 returns to the main pane, w opens worktrees, b opens submodules, D discards the current file, and X nukes the working tree."
+                        "Status diff focus; Enter/Space applies the current hunk, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, a/A open the all-branches graph, 0 returns to the main pane, w opens worktrees, b opens submodules, D discards the current file, and X nukes the working tree."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Branches {
                         "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
@@ -5816,10 +5894,10 @@ fn default_status_text(state: &AppState) -> String {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; a/A switch the all-branches graph direction, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Compare {
-                        "Compare detail focus; j/k scroll the comparison diff, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
+                        "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Rebase {
                         "Rebase detail focus; c continues, s skips, A aborts, 0 returns to the main pane, and j/k scroll the active step."
@@ -5900,15 +5978,15 @@ fn repo_help_text(state: &AppState) -> String {
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  Enter apply hunk  Ctrl+P patch menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Enter apply hunk  Ctrl+P patch menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
                     "Branches pane  j/k move  Enter commits  Space checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
                     "Remotes pane  j/k move  Enter branches  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
-                    "Compare pane  j/k scroll diff  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
                     "Rebase pane  c continue  s skip  A abort  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  j/k scroll  0 main pane  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Stash {
@@ -7168,6 +7246,107 @@ mod tests {
     }
 
     #[test]
+    fn route_repository_status_diff_menu_key() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+e".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::DiffOptions)
+        );
+    }
+
+    #[test]
+    fn route_repository_live_diff_setting_keys() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let toggled = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+w".to_string(),
+        })));
+        assert_eq!(
+            toggled
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.ignore_whitespace_in_diff),
+            Some(true)
+        );
+
+        let increased_context = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "}".to_string(),
+        })));
+        assert_eq!(
+            increased_context
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.diff_context_lines),
+            Some(super_lazygit_core::DEFAULT_DIFF_CONTEXT_LINES + 1)
+        );
+
+        let increased_similarity = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: ")".to_string(),
+        })));
+        assert_eq!(
+            increased_similarity
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.rename_similarity_threshold),
+            Some(super_lazygit_core::DEFAULT_RENAME_SIMILARITY_THRESHOLD + 5)
+        );
+    }
+
+    #[test]
     fn route_repository_status_uppercase_refresh_triggers_deep_refresh() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {
@@ -7310,6 +7489,9 @@ mod tests {
         let mut diff_app = TuiApp::new(merge_state.clone(), AppConfig::default());
         let diff_render = diff_app.render_to_string();
         assert!(diff_render.contains("Mark selected branch 'main' as comparison base"));
+        assert!(diff_render.contains("Ignore whitespace changes in diff"));
+        assert!(diff_render.contains("Increase diff context (currently 3 lines)"));
+        assert!(diff_render.contains("Increase rename similarity threshold (currently 50%)"));
 
         merge_state.modal_stack = vec![super_lazygit_core::Modal::new(
             super_lazygit_core::ModalKind::Menu,
@@ -9832,6 +10014,10 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: super_lazygit_core::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold:
+                        super_lazygit_core::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 super_lazygit_core::Effect::ScheduleRender,
             ]

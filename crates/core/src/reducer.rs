@@ -10,6 +10,8 @@ use crate::state::{
     InputPromptOperation, JobId, MenuOperation, MergeState, MessageLevel, Notification,
     OperationProgress, PaneId, PendingInputPrompt, PendingMenu, RepoModeState, ResetMode,
     ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
+    MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
+    RENAME_SIMILARITY_THRESHOLD_STEP,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +56,9 @@ fn enter_repo_mode_with_parents(
         diff_presentation: DiffPresentation::Unstaged,
         commit_ref: None,
         commit_history_mode: CommitHistoryMode::Linear,
+        ignore_whitespace_in_diff: false,
+        diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+        rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     });
     effects.push(Effect::ScheduleRender);
 }
@@ -167,6 +172,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                             diff_presentation,
                             commit_ref: None,
                             commit_history_mode: CommitHistoryMode::Linear,
+                            ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
+                            diff_context_lines: repo_mode.diff_context_lines,
+                            rename_similarity_threshold: repo_mode.rename_similarity_threshold,
                         });
                     }
                     effects.push(Effect::ScheduleRender);
@@ -185,6 +193,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                             diff_presentation,
                             commit_ref: None,
                             commit_history_mode: CommitHistoryMode::Linear,
+                            ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
+                            diff_context_lines: repo_mode.diff_context_lines,
+                            rename_similarity_threshold: repo_mode.rename_similarity_threshold,
                         });
                     }
                     effects.push(Effect::ScheduleRender);
@@ -996,10 +1007,89 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 if diff_menu_entries(state).is_empty() {
                     push_warning(
                         state,
-                        "Diff options are only available from branches, commits, or an active comparison.",
+                        "Diff options are only available from status, branches, commits, or an active comparison.",
                     );
                 } else {
                     open_menu(state, repo_id, MenuOperation::DiffOptions);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::ToggleWhitespaceInDiff => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.ignore_whitespace_in_diff = !repo_mode.ignore_whitespace_in_diff;
+            }
+            if let Some(effect) = active_diff_reload_effect(state) {
+                effects.push(effect);
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::IncreaseDiffContext => {
+            let changed = state.repo_mode.as_mut().is_some_and(|repo_mode| {
+                let next = repo_mode.diff_context_lines.saturating_add(1);
+                if next == repo_mode.diff_context_lines {
+                    return false;
+                }
+                repo_mode.diff_context_lines = next;
+                true
+            });
+            if changed {
+                if let Some(effect) = active_diff_reload_effect(state) {
+                    effects.push(effect);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::DecreaseDiffContext => {
+            let changed = state.repo_mode.as_mut().is_some_and(|repo_mode| {
+                let next = repo_mode.diff_context_lines.saturating_sub(1);
+                if next == repo_mode.diff_context_lines {
+                    return false;
+                }
+                repo_mode.diff_context_lines = next;
+                true
+            });
+            if changed {
+                if let Some(effect) = active_diff_reload_effect(state) {
+                    effects.push(effect);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::IncreaseRenameSimilarityThreshold => {
+            let changed = state.repo_mode.as_mut().is_some_and(|repo_mode| {
+                let next = repo_mode
+                    .rename_similarity_threshold
+                    .saturating_add(RENAME_SIMILARITY_THRESHOLD_STEP)
+                    .min(MAX_RENAME_SIMILARITY_THRESHOLD);
+                if next == repo_mode.rename_similarity_threshold {
+                    return false;
+                }
+                repo_mode.rename_similarity_threshold = next;
+                true
+            });
+            if changed {
+                if let Some(effect) = active_diff_reload_effect(state) {
+                    effects.push(effect);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::DecreaseRenameSimilarityThreshold => {
+            let changed = state.repo_mode.as_mut().is_some_and(|repo_mode| {
+                let next = repo_mode
+                    .rename_similarity_threshold
+                    .saturating_sub(RENAME_SIMILARITY_THRESHOLD_STEP)
+                    .max(MIN_RENAME_SIMILARITY_THRESHOLD);
+                if next == repo_mode.rename_similarity_threshold {
+                    return false;
+                }
+                repo_mode.rename_similarity_threshold = next;
+                true
+            });
+            if changed {
+                if let Some(effect) = active_diff_reload_effect(state) {
+                    effects.push(effect);
                 }
                 effects.push(Effect::ScheduleRender);
             }
@@ -3470,6 +3560,56 @@ fn diff_menu_entries(state: &AppState) -> Vec<MenuEntry> {
         }
     }
 
+    entries.push(MenuEntry {
+        label: format!(
+            "{} whitespace changes in diff",
+            if repo_mode.ignore_whitespace_in_diff {
+                "Show"
+            } else {
+                "Ignore"
+            }
+        ),
+        action: Action::ToggleWhitespaceInDiff,
+    });
+    entries.push(MenuEntry {
+        label: format!(
+            "Increase diff context (currently {} line{})",
+            repo_mode.diff_context_lines,
+            if repo_mode.diff_context_lines == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ),
+        action: Action::IncreaseDiffContext,
+    });
+    entries.push(MenuEntry {
+        label: format!(
+            "Decrease diff context (currently {} line{})",
+            repo_mode.diff_context_lines,
+            if repo_mode.diff_context_lines == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ),
+        action: Action::DecreaseDiffContext,
+    });
+    entries.push(MenuEntry {
+        label: format!(
+            "Increase rename similarity threshold (currently {}%)",
+            repo_mode.rename_similarity_threshold
+        ),
+        action: Action::IncreaseRenameSimilarityThreshold,
+    });
+    entries.push(MenuEntry {
+        label: format!(
+            "Decrease rename similarity threshold (currently {}%)",
+            repo_mode.rename_similarity_threshold
+        ),
+        action: Action::DecreaseRenameSimilarityThreshold,
+    });
+
     entries
 }
 
@@ -4904,6 +5044,9 @@ fn load_comparison_diff_effect(repo_mode: &RepoModeState) -> Effect {
         compare_with: repo_mode.comparison_target.clone(),
         selected_path: None,
         diff_presentation: DiffPresentation::Comparison,
+        ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
+        diff_context_lines: repo_mode.diff_context_lines,
+        rename_similarity_threshold: repo_mode.rename_similarity_threshold,
     }
 }
 
@@ -4942,6 +5085,36 @@ fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> E
         diff_presentation,
         commit_ref,
         commit_history_mode,
+        ignore_whitespace_in_diff: state
+            .repo_mode
+            .as_ref()
+            .map(|repo_mode| repo_mode.ignore_whitespace_in_diff)
+            .unwrap_or(false),
+        diff_context_lines: state
+            .repo_mode
+            .as_ref()
+            .map(|repo_mode| repo_mode.diff_context_lines)
+            .unwrap_or(crate::state::DEFAULT_DIFF_CONTEXT_LINES),
+        rename_similarity_threshold: state
+            .repo_mode
+            .as_ref()
+            .map(|repo_mode| repo_mode.rename_similarity_threshold)
+            .unwrap_or(crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD),
+    }
+}
+
+fn active_diff_reload_effect(state: &AppState) -> Option<Effect> {
+    let repo_mode = state.repo_mode.as_ref()?;
+    match repo_mode.active_subview {
+        crate::state::RepoSubview::Compare
+            if repo_mode.comparison_base.is_some() && repo_mode.comparison_target.is_some() =>
+        {
+            Some(load_comparison_diff_effect(repo_mode))
+        }
+        crate::state::RepoSubview::Status | crate::state::RepoSubview::Commits => Some(
+            load_repo_detail_effect(state, repo_mode.current_repo_id.clone()),
+        ),
+        _ => None,
     }
 }
 
@@ -5589,6 +5762,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 crate::effect::Effect::ScheduleRender,
             ]
@@ -5959,6 +6135,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -6162,6 +6341,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("feature".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -6460,6 +6642,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("origin/feature".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -6582,6 +6767,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("snapshot".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -6653,6 +6841,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -7270,6 +7461,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -8468,6 +8662,143 @@ mod tests {
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.comparison_base.clone()),
             Some(crate::state::ComparisonTarget::Branch("main".to_string()))
+        );
+    }
+
+    #[test]
+    fn open_diff_options_opens_diff_menu_from_status() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenDiffOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(MenuOperation::DiffOptions)
+        );
+    }
+
+    #[test]
+    fn submit_diff_options_selection_toggles_whitespace_from_status_menu() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Diffing options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::DiffOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.ignore_whitespace_in_diff),
+            Some(true)
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: true,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+                },
+                Effect::ScheduleRender,
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn increase_rename_similarity_threshold_reloads_comparison_diff() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Compare,
+                comparison_base: Some(crate::state::ComparisonTarget::Commit(
+                    "abcdef1234567890".to_string(),
+                )),
+                comparison_target: Some(crate::state::ComparisonTarget::Commit(
+                    "1234567890abcdef".to_string(),
+                )),
+                comparison_source: Some(RepoSubview::Commits),
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::IncreaseRenameSimilarityThreshold),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.rename_similarity_threshold),
+            Some(crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD + 5)
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDiff {
+                    repo_id: RepoId::new("repo-1"),
+                    comparison_target: Some(crate::state::ComparisonTarget::Commit(
+                        "abcdef1234567890".to_string(),
+                    )),
+                    compare_with: Some(crate::state::ComparisonTarget::Commit(
+                        "1234567890abcdef".to_string(),
+                    )),
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Comparison,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD
+                        + 5,
+                },
+                Effect::ScheduleRender,
+            ]
         );
     }
 
@@ -10079,6 +10410,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
             ]
         );
@@ -10128,6 +10462,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("feature".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
             ]
         );
@@ -10788,6 +11125,9 @@ mod tests {
                     )),
                     selected_path: None,
                     diff_presentation: DiffPresentation::Comparison,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -10857,6 +11197,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
             ]
         );
@@ -12568,6 +12911,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -12636,6 +12982,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -12733,6 +13082,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
             ]
         );
@@ -12860,6 +13212,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::RefreshRepoSummary {
                     repo_id: repo_visible,
@@ -12976,6 +13331,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -13068,6 +13426,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]
@@ -13146,6 +13507,9 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
                 },
                 Effect::ScheduleRender,
             ]

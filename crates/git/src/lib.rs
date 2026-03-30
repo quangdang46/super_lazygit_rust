@@ -325,6 +325,9 @@ pub struct RepoDetailRequest {
     pub diff_presentation: DiffPresentation,
     pub commit_ref: Option<String>,
     pub commit_history_mode: CommitHistoryMode,
+    pub ignore_whitespace_in_diff: bool,
+    pub diff_context_lines: u16,
+    pub rename_similarity_threshold: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,6 +337,9 @@ pub struct DiffRequest {
     pub compare_with: Option<ComparisonTarget>,
     pub selected_path: Option<PathBuf>,
     pub diff_presentation: DiffPresentation,
+    pub ignore_whitespace_in_diff: bool,
+    pub diff_context_lines: u16,
+    pub rename_similarity_threshold: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +354,14 @@ pub struct PatchSelectionRequest {
 pub struct GitCommandOutcome {
     pub repo_id: RepoId,
     pub summary: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DiffReadOptions {
+    presentation: DiffPresentation,
+    ignore_whitespace: bool,
+    context_lines: u16,
+    rename_similarity_threshold: u8,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -503,7 +517,12 @@ impl GitBackend for CliGitBackend {
             None,
             None,
             request.selected_path.or(status.first_path.clone()),
-            request.diff_presentation,
+            DiffReadOptions {
+                presentation: request.diff_presentation,
+                ignore_whitespace: request.ignore_whitespace_in_diff,
+                context_lines: request.diff_context_lines,
+                rename_similarity_threshold: request.rename_similarity_threshold,
+            },
         )?;
         let commit_history = read_commits(
             &repo_path,
@@ -543,7 +562,12 @@ impl GitBackend for CliGitBackend {
             request.comparison_target.as_ref(),
             request.compare_with.as_ref(),
             selected_path,
-            request.diff_presentation,
+            DiffReadOptions {
+                presentation: request.diff_presentation,
+                ignore_whitespace: request.ignore_whitespace_in_diff,
+                context_lines: request.diff_context_lines,
+                rename_similarity_threshold: request.rename_similarity_threshold,
+            },
         )
     }
 
@@ -1594,18 +1618,18 @@ fn read_diff_model(
     comparison_target: Option<&ComparisonTarget>,
     compare_with: Option<&ComparisonTarget>,
     selected_path: Option<PathBuf>,
-    diff_presentation: DiffPresentation,
+    options: DiffReadOptions,
 ) -> GitResult<DiffModel> {
     let diff_text = read_diff_text(
         repo_path,
         comparison_target,
         compare_with,
         selected_path.as_deref(),
-        diff_presentation,
+        options,
     )?;
     Ok(parse_diff_model(
         selected_path,
-        diff_presentation,
+        options.presentation,
         &diff_text,
     ))
 }
@@ -1615,14 +1639,19 @@ fn read_diff_text(
     comparison_target: Option<&ComparisonTarget>,
     compare_with: Option<&ComparisonTarget>,
     selected_path: Option<&Path>,
-    diff_presentation: DiffPresentation,
+    options: DiffReadOptions,
 ) -> GitResult<String> {
     let mut args = vec![
         "diff".to_string(),
         "--no-ext-diff".to_string(),
         "--binary".to_string(),
-        "--unified=3".to_string(),
+        format!("--unified={}", options.context_lines),
+        format!("--find-renames={}%", options.rename_similarity_threshold),
     ];
+
+    if options.ignore_whitespace {
+        args.push("--ignore-all-space".to_string());
+    }
 
     if let Some(target) = comparison_target {
         args.push(match target {
@@ -1635,7 +1664,7 @@ fn read_diff_text(
                 }
             });
         }
-    } else if matches!(diff_presentation, DiffPresentation::Staged) {
+    } else if matches!(options.presentation, DiffPresentation::Staged) {
         args.push("--cached".to_string());
     }
 
@@ -3453,6 +3482,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail succeeds");
 
@@ -3546,6 +3578,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -3568,6 +3603,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -3598,6 +3636,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -3942,6 +3983,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -3966,6 +4010,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4002,6 +4049,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: Some("feature".to_string()),
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4042,6 +4092,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("forward graph should load");
         let reverse = backend
@@ -4051,6 +4104,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("reverse graph should load");
 
@@ -4100,6 +4156,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4137,6 +4196,9 @@ mod tests {
                 compare_with: Some(ComparisonTarget::Commit(target)),
                 selected_path: None,
                 diff_presentation: DiffPresentation::Comparison,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("comparison diff should load");
 
@@ -4149,6 +4211,97 @@ mod tests {
             .lines
             .iter()
             .any(|line| line.content.contains("+pub fn answer() -> u32 {")));
+    }
+
+    #[test]
+    fn cli_backend_honors_whitespace_toggle_and_diff_context() {
+        let repo = whitespace_context_repo().expect("fixture repo");
+        let baseline = read_diff_text(
+            repo.path(),
+            None,
+            None,
+            Some(std::path::Path::new("diff.txt")),
+            DiffReadOptions {
+                presentation: DiffPresentation::Unstaged,
+                ignore_whitespace: false,
+                context_lines: 3,
+                rename_similarity_threshold: 50,
+            },
+        )
+        .expect("baseline diff should load");
+        let ignore_whitespace = read_diff_text(
+            repo.path(),
+            None,
+            None,
+            Some(std::path::Path::new("diff.txt")),
+            DiffReadOptions {
+                presentation: DiffPresentation::Unstaged,
+                ignore_whitespace: true,
+                context_lines: 3,
+                rename_similarity_threshold: 50,
+            },
+        )
+        .expect("whitespace-ignored diff should load");
+        let zero_context = read_diff_text(
+            repo.path(),
+            None,
+            None,
+            Some(std::path::Path::new("diff.txt")),
+            DiffReadOptions {
+                presentation: DiffPresentation::Unstaged,
+                ignore_whitespace: false,
+                context_lines: 0,
+                rename_similarity_threshold: 50,
+            },
+        )
+        .expect("zero-context diff should load");
+
+        assert!(baseline.contains("-beta"));
+        assert!(baseline.contains("+  beta"));
+        assert!(ignore_whitespace.contains("+gamma changed"));
+        assert!(!ignore_whitespace.contains("-beta"));
+        assert!(!ignore_whitespace.contains("+  beta"));
+        assert!(baseline.contains("\n alpha\n"));
+        assert!(baseline.contains("\n delta\n"));
+        assert!(!zero_context.contains("\n alpha\n"));
+        assert!(!zero_context.contains("\n delta\n"));
+    }
+
+    #[test]
+    fn cli_backend_honors_rename_similarity_threshold() {
+        let repo = rename_similarity_diff_repo().expect("fixture repo");
+        let detected = read_diff_text(
+            repo.path(),
+            None,
+            None,
+            None,
+            DiffReadOptions {
+                presentation: DiffPresentation::Staged,
+                ignore_whitespace: false,
+                context_lines: 3,
+                rename_similarity_threshold: 50,
+            },
+        )
+        .expect("rename diff should load");
+        let suppressed = read_diff_text(
+            repo.path(),
+            None,
+            None,
+            None,
+            DiffReadOptions {
+                presentation: DiffPresentation::Staged,
+                ignore_whitespace: false,
+                context_lines: 3,
+                rename_similarity_threshold: 90,
+            },
+        )
+        .expect("suppressed rename diff should load");
+
+        assert!(detected.contains("rename from old.txt"));
+        assert!(detected.contains("rename to new.txt"));
+        assert!(!suppressed.contains("rename from old.txt"));
+        assert!(suppressed.contains("new file mode 100644"));
+        assert!(suppressed.contains("deleted file mode 100644"));
     }
 
     #[test]
@@ -4177,6 +4330,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
         let diff = backend
@@ -4186,6 +4342,9 @@ mod tests {
                 compare_with: None,
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("diff should load");
 
@@ -4257,6 +4416,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4306,6 +4468,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4372,6 +4537,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4414,6 +4582,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4452,6 +4623,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4517,6 +4691,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4558,6 +4735,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4596,6 +4776,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4629,6 +4812,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4658,6 +4844,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4691,6 +4880,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4724,6 +4916,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should load");
 
@@ -4908,6 +5103,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail should refresh");
         assert!(detail
@@ -4984,6 +5182,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail succeeds");
 
@@ -5126,6 +5327,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail succeeds");
 
@@ -5295,6 +5499,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail succeeds");
 
@@ -5921,6 +6128,9 @@ mod tests {
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
             })
             .expect("detail succeeds");
 
@@ -5962,6 +6172,9 @@ mod tests {
             diff_presentation: DiffPresentation::Unstaged,
             commit_ref: None,
             commit_history_mode: CommitHistoryMode::Linear,
+            ignore_whitespace_in_diff: false,
+            diff_context_lines: 3,
+            rename_similarity_threshold: 50,
         };
 
         let added = backend
@@ -6185,5 +6398,29 @@ mod tests {
         repo.commit_all("main change")?;
 
         Ok((repo, commit))
+    }
+
+    fn whitespace_context_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file("diff.txt", "alpha\nbeta\ngamma\ndelta\nepsilon\n")?;
+        repo.commit_all("initial")?;
+        repo.write_file("diff.txt", "alpha\n  beta\ngamma changed\ndelta\nepsilon\n")?;
+        Ok(repo)
+    }
+
+    fn rename_similarity_diff_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file(
+            "old.txt",
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+        )?;
+        repo.commit_all("initial")?;
+        repo.git(["mv", "old.txt", "new.txt"])?;
+        repo.write_file(
+            "new.txt",
+            "one\ntwo\nthree\nfour\nfive\nsix\nSEVEN\nEIGHT\nNINE\nTEN\n",
+        )?;
+        repo.git(["add", "-A"])?;
+        Ok(repo)
     }
 }
