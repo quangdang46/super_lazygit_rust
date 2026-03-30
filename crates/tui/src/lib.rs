@@ -996,7 +996,7 @@ impl TuiApp {
                             "apply_selected_stash",
                             raw,
                             normalized,
-                            &["enter"],
+                            &["enter", "space"],
                         ) {
                             return Some(Action::ApplySelectedStash);
                         }
@@ -2415,7 +2415,7 @@ fn repo_stash_lines(
         )]),
         Line::from(format!("Selected: {}", selected_stash.stash_ref)),
         Line::from(selected_stash.label.clone()),
-        Line::from("Enter applies. n branches off. r renames. g pops. d drops."),
+        Line::from("Enter/Space applies. n branches off. r renames. g pops. d drops."),
         Line::from(""),
     ];
 
@@ -5763,6 +5763,18 @@ mod tests {
             }) if stash_ref == "stash@{1}"
         )));
 
+        let mut space_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let space = space_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert!(space.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::ApplyStash { stash_ref },
+                ..
+            }) if stash_ref == "stash@{1}"
+        )));
+
         let mut branch_app = TuiApp::new(state.clone(), AppConfig::default());
         let down = branch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "j".to_string(),
@@ -6937,7 +6949,7 @@ mod tests {
 
         assert!(rendered.contains("Detail: Stash"));
         assert!(rendered.contains("Selected: stash@{1}"));
-        assert!(rendered.contains("Enter applies."));
+        assert!(rendered.contains("applies."));
         assert!(rendered.contains("n branches off."));
         assert!(rendered.contains("r renames."));
         assert!(rendered.contains("g pops."));
