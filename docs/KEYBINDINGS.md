@@ -1,22 +1,22 @@
 # Keybindings
 
-This document reflects the current reducer and TUI shell behavior in the repository. It is the source-of-truth contract for the interactive loop that is still being wired into the app binary.
+This document reflects the current interactive terminal behavior shipped by the TUI router and runtime.
 
 ## Global
 
 | Key | Action |
 | --- | --- |
-| `?` | Open help modal |
+| `?` | Open the help modal |
 | `Tab` | Move focus to the next pane |
 | `Shift+Tab` | Move focus to the previous pane |
-| `Esc` | Leave repo mode, or close the current modal |
+| `Esc` | Leave repo mode, or close the active modal/overlay |
 
 ## Workspace mode
 
 | Key | Action |
 | --- | --- |
-| `j` / `Down` | Select next repository |
-| `k` / `Up` | Select previous repository |
+| `j` / `Down` | Select the next repository |
+| `k` / `Up` | Select the previous repository |
 | `h` / `Left` | Focus the repo list pane |
 | `l` / `Right` | Focus the preview pane |
 | `/` | Focus workspace search |
@@ -33,7 +33,7 @@ This document reflects the current reducer and TUI shell behavior in the reposit
 | `Space` | Insert a space |
 | `Backspace` | Delete the previous character |
 | `Enter` | Blur the search box and keep the query active |
-| `Esc` | Cancel the search focus; if the query is non-empty it also clears the query |
+| `Esc` | Cancel search focus; if the query is non-empty it also clears the query |
 | Paste | Insert pasted text into the query |
 
 ## Repo mode
@@ -42,53 +42,125 @@ This document reflects the current reducer and TUI shell behavior in the reposit
 
 | Key | Action |
 | --- | --- |
+| `h` / `Left` | Move focus one pane left |
+| `l` / `Right` | Move focus one pane right |
 | `1` | Switch detail pane to `Status` |
 | `2` | Switch detail pane to `Branches` |
 | `3` | Switch detail pane to `Commits` |
-| `4` | Switch detail pane to `Stash` scaffold |
-| `5` | Switch detail pane to `Reflog` scaffold |
-| `6` | Switch detail pane to `Worktrees` scaffold |
+| `4` | Switch detail pane to `Compare` |
+| `5` | Switch detail pane to `Rebase` |
+| `6` | Switch detail pane to `Stash` |
+| `7` | Switch detail pane to `Reflog` |
+| `8` | Switch detail pane to `Worktrees` |
+| `r` | Refresh the selected repository |
 | `f` | Open fetch confirmation |
 | `p` | Open pull confirmation |
-| `P` | Push current branch immediately |
+| `P` | Open push confirmation |
 | `Esc` | Return to workspace mode |
 
 ### Working tree and staged panes
 
 | Key | Action |
 | --- | --- |
-| `j` / `Down` | Select next status entry |
-| `k` / `Up` | Select previous status entry |
+| `j` / `Down` | Select the next status entry |
+| `k` / `Up` | Select the previous status entry |
 | `Enter` in `Working tree` | Stage the selected file |
 | `Enter` in `Staged changes` | Unstage the selected file |
-| `c` in `Staged changes` | Open commit box |
-| `A` | Open amend commit box |
+| `c` in `Staged changes` | Open the commit box |
+| `A` in `Staged changes` | Open the amend commit box |
+| `D` | Open discard confirmation for the selected file |
 
 ### Status detail subview
 
 | Key | Action |
 | --- | --- |
-| `j` | Move to the next selected hunk / scroll deeper into the diff |
-| `k` | Move upward in the diff |
+| `J` | Select the next diff line |
+| `K` | Select the previous diff line |
+| `j` | Select the next diff hunk |
+| `k` | Select the previous diff hunk |
+| `v` | Toggle the diff-line anchor |
+| `Down` | Scroll the detail pane down |
+| `Up` | Scroll the detail pane up |
+| `Enter` | Stage or unstage the selected hunk, depending on diff orientation |
+| `L` | Stage or unstage the selected line range, depending on diff orientation |
+| `D` | Open discard confirmation for the selected file |
+| `X` | Open destructive confirmation for nuking the working tree |
 
 ### Branches detail subview
 
 | Key | Action |
 | --- | --- |
-| `j` / `Down` | Select next branch |
-| `k` / `Up` | Select previous branch |
+| `j` / `Down` | Select the next branch |
+| `k` / `Up` | Select the previous branch |
 | `Enter` | Check out the selected branch |
 | `c` | Open create-branch prompt |
-| `R` | Open rename-branch prompt for the selected branch |
-| `d` | Open delete-branch confirmation for the selected branch |
-| `u` | Open set-upstream prompt for the selected branch |
+| `R` | Open rename-branch prompt |
+| `d` | Open delete-branch confirmation |
+| `u` | Open set-upstream prompt |
+| `v` | Toggle comparison selection |
+| `x` | Clear comparison when one is active |
 
 ### Commits detail subview
 
 | Key | Action |
 | --- | --- |
-| `j` / `Down` | Select next commit |
-| `k` / `Up` | Select previous commit |
+| `j` / `Down` | Select the next commit |
+| `k` / `Up` | Select the previous commit |
+| `i` | Start interactive rebase from the selected commit |
+| `A` | Open amend-selected-commit confirmation |
+| `F` | Open fixup-selected-commit confirmation |
+| `R` | Open reword-selected-commit prompt |
+| `C` | Open cherry-pick confirmation |
+| `V` | Open revert confirmation |
+| `S` | Open soft-reset confirmation |
+| `M` | Open mixed-reset confirmation |
+| `H` | Open hard-reset confirmation |
+| `v` | Toggle comparison selection |
+| `x` | Clear comparison when one is active |
+
+### Compare detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Scroll down |
+| `k` / `Up` | Scroll up |
+| `x` | Clear the active comparison |
+
+### Rebase detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Scroll down |
+| `k` / `Up` | Scroll up |
+| `c` | Continue rebase |
+| `s` | Skip the current rebase step |
+| `A` | Abort rebase |
+
+### Stash detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next stash entry |
+| `k` / `Up` | Select the previous stash entry |
+| `Enter` | Apply the selected stash |
+| `d` | Open drop-stash confirmation |
+
+### Reflog detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next reflog entry |
+| `k` / `Up` | Select the previous reflog entry |
+| `u` | Open restore confirmation for the selected reflog entry |
+
+### Worktrees detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next worktree |
+| `k` / `Up` | Select the previous worktree |
+| `c` | Open create-worktree prompt |
+| `d` | Open remove-worktree confirmation |
 
 ## Overlays
 
@@ -120,8 +192,9 @@ This document reflects the current reducer and TUI shell behavior in the reposit
 | `Enter` | Submit the commit or amend action |
 | `Esc` | Close the commit box without leaving repo mode |
 
-## Notes
+## Keybinding overrides
 
-- `stash`, `reflog`, and `worktrees` are navigable subview targets today, but they are still scaffold surfaces rather than complete action flows.
-- `push` is intentionally bound to uppercase `P` to avoid colliding with lowercase `p` for pull.
-- Branch deletion is a confirmed destructive flow and uses the explicit confirmation overlay before the Git command is executed.
+- Routed command bindings can be replaced from config; see [CONFIG.md](CONFIG.md).
+- Override action IDs accept both stable snake_case names such as `enter_repo_mode` and legacy enum-style names such as `EnterRepoMode`.
+- Single-character overrides are case-sensitive, so rebinding `push_current_branch` must use `P` or another exact single-character key if you want uppercase behavior.
+- Text insertion and paste behavior in the workspace search box, input prompts, and commit box are intentionally not remapped.

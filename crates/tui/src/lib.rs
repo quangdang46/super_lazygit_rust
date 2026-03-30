@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{collections::BTreeMap, time::Instant};
 
 use ratatui::{
     buffer::Buffer,
@@ -19,6 +19,7 @@ use super_lazygit_core::{
 pub struct TuiApp {
     state: AppState,
     config: AppConfig,
+    keybinding_overrides: BTreeMap<String, Vec<String>>,
     diagnostics: Diagnostics,
     viewport: Viewport,
 }
@@ -42,9 +43,11 @@ impl TuiApp {
     #[must_use]
     pub fn new(mut state: AppState, config: AppConfig) -> Self {
         state.workspace.ensure_visible_selection();
+        let keybinding_overrides = compile_keybinding_overrides(&config);
         Self {
             state,
             config,
+            keybinding_overrides,
             diagnostics: Diagnostics::default(),
             viewport: Viewport::default(),
         }
@@ -157,6 +160,26 @@ impl TuiApp {
         }
     }
 
+    fn binding_matches_action(
+        &self,
+        action_id: &str,
+        raw: &str,
+        normalized: &str,
+        defaults: &[&str],
+    ) -> bool {
+        let canonical_action = canonicalize_action_id(action_id);
+        if let Some(bindings) = self.keybinding_overrides.get(&canonical_action) {
+            return bindings
+                .iter()
+                .any(|binding| binding_matches_key(binding, raw, normalized));
+        }
+
+        defaults
+            .iter()
+            .copied()
+            .any(|binding| binding_matches_key(binding, raw, normalized))
+    }
+
     fn handle_input(&mut self, input: InputEvent) -> ReduceResult {
         match input {
             InputEvent::Resize { width, height } => {
@@ -212,54 +235,103 @@ impl TuiApp {
 
     fn route_key(&self, key: KeyPress) -> Option<Action> {
         let raw = key.key.as_str();
+        let normalized = raw.trim().to_ascii_lowercase();
 
         if !self.state.modal_stack.is_empty() {
-            let normalized = raw.trim().to_ascii_lowercase();
             return match self.state.modal_stack.last().map(|modal| modal.kind) {
-                Some(super_lazygit_core::ModalKind::Confirm) => match normalized.as_str() {
-                    "enter" | "y" => Some(Action::ConfirmPendingOperation),
-                    "esc" | "q" | "n" => Some(Action::CloseTopModal),
-                    _ => None,
-                },
-                Some(super_lazygit_core::ModalKind::InputPrompt) => match raw {
-                    "esc" | "q" => Some(Action::CloseTopModal),
-                    "enter" => Some(Action::SubmitPromptInput),
-                    "backspace" => Some(Action::BackspacePromptInput),
-                    "space" | " " => Some(Action::AppendPromptInput {
-                        text: " ".to_string(),
-                    }),
-                    _ if raw.chars().count() == 1 => Some(Action::AppendPromptInput {
-                        text: raw.to_string(),
-                    }),
-                    _ => None,
-                },
-                _ => match normalized.as_str() {
-                    "esc" | "q" => Some(Action::CloseTopModal),
-                    _ => None,
-                },
+                Some(super_lazygit_core::ModalKind::Confirm) => {
+                    if self.binding_matches_action(
+                        "confirm_pending_operation",
+                        raw,
+                        &normalized,
+                        &["enter", "y"],
+                    ) {
+                        Some(Action::ConfirmPendingOperation)
+                    } else if self.binding_matches_action(
+                        "close_top_modal",
+                        raw,
+                        &normalized,
+                        &["esc", "q", "n"],
+                    ) {
+                        Some(Action::CloseTopModal)
+                    } else {
+                        None
+                    }
+                }
+                Some(super_lazygit_core::ModalKind::InputPrompt) => {
+                    if self.binding_matches_action(
+                        "close_top_modal",
+                        raw,
+                        &normalized,
+                        &["esc", "q"],
+                    ) {
+                        Some(Action::CloseTopModal)
+                    } else if self.binding_matches_action(
+                        "submit_prompt_input",
+                        raw,
+                        &normalized,
+                        &["enter"],
+                    ) {
+                        Some(Action::SubmitPromptInput)
+                    } else if self.binding_matches_action(
+                        "backspace_prompt_input",
+                        raw,
+                        &normalized,
+                        &["backspace"],
+                    ) {
+                        Some(Action::BackspacePromptInput)
+                    } else if raw == "space" || raw == " " {
+                        Some(Action::AppendPromptInput {
+                            text: " ".to_string(),
+                        })
+                    } else if raw.chars().count() == 1 {
+                        Some(Action::AppendPromptInput {
+                            text: raw.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => {
+                    if self.binding_matches_action(
+                        "close_top_modal",
+                        raw,
+                        &normalized,
+                        &["esc", "q"],
+                    ) {
+                        Some(Action::CloseTopModal)
+                    } else {
+                        None
+                    }
+                }
             };
         };
 
         if self.commit_box_focused() {
-            return self.route_commit_box_key(raw);
+            return self.route_commit_box_key(raw, &normalized);
         }
 
         let trimmed = raw.trim();
-        let normalized = trimmed.to_ascii_lowercase();
 
-        match normalized.as_str() {
-            "?" => {
-                return Some(Action::OpenModal {
-                    kind: super_lazygit_core::ModalKind::Help,
-                    title: "Help".to_string(),
-                })
-            }
-            "tab" => return self.next_focus_action(),
-            "shift+tab" => return self.previous_focus_action(),
-            "esc" if matches!(self.state.mode, AppMode::Repository) => {
-                return Some(Action::LeaveRepoMode)
-            }
-            _ => {}
+        if self.binding_matches_action("open_help", raw, &normalized, &["?"]) {
+            return Some(Action::OpenModal {
+                kind: super_lazygit_core::ModalKind::Help,
+                title: "Help".to_string(),
+            });
+        }
+
+        if self.binding_matches_action("next_focus", raw, &normalized, &["tab"]) {
+            return self.next_focus_action();
+        }
+
+        if self.binding_matches_action("previous_focus", raw, &normalized, &["shift+tab"]) {
+            return self.previous_focus_action();
+        }
+
+        if matches!(self.state.mode, AppMode::Repository)
+            && self.binding_matches_action("leave_repo_mode", raw, &normalized, &["esc"])
+        {
+            return Some(Action::LeaveRepoMode);
         }
 
         match self.state.mode {
@@ -270,10 +342,24 @@ impl TuiApp {
 
     fn route_workspace_key(&self, raw: &str, normalized: &str) -> Option<Action> {
         if self.workspace_search_focused() {
+            if self.binding_matches_action("cancel_workspace_search", raw, normalized, &["esc"]) {
+                return Some(Action::CancelWorkspaceSearch);
+            }
+
+            if self.binding_matches_action("blur_workspace_search", raw, normalized, &["enter"]) {
+                return Some(Action::BlurWorkspaceSearch);
+            }
+
+            if self.binding_matches_action(
+                "backspace_workspace_search",
+                raw,
+                normalized,
+                &["backspace"],
+            ) {
+                return Some(Action::BackspaceWorkspaceSearch);
+            }
+
             return match raw {
-                "esc" => Some(Action::CancelWorkspaceSearch),
-                "enter" => Some(Action::BlurWorkspaceSearch),
-                "backspace" => Some(Action::BackspaceWorkspaceSearch),
                 "space" | " " => Some(Action::AppendWorkspaceSearch {
                     text: " ".to_string(),
                 }),
@@ -284,55 +370,124 @@ impl TuiApp {
             };
         }
 
-        match normalized {
-            "/" => Some(Action::FocusWorkspaceSearch),
-            "j" | "down" => Some(Action::SelectNextRepo),
-            "k" | "up" => Some(Action::SelectPreviousRepo),
-            "l" | "right" => Some(Action::SetFocusedPane(PaneId::WorkspacePreview)),
-            "h" | "left" => Some(Action::SetFocusedPane(PaneId::WorkspaceList)),
-            "f" => Some(Action::CycleWorkspaceFilter),
-            "s" => Some(Action::CycleWorkspaceSort),
-            "esc" if !self.state.workspace.search_query.is_empty() => {
-                Some(Action::CancelWorkspaceSearch)
-            }
-            "enter" => self
+        if self.binding_matches_action("focus_workspace_search", raw, normalized, &["/"]) {
+            return Some(Action::FocusWorkspaceSearch);
+        }
+
+        if self.binding_matches_action("select_next_repo", raw, normalized, &["j", "down"]) {
+            return Some(Action::SelectNextRepo);
+        }
+
+        if self.binding_matches_action("select_previous_repo", raw, normalized, &["k", "up"]) {
+            return Some(Action::SelectPreviousRepo);
+        }
+
+        if self.binding_matches_action("focus_workspace_preview", raw, normalized, &["l", "right"])
+        {
+            return Some(Action::SetFocusedPane(PaneId::WorkspacePreview));
+        }
+
+        if self.binding_matches_action("focus_workspace_list", raw, normalized, &["h", "left"]) {
+            return Some(Action::SetFocusedPane(PaneId::WorkspaceList));
+        }
+
+        if self.binding_matches_action("cycle_workspace_filter", raw, normalized, &["f"]) {
+            return Some(Action::CycleWorkspaceFilter);
+        }
+
+        if self.binding_matches_action("cycle_workspace_sort", raw, normalized, &["s"]) {
+            return Some(Action::CycleWorkspaceSort);
+        }
+
+        if !self.state.workspace.search_query.is_empty()
+            && self.binding_matches_action("cancel_workspace_search", raw, normalized, &["esc"])
+        {
+            return Some(Action::CancelWorkspaceSearch);
+        }
+
+        if self.binding_matches_action("enter_repo_mode", raw, normalized, &["enter"]) {
+            return self
                 .state
                 .workspace
                 .selected_repo_id
                 .clone()
-                .map(|repo_id| Action::EnterRepoMode { repo_id }),
-            "r" => Some(Action::RefreshVisibleRepos),
-            _ => None,
+                .map(|repo_id| Action::EnterRepoMode { repo_id });
         }
+
+        if self.binding_matches_action("refresh_visible_repos", raw, normalized, &["r"]) {
+            return Some(Action::RefreshVisibleRepos);
+        }
+
+        None
     }
 
     fn route_repo_key(&self, raw: &str, normalized: &str) -> Option<Action> {
-        if raw == "P" {
+        if self.binding_matches_action("push_current_branch", raw, normalized, &["P"]) {
             return Some(Action::PushCurrentBranch);
         }
 
-        if raw == "A" && self.can_open_commit_box() {
+        if self.can_open_commit_box()
+            && self.binding_matches_action("open_amend_commit_box", raw, normalized, &["A"])
+        {
             return Some(Action::OpenCommitBox {
                 mode: CommitBoxMode::Amend,
             });
         }
 
-        match (self.state.focused_pane, normalized) {
-            (PaneId::RepoUnstaged | PaneId::RepoStaged, "j" | "down") => {
-                return Some(Action::SelectNextStatusEntry);
-            }
-            (PaneId::RepoUnstaged | PaneId::RepoStaged, "k" | "up") => {
-                return Some(Action::SelectPreviousStatusEntry);
-            }
-            (PaneId::RepoUnstaged | PaneId::RepoStaged, _) if raw == "D" => {
-                return Some(Action::DiscardSelectedFile);
-            }
-            (PaneId::RepoUnstaged, "enter") => return Some(Action::StageSelectedFile),
-            (PaneId::RepoStaged, "enter") => return Some(Action::UnstageSelectedFile),
-            (PaneId::RepoStaged, "c") if self.can_open_commit_box() => {
-                return Some(Action::OpenCommitBox {
-                    mode: CommitBoxMode::Commit,
-                });
+        match self.state.focused_pane {
+            PaneId::RepoUnstaged | PaneId::RepoStaged => {
+                if self.binding_matches_action(
+                    "select_next_status_entry",
+                    raw,
+                    normalized,
+                    &["j", "down"],
+                ) {
+                    return Some(Action::SelectNextStatusEntry);
+                }
+
+                if self.binding_matches_action(
+                    "select_previous_status_entry",
+                    raw,
+                    normalized,
+                    &["k", "up"],
+                ) {
+                    return Some(Action::SelectPreviousStatusEntry);
+                }
+
+                if self.binding_matches_action("discard_selected_file", raw, normalized, &["D"]) {
+                    return Some(Action::DiscardSelectedFile);
+                }
+
+                if self.state.focused_pane == PaneId::RepoUnstaged
+                    && self.binding_matches_action(
+                        "stage_selected_file",
+                        raw,
+                        normalized,
+                        &["enter"],
+                    )
+                {
+                    return Some(Action::StageSelectedFile);
+                }
+
+                if self.state.focused_pane == PaneId::RepoStaged
+                    && self.binding_matches_action(
+                        "unstage_selected_file",
+                        raw,
+                        normalized,
+                        &["enter"],
+                    )
+                {
+                    return Some(Action::UnstageSelectedFile);
+                }
+
+                if self.state.focused_pane == PaneId::RepoStaged
+                    && self.can_open_commit_box()
+                    && self.binding_matches_action("open_commit_box", raw, normalized, &["c"])
+                {
+                    return Some(Action::OpenCommitBox {
+                        mode: CommitBoxMode::Commit,
+                    });
+                }
             }
             _ => {}
         }
@@ -353,216 +508,534 @@ impl TuiApp {
             })
         {
             if let Some(repo_mode) = self.state.repo_mode.as_ref() {
-                match (repo_mode.active_subview, raw, normalized) {
-                    (RepoSubview::Branches, _, "j" | "down") => {
-                        return Some(Action::SelectNextBranch);
-                    }
-                    (RepoSubview::Branches, _, "k" | "up") => {
-                        return Some(Action::SelectPreviousBranch);
-                    }
-                    (RepoSubview::Branches, _, "enter") => {
-                        return Some(Action::CheckoutSelectedBranch);
-                    }
-                    (RepoSubview::Branches, "R", _) => {
-                        if let Some(branch) = selected_branch(
-                            repo_mode.detail.as_ref(),
-                            repo_mode.branches_view.selected_index,
+                match repo_mode.active_subview {
+                    RepoSubview::Branches => {
+                        if self.binding_matches_action(
+                            "select_next_branch",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_branch",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "checkout_selected_branch",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return Some(Action::CheckoutSelectedBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_rename_branch_prompt",
+                            raw,
+                            normalized,
+                            &["R"],
+                        ) {
+                            if let Some(branch) = selected_branch(
+                                repo_mode.detail.as_ref(),
+                                repo_mode.branches_view.selected_index,
+                            ) {
+                                return Some(Action::OpenInputPrompt {
+                                    operation:
+                                        super_lazygit_core::InputPromptOperation::RenameBranch {
+                                            current_name: branch.name.clone(),
+                                        },
+                                });
+                            }
+                        }
+
+                        if self.binding_matches_action(
+                            "open_create_branch_prompt",
+                            raw,
+                            normalized,
+                            &["c"],
                         ) {
                             return Some(Action::OpenInputPrompt {
-                                operation: super_lazygit_core::InputPromptOperation::RenameBranch {
-                                    current_name: branch.name.clone(),
-                                },
+                                operation: super_lazygit_core::InputPromptOperation::CreateBranch,
                             });
                         }
-                    }
-                    (RepoSubview::Branches, _, "c") => {
-                        return Some(Action::OpenInputPrompt {
-                            operation: super_lazygit_core::InputPromptOperation::CreateBranch,
-                        });
-                    }
-                    (RepoSubview::Branches, _, "d") => {
-                        return Some(Action::DeleteSelectedBranch);
-                    }
-                    (RepoSubview::Branches, _, "u") => {
-                        if let Some(branch) = selected_branch(
-                            repo_mode.detail.as_ref(),
-                            repo_mode.branches_view.selected_index,
+
+                        if self.binding_matches_action(
+                            "delete_selected_branch",
+                            raw,
+                            normalized,
+                            &["d"],
                         ) {
-                            return Some(Action::OpenInputPrompt {
-                                operation:
-                                    super_lazygit_core::InputPromptOperation::SetBranchUpstream {
+                            return Some(Action::DeleteSelectedBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_set_branch_upstream_prompt",
+                            raw,
+                            normalized,
+                            &["u"],
+                        ) {
+                            if let Some(branch) = selected_branch(
+                                repo_mode.detail.as_ref(),
+                                repo_mode.branches_view.selected_index,
+                            ) {
+                                return Some(Action::OpenInputPrompt {
+                                    operation: super_lazygit_core::InputPromptOperation::SetBranchUpstream {
                                         branch_name: branch.name.clone(),
                                     },
-                            });
+                                });
+                            }
                         }
                     }
-                    (RepoSubview::Branches | RepoSubview::Commits, "v", "v") => {
-                        return Some(Action::ToggleComparisonSelection);
-                    }
-                    (
-                        RepoSubview::Branches | RepoSubview::Commits | RepoSubview::Compare,
-                        _,
-                        "x",
-                    ) if repo_mode.comparison_base.is_some() => {
-                        return Some(Action::ClearComparison);
-                    }
-                    (RepoSubview::Status, "J", _) => {
-                        return Some(Action::SelectNextDiffLine);
-                    }
-                    (RepoSubview::Status, "K", _) => {
-                        return Some(Action::SelectPreviousDiffLine);
-                    }
-                    (RepoSubview::Status, "j", _) => {
-                        return Some(Action::SelectNextDiffHunk);
-                    }
-                    (RepoSubview::Status, "k", _) => {
-                        return Some(Action::SelectPreviousDiffHunk);
-                    }
-                    (RepoSubview::Status, _, "v") => {
-                        return Some(Action::ToggleDiffLineAnchor);
-                    }
-                    (RepoSubview::Status, _, "down") => {
-                        return Some(Action::ScrollRepoDetailDown);
-                    }
-                    (RepoSubview::Status, _, "up") => {
-                        return Some(Action::ScrollRepoDetailUp);
-                    }
-                    (RepoSubview::Status, _, "enter") => {
-                        return match repo_mode
-                            .detail
-                            .as_ref()
-                            .map(|detail| detail.diff.presentation)
+                    RepoSubview::Status => {
+                        if self.binding_matches_action(
+                            "select_next_diff_line",
+                            raw,
+                            normalized,
+                            &["J"],
+                        ) {
+                            return Some(Action::SelectNextDiffLine);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_diff_line",
+                            raw,
+                            normalized,
+                            &["K"],
+                        ) {
+                            return Some(Action::SelectPreviousDiffLine);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_next_diff_hunk",
+                            raw,
+                            normalized,
+                            &["j"],
+                        ) {
+                            return Some(Action::SelectNextDiffHunk);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_diff_hunk",
+                            raw,
+                            normalized,
+                            &["k"],
+                        ) {
+                            return Some(Action::SelectPreviousDiffHunk);
+                        }
+
+                        if self.binding_matches_action(
+                            "toggle_diff_line_anchor",
+                            raw,
+                            normalized,
+                            &["v"],
+                        ) {
+                            return Some(Action::ToggleDiffLineAnchor);
+                        }
+
+                        if self.binding_matches_action(
+                            "scroll_repo_detail_down",
+                            raw,
+                            normalized,
+                            &["down"],
+                        ) {
+                            return Some(Action::ScrollRepoDetailDown);
+                        }
+
+                        if self.binding_matches_action(
+                            "scroll_repo_detail_up",
+                            raw,
+                            normalized,
+                            &["up"],
+                        ) {
+                            return Some(Action::ScrollRepoDetailUp);
+                        }
+
+                        if self.binding_matches_action(
+                            "apply_selected_hunk",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return match repo_mode
+                                .detail
+                                .as_ref()
+                                .map(|detail| detail.diff.presentation)
+                            {
+                                Some(DiffPresentation::Unstaged) => Some(Action::StageSelectedHunk),
+                                Some(DiffPresentation::Staged) => Some(Action::UnstageSelectedHunk),
+                                _ => None,
+                            };
+                        }
+
+                        if self.binding_matches_action(
+                            "apply_selected_lines",
+                            raw,
+                            normalized,
+                            &["L"],
+                        ) {
+                            return match repo_mode
+                                .detail
+                                .as_ref()
+                                .map(|detail| detail.diff.presentation)
+                            {
+                                Some(DiffPresentation::Unstaged) => {
+                                    Some(Action::StageSelectedLines)
+                                }
+                                Some(DiffPresentation::Staged) => {
+                                    Some(Action::UnstageSelectedLines)
+                                }
+                                _ => None,
+                            };
+                        }
+
+                        if self.binding_matches_action(
+                            "discard_selected_file",
+                            raw,
+                            normalized,
+                            &["D"],
+                        ) {
+                            return Some(Action::DiscardSelectedFile);
+                        }
+
+                        if self.binding_matches_action("nuke_working_tree", raw, normalized, &["X"])
                         {
-                            Some(DiffPresentation::Unstaged) => Some(Action::StageSelectedHunk),
-                            Some(DiffPresentation::Staged) => Some(Action::UnstageSelectedHunk),
-                            _ => None,
-                        };
+                            return Some(Action::NukeWorkingTree);
+                        }
                     }
-                    (RepoSubview::Status, "L", _) => {
-                        return match repo_mode
-                            .detail
-                            .as_ref()
-                            .map(|detail| detail.diff.presentation)
-                        {
-                            Some(DiffPresentation::Unstaged) => Some(Action::StageSelectedLines),
-                            Some(DiffPresentation::Staged) => Some(Action::UnstageSelectedLines),
-                            _ => None,
-                        };
+                    RepoSubview::Commits => {
+                        if self.binding_matches_action(
+                            "select_next_commit",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_commit",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "start_interactive_rebase",
+                            raw,
+                            normalized,
+                            &["i"],
+                        ) {
+                            return Some(Action::StartInteractiveRebase);
+                        }
+
+                        if self.binding_matches_action(
+                            "amend_selected_commit",
+                            raw,
+                            normalized,
+                            &["A"],
+                        ) {
+                            return Some(Action::AmendSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "fixup_selected_commit",
+                            raw,
+                            normalized,
+                            &["F"],
+                        ) {
+                            return Some(Action::FixupSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "reword_selected_commit",
+                            raw,
+                            normalized,
+                            &["R"],
+                        ) {
+                            return Some(Action::RewordSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "cherry_pick_selected_commit",
+                            raw,
+                            normalized,
+                            &["C"],
+                        ) {
+                            return Some(Action::CherryPickSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "revert_selected_commit",
+                            raw,
+                            normalized,
+                            &["V"],
+                        ) {
+                            return Some(Action::RevertSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "soft_reset_to_selected_commit",
+                            raw,
+                            normalized,
+                            &["S"],
+                        ) {
+                            return Some(Action::SoftResetToSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "mixed_reset_to_selected_commit",
+                            raw,
+                            normalized,
+                            &["M"],
+                        ) {
+                            return Some(Action::MixedResetToSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "hard_reset_to_selected_commit",
+                            raw,
+                            normalized,
+                            &["H"],
+                        ) {
+                            return Some(Action::HardResetToSelectedCommit);
+                        }
                     }
-                    (RepoSubview::Status, "D", _) => {
-                        return Some(Action::DiscardSelectedFile);
+                    RepoSubview::Compare => {
+                        if self.binding_matches_action(
+                            "scroll_repo_detail_down",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::ScrollRepoDetailDown);
+                        }
+
+                        if self.binding_matches_action(
+                            "scroll_repo_detail_up",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::ScrollRepoDetailUp);
+                        }
                     }
-                    (RepoSubview::Status, "X", _) => {
-                        return Some(Action::NukeWorkingTree);
+                    RepoSubview::Rebase => {
+                        if self.binding_matches_action(
+                            "scroll_repo_detail_down",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::ScrollRepoDetailDown);
+                        }
+
+                        if self.binding_matches_action(
+                            "scroll_repo_detail_up",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::ScrollRepoDetailUp);
+                        }
+
+                        if self.binding_matches_action("continue_rebase", raw, normalized, &["c"]) {
+                            return Some(Action::ContinueRebase);
+                        }
+
+                        if self.binding_matches_action("skip_rebase", raw, normalized, &["s"]) {
+                            return Some(Action::SkipRebase);
+                        }
+
+                        if self.binding_matches_action("abort_rebase", raw, normalized, &["A"]) {
+                            return Some(Action::AbortRebase);
+                        }
                     }
-                    (RepoSubview::Commits, _, "j" | "down") => {
-                        return Some(Action::SelectNextCommit);
+                    RepoSubview::Stash => {
+                        if self.binding_matches_action(
+                            "select_next_stash",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextStash);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_stash",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousStash);
+                        }
+
+                        if self.binding_matches_action(
+                            "apply_selected_stash",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return Some(Action::ApplySelectedStash);
+                        }
+
+                        if self.binding_matches_action(
+                            "drop_selected_stash",
+                            raw,
+                            normalized,
+                            &["d"],
+                        ) {
+                            return Some(Action::DropSelectedStash);
+                        }
                     }
-                    (RepoSubview::Commits, _, "k" | "up") => {
-                        return Some(Action::SelectPreviousCommit);
+                    RepoSubview::Reflog => {
+                        if self.binding_matches_action(
+                            "select_next_reflog",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextReflog);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_reflog",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousReflog);
+                        }
+
+                        if self.binding_matches_action(
+                            "restore_selected_reflog_entry",
+                            raw,
+                            normalized,
+                            &["u"],
+                        ) {
+                            return Some(Action::RestoreSelectedReflogEntry);
+                        }
                     }
-                    (RepoSubview::Commits, _, "i") => {
-                        return Some(Action::StartInteractiveRebase);
+                    RepoSubview::Worktrees => {
+                        if self.binding_matches_action(
+                            "select_next_worktree",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextWorktree);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_worktree",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousWorktree);
+                        }
+
+                        if self.binding_matches_action("create_worktree", raw, normalized, &["c"]) {
+                            return Some(Action::CreateWorktree);
+                        }
+
+                        if self.binding_matches_action(
+                            "remove_selected_worktree",
+                            raw,
+                            normalized,
+                            &["d"],
+                        ) {
+                            return Some(Action::RemoveSelectedWorktree);
+                        }
                     }
-                    (RepoSubview::Commits, "A", _) => {
-                        return Some(Action::AmendSelectedCommit);
-                    }
-                    (RepoSubview::Commits, "F", _) => {
-                        return Some(Action::FixupSelectedCommit);
-                    }
-                    (RepoSubview::Commits, "R", _) => {
-                        return Some(Action::RewordSelectedCommit);
-                    }
-                    (RepoSubview::Commits, "C", _) => {
-                        return Some(Action::CherryPickSelectedCommit);
-                    }
-                    (RepoSubview::Commits, "V", _) => {
-                        return Some(Action::RevertSelectedCommit);
-                    }
-                    (RepoSubview::Commits, "S", _) => {
-                        return Some(Action::SoftResetToSelectedCommit);
-                    }
-                    (RepoSubview::Commits, "M", _) => {
-                        return Some(Action::MixedResetToSelectedCommit);
-                    }
-                    (RepoSubview::Commits, "H", _) => {
-                        return Some(Action::HardResetToSelectedCommit);
-                    }
-                    (RepoSubview::Compare, _, "j" | "down") => {
-                        return Some(Action::ScrollRepoDetailDown);
-                    }
-                    (RepoSubview::Compare, _, "k" | "up") => {
-                        return Some(Action::ScrollRepoDetailUp);
-                    }
-                    (RepoSubview::Rebase, _, "j" | "down") => {
-                        return Some(Action::ScrollRepoDetailDown);
-                    }
-                    (RepoSubview::Rebase, _, "k" | "up") => {
-                        return Some(Action::ScrollRepoDetailUp);
-                    }
-                    (RepoSubview::Rebase, _, "c") => {
-                        return Some(Action::ContinueRebase);
-                    }
-                    (RepoSubview::Rebase, _, "s") => {
-                        return Some(Action::SkipRebase);
-                    }
-                    (RepoSubview::Rebase, "A", _) => {
-                        return Some(Action::AbortRebase);
-                    }
-                    (RepoSubview::Stash, _, "j" | "down") => {
-                        return Some(Action::SelectNextStash);
-                    }
-                    (RepoSubview::Stash, _, "k" | "up") => {
-                        return Some(Action::SelectPreviousStash);
-                    }
-                    (RepoSubview::Stash, _, "enter") => {
-                        return Some(Action::ApplySelectedStash);
-                    }
-                    (RepoSubview::Stash, _, "d") => {
-                        return Some(Action::DropSelectedStash);
-                    }
-                    (RepoSubview::Reflog, _, "j" | "down") => {
-                        return Some(Action::SelectNextReflog);
-                    }
-                    (RepoSubview::Reflog, _, "k" | "up") => {
-                        return Some(Action::SelectPreviousReflog);
-                    }
-                    (RepoSubview::Reflog, _, "u") => {
-                        return Some(Action::RestoreSelectedReflogEntry);
-                    }
-                    (RepoSubview::Worktrees, _, "j" | "down") => {
-                        return Some(Action::SelectNextWorktree);
-                    }
-                    (RepoSubview::Worktrees, _, "k" | "up") => {
-                        return Some(Action::SelectPreviousWorktree);
-                    }
-                    (RepoSubview::Worktrees, _, "c") => {
-                        return Some(Action::CreateWorktree);
-                    }
-                    (RepoSubview::Worktrees, _, "d") => {
-                        return Some(Action::RemoveSelectedWorktree);
-                    }
-                    _ => {}
+                }
+
+                if matches!(
+                    repo_mode.active_subview,
+                    RepoSubview::Branches | RepoSubview::Commits
+                ) && self.binding_matches_action(
+                    "toggle_comparison_selection",
+                    raw,
+                    normalized,
+                    &["v"],
+                ) {
+                    return Some(Action::ToggleComparisonSelection);
+                }
+
+                if repo_mode.comparison_base.is_some()
+                    && matches!(
+                        repo_mode.active_subview,
+                        RepoSubview::Branches | RepoSubview::Commits | RepoSubview::Compare
+                    )
+                    && self.binding_matches_action("clear_comparison", raw, normalized, &["x"])
+                {
+                    return Some(Action::ClearComparison);
                 }
             }
         }
 
-        match normalized {
-            "h" | "left" => self.repo_focus_left_action(),
-            "l" | "right" => self.repo_focus_right_action(),
-            "1" => Some(Action::SwitchRepoSubview(RepoSubview::Status)),
-            "2" => Some(Action::SwitchRepoSubview(RepoSubview::Branches)),
-            "3" => Some(Action::SwitchRepoSubview(RepoSubview::Commits)),
-            "4" => Some(Action::SwitchRepoSubview(RepoSubview::Compare)),
-            "5" => Some(Action::SwitchRepoSubview(RepoSubview::Rebase)),
-            "6" => Some(Action::SwitchRepoSubview(RepoSubview::Stash)),
-            "7" => Some(Action::SwitchRepoSubview(RepoSubview::Reflog)),
-            "8" => Some(Action::SwitchRepoSubview(RepoSubview::Worktrees)),
-            "r" => Some(Action::RefreshSelectedRepo),
-            "f" => Some(Action::FetchSelectedRepo),
-            "p" => Some(Action::PullCurrentBranch),
-            _ => None,
+        if self.binding_matches_action("focus_repo_left", raw, normalized, &["h", "left"]) {
+            return self.repo_focus_left_action();
         }
+
+        if self.binding_matches_action("focus_repo_right", raw, normalized, &["l", "right"]) {
+            return self.repo_focus_right_action();
+        }
+
+        if self.binding_matches_action("switch_repo_subview_status", raw, normalized, &["1"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Status));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_branches", raw, normalized, &["2"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Branches));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_commits", raw, normalized, &["3"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Commits));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_compare", raw, normalized, &["4"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Compare));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_rebase", raw, normalized, &["5"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Rebase));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_stash", raw, normalized, &["6"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Stash));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_reflog", raw, normalized, &["7"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Reflog));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_worktrees", raw, normalized, &["8"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Worktrees));
+        }
+
+        if self.binding_matches_action("refresh_selected_repo", raw, normalized, &["r"]) {
+            return Some(Action::RefreshSelectedRepo);
+        }
+
+        if self.binding_matches_action("fetch_selected_repo", raw, normalized, &["f"]) {
+            return Some(Action::FetchSelectedRepo);
+        }
+
+        if self.binding_matches_action("pull_current_branch", raw, normalized, &["p"]) {
+            return Some(Action::PullCurrentBranch);
+        }
+
+        None
     }
 
     fn next_focus_action(&self) -> Option<Action> {
@@ -639,11 +1112,20 @@ impl TuiApp {
         matches!(self.state.mode, AppMode::Workspace) && self.state.workspace.search_focused
     }
 
-    fn route_commit_box_key(&self, raw: &str) -> Option<Action> {
+    fn route_commit_box_key(&self, raw: &str, normalized: &str) -> Option<Action> {
+        if self.binding_matches_action("cancel_commit_box", raw, normalized, &["esc"]) {
+            return Some(Action::CancelCommitBox);
+        }
+
+        if self.binding_matches_action("submit_commit_box", raw, normalized, &["enter"]) {
+            return Some(Action::SubmitCommitBox);
+        }
+
+        if self.binding_matches_action("backspace_commit_input", raw, normalized, &["backspace"]) {
+            return Some(Action::BackspaceCommitInput);
+        }
+
         match raw {
-            "esc" => Some(Action::CancelCommitBox),
-            "enter" => Some(Action::SubmitCommitBox),
-            "backspace" => Some(Action::BackspaceCommitInput),
             "space" | " " => Some(Action::AppendCommitInput {
                 text: " ".to_string(),
             }),
@@ -2564,6 +3046,75 @@ fn help_text(state: &AppState) -> String {
     }
 }
 
+fn compile_keybinding_overrides(config: &AppConfig) -> BTreeMap<String, Vec<String>> {
+    let mut overrides = BTreeMap::new();
+
+    for override_config in &config.keybindings.overrides {
+        let action_id = canonicalize_action_id(&override_config.action);
+        if action_id.is_empty() {
+            continue;
+        }
+
+        let entry = overrides.entry(action_id).or_insert_with(Vec::new);
+        for key in &override_config.keys {
+            let Some(key) = canonicalize_keybinding(key) else {
+                continue;
+            };
+
+            if !entry.contains(&key) {
+                entry.push(key);
+            }
+        }
+    }
+
+    overrides
+}
+
+fn canonicalize_action_id(action_id: &str) -> String {
+    action_id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn canonicalize_keybinding(key: &str) -> Option<String> {
+    if key == " " {
+        return Some(String::from("space"));
+    }
+
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.eq_ignore_ascii_case("space") {
+        return Some(String::from("space"));
+    }
+
+    if trimmed.chars().count() == 1 {
+        return Some(trimmed.to_string());
+    }
+
+    Some(trimmed.to_ascii_lowercase())
+}
+
+fn binding_matches_key(binding: &str, raw: &str, normalized: &str) -> bool {
+    let Some(binding) = canonicalize_keybinding(binding) else {
+        return false;
+    };
+
+    if binding == "space" {
+        return raw == " " || normalized == "space";
+    }
+
+    if binding.chars().count() == 1 {
+        return raw.trim() == binding;
+    }
+
+    normalized == binding
+}
+
 fn repo_unstaged_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
@@ -3600,6 +4151,37 @@ mod tests {
     }
 
     #[test]
+    fn route_workspace_override_accepts_legacy_action_name_and_replaces_enter() {
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut config = AppConfig::default();
+        config.keybindings.overrides = vec![super_lazygit_config::KeybindingOverride {
+            action: "EnterRepoMode".to_string(),
+            keys: vec!["o".to_string()],
+        }];
+        let mut app = TuiApp::new(state, config);
+
+        let default_key = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(default_key.state.mode, AppMode::Workspace);
+        assert!(default_key.state.repo_mode.is_none());
+
+        let override_key = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert_eq!(override_key.state.mode, AppMode::Repository);
+        assert_eq!(override_key.state.focused_pane, PaneId::RepoUnstaged);
+        assert!(override_key.state.repo_mode.is_some());
+    }
+
+    #[test]
     fn route_repository_escape_returns_to_workspace_context() {
         let repo_alpha = RepoId::new("/tmp/alpha");
         let repo_beta = RepoId::new("/tmp/beta");
@@ -3653,6 +4235,58 @@ mod tests {
         assert_eq!(returned.state.workspace.search_query, "beta");
         assert!(!returned.state.workspace.search_focused);
         assert!(returned.state.repo_mode.is_none());
+    }
+
+    #[test]
+    fn route_repo_override_replaces_uppercase_push_binding() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            repo_id.clone(),
+            workspace_repo_summary(&repo_id.0, "repo-1"),
+        );
+
+        let mut config = AppConfig::default();
+        config.keybindings.overrides = vec![super_lazygit_config::KeybindingOverride {
+            action: "push_current_branch".to_string(),
+            keys: vec!["g".to_string()],
+        }];
+        let mut app = TuiApp::new(state, config);
+
+        let default_key = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "P".to_string(),
+        })));
+        assert!(default_key.state.pending_confirmation.is_none());
+        assert!(default_key.state.modal_stack.is_empty());
+        assert!(default_key.effects.is_empty());
+
+        let override_key = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert!(matches!(
+            override_key
+                .state
+                .modal_stack
+                .last()
+                .map(|modal| modal.kind),
+            Some(ModalKind::Confirm)
+        ));
+        assert!(override_key.state.pending_confirmation.is_some());
     }
 
     #[test]

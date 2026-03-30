@@ -4,35 +4,32 @@
 
 ## Current status
 
-This repository already has substantial reducer, Git, watcher, cache, and TUI-shell coverage, but it is not yet a finished interactive terminal application. The binary currently bootstraps state, performs the initial refresh path, records diagnostics, and exits; the long-running `crossterm` input loop is not wired in yet.
+The repository now ships a real interactive terminal application when both stdin and stdout are attached to a TTY. Startup still bootstraps workspace state, cache, watcher health, and the initial refresh path before entering the long-running `crossterm` + `ratatui` loop.
 
 That means:
 
-- the repo contains the shell contract and key-routing behavior
-- those behaviors are covered heavily by unit and integration tests
-- the checked-in binary is still a foundation build, not a production-ready daily driver
+- TTY launches stay open and run the interactive session
+- non-TTY launches still bootstrap, refresh once, emit diagnostics when enabled, and exit
+- reducer, runtime, Git, watcher, and TUI behavior are all covered by unit and integration tests
 
 ## What is implemented now
 
-- Workspace discovery rooted at `--workspace <path>` or the current directory
+- Workspace discovery rooted at `--workspace <path>`, the first configured `workspace.roots` entry, or the current directory
+- On-disk config loading from `SUPER_LAZYGIT_CONFIG`, `$XDG_CONFIG_HOME/super-lazygit/config.toml`, or `$HOME/.config/super-lazygit/config.toml`
 - Workspace cache hydration under `.super-lazygit/workspace-cache.json`
 - Workspace triage signals such as dirty/conflicted/ahead/behind counts
 - Workspace search, filter, sort, and selection behavior
 - Repo-mode shell with working tree, staged changes, and detail panes
 - File stage and unstage flows
 - Commit and amend commit-box flows
-- Fetch, pull, and push flows with confirmation overlays where appropriate
+- Fetch, pull, and push flows with confirmation overlays
 - Commit history detail view with compare-target context
 - Branch detail view with checkout, create, rename, delete, and upstream-setting actions
+- Compare, rebase, stash, reflog, and worktree detail subviews
+- Stash apply/drop, reflog restore, and worktree create/remove flows
+- Keybinding overrides for routed command keys across modal, workspace, repo, and commit-box actions
 - Watcher health reporting with degraded fallback polling
 - Fixture-heavy Git integration coverage for dirty repos, conflicts, upstream divergence, stashes, reflog, and worktrees
-
-## What is still partial
-
-- No interactive terminal event loop yet
-- `stash`, `reflog`, and `worktrees` subviews are present in the shell scaffold, but action flows are not complete
-- The config schema exists, but the app currently uses `AppConfig::default()` directly instead of loading a config file from disk
-- Keybinding override config exists as a schema surface, but overrides are not applied yet
 
 ## Running the current build
 
@@ -40,16 +37,30 @@ That means:
 cargo run -p super-lazygit-app -- --workspace /path/to/workspace
 ```
 
-If `--workspace` is omitted, the app falls back to the first configured workspace root if one exists in memory, otherwise the current working directory.
+Workspace-root resolution order is:
+
+1. `--workspace <path>`
+2. the first configured `workspace.roots` entry
+3. the current working directory
+
+Config-file discovery order is:
+
+1. `SUPER_LAZYGIT_CONFIG`
+2. `$XDG_CONFIG_HOME/super-lazygit/config.toml`
+3. `$HOME/.config/super-lazygit/config.toml`
+4. built-in defaults
+
+Interactive mode requires a TTY on both stdin and stdout. If you launch the binary in a pipeline or from a non-interactive harness, it will run startup/bootstrap logic and then exit after the initial refresh path.
 
 ## Verification
 
-The current codebase is exercised primarily through tests:
+The current codebase is exercised primarily through:
 
 ```bash
-cargo test --workspace
+cargo fmt --all
 cargo check --all-targets
 cargo clippy --all-targets -- -D warnings
+cargo test --workspace
 ```
 
 ## Docs
@@ -60,10 +71,10 @@ cargo clippy --all-targets -- -D warnings
 
 ## Architecture at a glance
 
-- `crates/app`: binary entrypoint and runtime orchestration
+- `crates/app`: binary entrypoint, runtime orchestration, TTY driver, and watcher plumbing
 - `crates/core`: state, actions, reducer, effects, and domain structs
 - `crates/tui`: ratatui rendering and key routing
 - `crates/git`: Git facade and CLI-backed Git operations
 - `crates/workspace`: workspace registry, scan bookkeeping, and cache persistence
-- `crates/config`: config schema and defaults
+- `crates/config`: config schema, discovery, and defaults
 - `crates/test-support`: Git fixture builders used by integration tests

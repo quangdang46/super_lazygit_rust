@@ -2,31 +2,53 @@
 
 ## The binary starts and exits immediately
 
-That is the current expected behavior. The repo has the reducer, runtime, cache, watcher, Git, and TUI shell layers, but the long-running terminal input loop has not been wired into the application binary yet.
+The app only enters the interactive terminal loop when both stdin and stdout are attached to a TTY. If you run it in a pipeline, from a non-interactive harness, or under redirected IO, it will still bootstrap workspace state, run the initial refresh path, emit diagnostics when enabled, and then exit.
 
-Use these commands to validate the current implementation:
-
-```bash
-cargo test --workspace
-cargo check --all-targets
-cargo clippy --all-targets -- -D warnings
-```
-
-## I do not see any repositories
-
-The app resolves the workspace root in this order:
-
-1. `--workspace <path>`
-2. the first configured workspace root in memory
-3. the current working directory
-
-Try pointing it at a directory that actually contains Git repositories:
+Use a normal terminal session for interactive mode:
 
 ```bash
 cargo run -p super-lazygit-app -- --workspace /path/to/workspace
 ```
 
-The discovery layer also ignores `.git`, `node_modules`, and `target` by default.
+## I do not see any repositories
+
+Workspace-root resolution order is:
+
+1. `--workspace <path>`
+2. the first configured `workspace.roots` entry
+3. the current working directory
+
+Config discovery order is:
+
+1. `SUPER_LAZYGIT_CONFIG`
+2. `$XDG_CONFIG_HOME/super-lazygit/config.toml`
+3. `$HOME/.config/super-lazygit/config.toml`
+4. built-in defaults
+
+Try pointing the app at a directory that actually contains Git repositories. The discovery layer ignores `.git`, `node_modules`, and `target` by default.
+
+## I expected a config file to be loaded
+
+Config loading is active now. Common failure cases are:
+
+- `SUPER_LAZYGIT_CONFIG` points at a file that does not exist
+- the discovered config file is unreadable
+- the TOML is invalid
+
+All of those fail startup with the path included in the error message.
+
+## My keybinding override does not take effect
+
+Keybinding overrides only apply to routed command keys. They do not remap freeform character insertion or paste behavior in the workspace search box, input prompts, or commit box.
+
+Other details that matter:
+
+- overrides replace the default binding for that action; they do not add an alias on top of the default
+- action names are canonicalized, so `enter_repo_mode` and `EnterRepoMode` target the same action
+- single-character bindings are case-sensitive, so `p` and `P` are different keys
+- `space` and a literal single space are treated as the same key
+
+See [CONFIG.md](CONFIG.md) for the supported action IDs.
 
 ## Watch state says `polling`
 
@@ -50,7 +72,7 @@ Workspace cache is stored under:
 
 The cache is considered stale after five minutes. When a stale cache is loaded, repo summaries are marked stale until the runtime refreshes them.
 
-If you want a clean bootstrap path, delete the cache directory:
+If you want a clean bootstrap path, remove the cache directory:
 
 ```bash
 rm -rf .super-lazygit
@@ -67,26 +89,20 @@ git branch -vv
 git branch --set-upstream-to origin/<branch> <branch>
 ```
 
-The repo-mode branch prompt is also designed to support upstream assignment once the interactive terminal driver is live.
+The repo-mode branch prompt also supports upstream assignment.
 
 ## Branch delete is more forceful than plain `git branch -d`
 
-The current delete-branch implementation uses `git branch -D` behind an explicit confirmation modal. That choice is deliberate: the softer `-d` path blocked confirmed-destructive flows in cases where upstream merge state prevented deletion even though the user had already confirmed the destructive action.
+The delete-branch implementation uses `git branch -D` behind an explicit confirmation modal. That choice is deliberate: the softer `-d` path blocked confirmed-destructive flows in cases where upstream merge state prevented deletion even though the user had already confirmed the destructive action.
 
 If you need the safer refusal semantics of `git branch -d`, use Git directly for now.
 
-## I expected a config file to be loaded
-
-The config schema exists, but the app currently does not parse an on-disk config file. The binary constructs `AppConfig::default()` directly.
-
-See [CONFIG.md](CONFIG.md) for the current schema and defaults.
-
 ## I need deeper visibility into startup behavior
 
-Diagnostics are enabled by default, and startup emits a stderr line when diagnostics logging is on. You can also use the test suite as a debugging surface because many workflows already have direct harness coverage:
+Diagnostics are enabled by default, and startup emits a stderr line when diagnostics logging is on. The test suite also covers the main workflows directly:
 
 - workspace bootstrap and cache hydration
 - watcher degradation and recovery
 - repo summary refresh behavior
-- commit, push, pull, and branch lifecycle flows
+- commit, push, pull, stash, reflog, and branch lifecycle flows
 - performance budgets for cold start, warm start, refresh, and detail loads
