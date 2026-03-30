@@ -42,7 +42,19 @@ Current submodule scope intentionally does not include lazygit's broader bulk su
 ## Running the current build
 
 ```bash
+./slg --workspace /path/to/workspace
+```
+
+The repo now ships a short local launcher for day-to-day iteration. It runs the same
+`src/main.rs` entrypoint as the compatibility binary target and is the recommended
+developer path from the repository root.
+
+Compatibility paths stay valid:
+
+```bash
 cargo run -p super-lazygit-app -- --workspace /path/to/workspace
+cargo run -p super-lazygit-app --bin super-lazygit -- --workspace /path/to/workspace
+cargo run -p super-lazygit-app --bin slg -- --workspace /path/to/workspace
 ```
 
 Workspace-root resolution order is:

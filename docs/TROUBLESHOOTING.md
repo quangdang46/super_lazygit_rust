@@ -7,7 +7,15 @@ The app only enters the interactive terminal loop when both stdin and stdout are
 Use a normal terminal session for interactive mode:
 
 ```bash
+./slg --workspace /path/to/workspace
+```
+
+Compatibility launch paths remain available if you prefer Cargo directly:
+
+```bash
 cargo run -p super-lazygit-app -- --workspace /path/to/workspace
+cargo run -p super-lazygit-app --bin super-lazygit -- --workspace /path/to/workspace
+cargo run -p super-lazygit-app --bin slg -- --workspace /path/to/workspace
 ```
 
 ## I do not see any repositories

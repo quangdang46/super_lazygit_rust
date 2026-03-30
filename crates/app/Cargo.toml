@@ -6,6 +6,11 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 publish = false
+default-run = "super-lazygit"
+
+[[bin]]
+name = "slg"
+path = "src/main.rs"
 
 [[bin]]
 name = "super-lazygit"
@@ -24,4 +29,5 @@ super-lazygit-workspace = { path = "../workspace" }
 tempfile.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 super-lazygit-test-support = { path = "../test-support" }

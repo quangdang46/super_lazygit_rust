@@ -772,6 +772,7 @@ dependencies = [
  "clap",
  "crossterm 0.29.0",
  "ratatui",
+ "serde_json",
  "super-lazygit-config",
  "super-lazygit-core",
  "super-lazygit-git",

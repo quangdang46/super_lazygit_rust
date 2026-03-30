@@ -119,6 +119,67 @@ mod tests {
     }
 
     #[test]
+    fn cargo_metadata_exposes_short_and_compatibility_bins() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let output = Command::new("cargo")
+            .args(["metadata", "--no-deps", "--format-version", "1"])
+            .current_dir(workspace_root)
+            .output()
+            .expect("cargo metadata");
+        assert!(
+            output.status.success(),
+            "cargo metadata should succeed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("cargo metadata json");
+        let packages = metadata["packages"].as_array().expect("packages array");
+        let app_package = packages
+            .iter()
+            .find(|package| package["name"] == "super-lazygit-app")
+            .expect("app package");
+        let targets = app_package["targets"].as_array().expect("targets array");
+        let main_src = workspace_root.join("crates/app/src/main.rs");
+
+        for expected_name in ["slg", "super-lazygit"] {
+            let target = targets
+                .iter()
+                .find(|target| {
+                    target["name"] == expected_name
+                        && target["kind"]
+                            .as_array()
+                            .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
+                })
+                .cloned();
+            assert!(target.is_some(), "missing binary target {expected_name}");
+            let target = target.expect("binary target should exist after assertion");
+            assert_eq!(
+                PathBuf::from(target["src_path"].as_str().expect("src path")),
+                main_src,
+                "{expected_name} should launch the shared app entrypoint"
+            );
+        }
+    }
+
+    #[test]
+    fn short_launcher_script_targets_slg_bin() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let launcher = fs::read_to_string(workspace_root.join("slg")).expect("read slg launcher");
+        assert!(
+            launcher.contains("cargo run -p super-lazygit-app --bin slg --"),
+            "launcher should target the short bin"
+        );
+    }
+
+    #[test]
     fn runtime_processes_effects_until_worker_events_update_state() {
         let config = AppConfig::default();
         let state = AppState::default();
