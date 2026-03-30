@@ -65,8 +65,8 @@ This document reflects the current interactive terminal behavior shipped by the 
 | --- | --- |
 | `j` / `Down` | Select the next status entry |
 | `k` / `Up` | Select the previous status entry |
-| `Enter` in `Working tree` | Stage the selected file |
-| `Enter` in `Staged changes` | Unstage the selected file |
+| `Enter` or `Space` in `Working tree` | Stage the selected file |
+| `Enter` or `Space` in `Staged changes` | Unstage the selected file |
 | `c` in `Staged changes` | Open the commit box |
 | `C` in `Working tree` or `Staged changes` | Commit staged changes using the configured Git editor |
 | `A` in `Staged changes` | Open the amend commit box |
@@ -84,7 +84,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `v` | Toggle the diff-line anchor |
 | `Down` | Scroll the detail pane down |
 | `Up` | Scroll the detail pane up |
-| `Enter` | Stage or unstage the selected hunk, depending on diff orientation |
+| `Enter` or `Space` | Stage or unstage the selected hunk, depending on diff orientation |
 | `L` | Stage or unstage the selected line range, depending on diff orientation |
 | `D` | Open discard confirmation for the selected file |
 | `e` | Open the selected diff file in the configured editor |

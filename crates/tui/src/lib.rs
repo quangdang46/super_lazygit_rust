@@ -476,7 +476,7 @@ impl TuiApp {
                         "stage_selected_file",
                         raw,
                         normalized,
-                        &["enter"],
+                        &["enter", "space"],
                     )
                 {
                     return Some(Action::StageSelectedFile);
@@ -487,7 +487,7 @@ impl TuiApp {
                         "unstage_selected_file",
                         raw,
                         normalized,
-                        &["enter"],
+                        &["enter", "space"],
                     )
                 {
                     return Some(Action::UnstageSelectedFile);
@@ -680,7 +680,7 @@ impl TuiApp {
                             "apply_selected_hunk",
                             raw,
                             normalized,
-                            &["enter"],
+                            &["enter", "space"],
                         ) {
                             return match repo_mode
                                 .detail
@@ -3856,7 +3856,7 @@ mod tests {
             },
         );
 
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
         app.resize(120, 20);
 
         let rendered = app.render_to_string();
@@ -3920,7 +3920,7 @@ mod tests {
             },
         );
 
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
         app.resize(160, 22);
 
         let rendered = app.render_to_string();
@@ -3971,7 +3971,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
         app.resize(180, 22);
 
         let rendered = app.render_to_string();
@@ -4003,7 +4003,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
         app.resize(160, 20);
 
         let rendered = app.render_to_string();
@@ -4161,7 +4161,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "enter".to_string(),
@@ -5402,7 +5402,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "j".to_string(),
@@ -5425,6 +5425,18 @@ mod tests {
                 ..
             })
         )));
+
+        let mut space_app = TuiApp::new(state, AppConfig::default());
+        let space = space_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert!(space.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::StageFile { .. },
+                ..
+            })
+        )));
     }
 
     #[test]
@@ -5441,12 +5453,24 @@ mod tests {
             }),
             ..Default::default()
         };
-        let mut app = TuiApp::new(state, AppConfig::default());
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
         let enter = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "enter".to_string(),
         })));
         assert!(enter.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::UnstageFile { .. },
+                ..
+            })
+        )));
+
+        let mut space_app = TuiApp::new(state, AppConfig::default());
+        let space = space_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert!(space.effects.iter().any(|effect| matches!(
             effect,
             super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
                 command: super_lazygit_core::GitCommand::UnstageFile { .. },
@@ -5769,6 +5793,37 @@ mod tests {
 
         let apply = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "L".to_string(),
+        })));
+        assert!(apply.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunPatchSelection(super_lazygit_core::PatchSelectionJob {
+                hunks,
+                ..
+            }) if hunks
+                == &vec![super_lazygit_core::SelectedHunk {
+                    old_start: 1,
+                    old_lines: 1,
+                    new_start: 1,
+                    new_lines: 1,
+                }]
+        )));
+    }
+
+    #[test]
+    fn repo_mode_status_detail_routes_space_to_toggle_selected_hunk() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let apply = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
         })));
         assert!(apply.effects.iter().any(|effect| matches!(
             effect,
