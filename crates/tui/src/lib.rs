@@ -471,6 +471,10 @@ impl TuiApp {
                     return Some(Action::OpenInEditor);
                 }
 
+                if self.binding_matches_action("stash_all_changes", raw, normalized, &["s"]) {
+                    return Some(Action::StashAllChanges);
+                }
+
                 if self.state.focused_pane == PaneId::RepoUnstaged
                     && self.binding_matches_action(
                         "stage_selected_file",
@@ -3029,6 +3033,10 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         super_lazygit_core::InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Enter the upstream ref for {branch_name}, for example origin/main.")
         }
+        super_lazygit_core::InputPromptOperation::CreateStash => {
+            "Enter an optional stash message. Leave it blank to use Git's default tracked-changes stash message."
+                .to_string()
+        }
         super_lazygit_core::InputPromptOperation::CreateWorktree => {
             "Enter worktree details as: <path> <branch>. Example: ../repo-feature feature."
                 .to_string()
@@ -5067,6 +5075,7 @@ mod tests {
                 repo_id: RepoId::new("repo-1"),
                 operation: super_lazygit_core::InputPromptOperation::CreateBranch,
                 value: "feature".to_string(),
+                return_focus: PaneId::RepoDetail,
             }),
             mode: AppMode::Repository,
             repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
@@ -5558,6 +5567,42 @@ mod tests {
                 ..
             })
         )));
+
+        let mut staged_stash_app = TuiApp::new(state.clone(), AppConfig::default());
+        let staged_stash =
+            staged_stash_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "s".to_string(),
+            })));
+        assert_eq!(
+            staged_stash
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.return_focus)),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CreateStash,
+                PaneId::RepoStaged
+            ))
+        );
+
+        let mut unstaged_state = state.clone();
+        unstaged_state.focused_pane = PaneId::RepoUnstaged;
+        let mut unstaged_stash_app = TuiApp::new(unstaged_state, AppConfig::default());
+        let unstaged_stash =
+            unstaged_stash_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "s".to_string(),
+            })));
+        assert_eq!(
+            unstaged_stash
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.return_focus)),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CreateStash,
+                PaneId::RepoUnstaged
+            ))
+        );
 
         let mut amend_app = TuiApp::new(state.clone(), AppConfig::default());
         let amend = amend_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {

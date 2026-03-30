@@ -151,6 +151,7 @@ pub struct PendingInputPrompt {
     pub repo_id: RepoId,
     pub operation: InputPromptOperation,
     pub value: String,
+    pub return_focus: PaneId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,6 +163,7 @@ pub enum InputPromptOperation {
     SetBranchUpstream {
         branch_name: String,
     },
+    CreateStash,
     CreateWorktree,
     RewordCommit {
         commit: String,

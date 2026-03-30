@@ -674,6 +674,21 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
                 format!("Deleted {branch_name}")
             }
+            GitCommand::CreateStash { message } => {
+                let mut command = Command::new("git");
+                command.arg("stash").arg("push").current_dir(&repo_path);
+                if let Some(message) = message {
+                    command.arg("-m").arg(message);
+                }
+                let output = command.output().map_err(io_error)?;
+                if !output.status.success() {
+                    return Err(command_failure(output));
+                }
+                match message {
+                    Some(message) => format!("Stashed tracked changes: {message}"),
+                    None => "Stashed tracked changes".to_string(),
+                }
+            }
             GitCommand::ApplyStash { stash_ref } => {
                 git(&repo_path, ["stash", "apply", stash_ref.as_str()])?;
                 format!("Applied {stash_ref}")
@@ -832,6 +847,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::CreateStash { .. } => "create_stash",
         GitCommand::ApplyStash { .. } => "apply_stash",
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
@@ -2829,6 +2845,31 @@ mod tests {
         assert_eq!(dropped.repo_id, repo_id);
         assert_eq!(dropped.summary, "Dropped stash@{0}");
         assert!(repo.stash_list().expect("stash list").trim().is_empty());
+    }
+
+    #[test]
+    fn cli_backend_creates_tracked_only_stash_entry() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let stashed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-stash"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateStash {
+                    message: Some("checkpoint".to_string()),
+                },
+            })
+            .expect("stash push should succeed");
+
+        assert_eq!(stashed.repo_id, repo_id);
+        assert_eq!(stashed.summary, "Stashed tracked changes: checkpoint");
+        assert!(repo
+            .stash_list()
+            .expect("stash list")
+            .contains("checkpoint"));
+        assert_eq!(repo.status_porcelain().expect("status"), "?? untracked.txt");
     }
 
     #[test]

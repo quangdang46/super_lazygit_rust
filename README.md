@@ -27,7 +27,7 @@ That means:
 - Commit history detail view with compare-target context
 - Branch detail view with checkout, create, rename, delete, and upstream-setting actions
 - Compare, rebase, stash, reflog, and worktree detail subviews
-- Stash apply/drop, reflog restore, and worktree create/remove flows
+- Stash create/apply/drop, reflog restore, and worktree create/remove flows
 - Keybinding overrides for routed command keys across modal, workspace, repo, and commit-box actions
 - Watcher health reporting with degraded fallback polling
 - Fixture-heavy Git integration coverage for dirty repos, conflicts, upstream divergence, stashes, reflog, and worktrees

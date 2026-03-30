@@ -82,6 +82,7 @@ pub enum Action {
     CheckoutSelectedBranch,
     CheckoutBranch { branch_ref: String },
     DeleteSelectedBranch,
+    StashAllChanges,
     ApplySelectedStash,
     DropSelectedStash,
     CreateWorktree,

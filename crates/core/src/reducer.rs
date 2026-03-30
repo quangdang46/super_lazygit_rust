@@ -480,6 +480,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::CloseTopModal => {
+            let mut input_prompt_return_focus = None;
             if state
                 .modal_stack
                 .last()
@@ -492,14 +493,17 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 .last()
                 .is_some_and(|modal| matches!(modal.kind, crate::state::ModalKind::InputPrompt))
             {
-                state.pending_input_prompt = None;
+                input_prompt_return_focus = state
+                    .pending_input_prompt
+                    .take()
+                    .map(|prompt| prompt.return_focus);
             }
             state.modal_stack.pop();
             if state.modal_stack.is_empty() {
-                state.focused_pane = match state.mode {
+                state.focused_pane = input_prompt_return_focus.unwrap_or(match state.mode {
                     AppMode::Workspace => PaneId::WorkspaceList,
                     AppMode::Repository => PaneId::RepoUnstaged,
-                };
+                });
             }
             effects.push(Effect::ScheduleRender);
         }
@@ -759,6 +763,23 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     repo_id,
                     ConfirmableOperation::DeleteBranch { branch_name },
                 );
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::StashAllChanges => {
+            if let Some((repo_id, stashable)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                repo_mode.detail.as_ref().map(|detail| {
+                    (
+                        repo_mode.current_repo_id.clone(),
+                        has_stashable_changes(detail),
+                    )
+                })
+            }) {
+                if stashable {
+                    open_input_prompt(state, repo_id, InputPromptOperation::CreateStash);
+                } else {
+                    push_warning(state, "No tracked changes are available to stash.");
+                }
                 effects.push(Effect::ScheduleRender);
             }
         }
@@ -1393,6 +1414,15 @@ fn staged_file_count(detail: &crate::state::RepoDetail) -> usize {
         .count()
 }
 
+fn has_stashable_changes(detail: &crate::state::RepoDetail) -> bool {
+    detail.file_tree.iter().any(|item| {
+        item.staged_kind.is_some()
+            || item
+                .unstaged_kind
+                .is_some_and(|kind| kind != crate::state::FileStatusKind::Untracked)
+    })
+}
+
 fn push_warning(state: &mut AppState, text: impl Into<String>) {
     state.notifications.push_back(Notification {
         id: 0,
@@ -1636,10 +1666,12 @@ fn open_input_prompt(
 ) {
     let title = input_prompt_title(&operation);
     let value = input_prompt_initial_value(&operation);
+    let return_focus = state.focused_pane;
     state.pending_input_prompt = Some(PendingInputPrompt {
         repo_id,
         operation,
         value,
+        return_focus,
     });
     state.modal_stack.push(crate::state::Modal::new(
         crate::state::ModalKind::InputPrompt,
@@ -1657,6 +1689,7 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Set upstream for {branch_name}")
         }
+        InputPromptOperation::CreateStash => "Stash tracked changes".to_string(),
         InputPromptOperation::CreateWorktree => "Create worktree".to_string(),
         InputPromptOperation::RewordCommit { summary, .. } => format!("Reword {summary}"),
     }
@@ -1667,6 +1700,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
+        InputPromptOperation::CreateStash => String::new(),
         InputPromptOperation::CreateWorktree => String::new(),
         InputPromptOperation::RewordCommit {
             initial_message, ..
@@ -1677,14 +1711,14 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
 fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
     let pending = state.pending_input_prompt.take()?;
     let value = pending.value.trim().to_string();
-    if value.is_empty() {
+    if value.is_empty() && !matches!(pending.operation, InputPromptOperation::CreateStash) {
         state.pending_input_prompt = Some(pending);
         return None;
     }
 
     state.modal_stack.pop();
-    if state.modal_stack.is_empty() && matches!(state.mode, AppMode::Repository) {
-        state.focused_pane = PaneId::RepoDetail;
+    if state.modal_stack.is_empty() {
+        state.focused_pane = pending.return_focus;
     }
 
     let (command, summary) = match pending.operation {
@@ -1707,6 +1741,20 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 upstream_ref: value.clone(),
             },
             format!("Set upstream for {branch_name}"),
+        ),
+        InputPromptOperation::CreateStash => (
+            GitCommand::CreateStash {
+                message: if value.is_empty() {
+                    None
+                } else {
+                    Some(value.clone())
+                },
+            },
+            if value.is_empty() {
+                "Stash tracked changes".to_string()
+            } else {
+                format!("Stash tracked changes: {value}")
+            },
         ),
         InputPromptOperation::CreateWorktree => {
             let Some((path, branch_ref)) = parse_create_worktree_input(&value) else {
@@ -2647,6 +2695,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
         GitCommand::RenameBranch { .. } => "rename-branch",
         GitCommand::DeleteBranch { .. } => "delete-branch",
+        GitCommand::CreateStash { .. } => "create-stash",
         GitCommand::ApplyStash { .. } => "apply-stash",
         GitCommand::DropStash { .. } => "drop-stash",
         GitCommand::CreateWorktree { .. } => "create-worktree",
@@ -3510,9 +3559,91 @@ mod tests {
             result.state.pending_input_prompt.as_ref().map(|prompt| (
                 prompt.repo_id.clone(),
                 prompt.operation.clone(),
-                prompt.value.clone()
+                prompt.value.clone(),
+                prompt.return_focus
             )),
-            Some((repo_id, InputPromptOperation::CreateWorktree, String::new()))
+            Some((
+                repo_id,
+                InputPromptOperation::CreateWorktree,
+                String::new(),
+                PaneId::RepoDetail
+            ))
+        );
+    }
+
+    #[test]
+    fn stash_all_changes_opens_input_prompt_from_status_pane() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("tracked.txt"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StashAllChanges));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.value.clone(),
+                prompt.return_focus
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::CreateStash,
+                String::new(),
+                PaneId::RepoUnstaged
+            ))
+        );
+    }
+
+    #[test]
+    fn stash_all_changes_warns_when_only_untracked_files_exist() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("untracked.txt"),
+                        kind: FileStatusKind::Untracked,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Untracked),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::StashAllChanges));
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("No tracked changes are available to stash.")
         );
     }
 
@@ -3573,6 +3704,7 @@ mod tests {
                 repo_id: repo_id.clone(),
                 operation: crate::state::InputPromptOperation::CreateBranch,
                 value: "feature/new-ui".to_string(),
+                return_focus: PaneId::RepoDetail,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -3592,6 +3724,7 @@ mod tests {
                 .map(|job| &job.state),
             Some(&BackgroundJobState::Queued)
         );
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(
             result.effects,
             vec![Effect::RunGitCommand(GitCommandRequest {
@@ -3618,6 +3751,7 @@ mod tests {
                 repo_id: repo_id.clone(),
                 operation: crate::state::InputPromptOperation::CreateWorktree,
                 value: "../repo-feature feature".to_string(),
+                return_focus: PaneId::RepoDetail,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -3628,6 +3762,7 @@ mod tests {
 
         assert!(result.state.pending_input_prompt.is_none());
         assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(
             result.effects,
             vec![Effect::RunGitCommand(GitCommandRequest {
@@ -3659,6 +3794,7 @@ mod tests {
                     initial_message: "older commit".to_string(),
                 },
                 value: "reworded subject".to_string(),
+                return_focus: PaneId::RepoDetail,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -3669,6 +3805,7 @@ mod tests {
 
         assert!(result.state.pending_input_prompt.is_none());
         assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(
             result.effects,
             vec![Effect::RunGitCommand(GitCommandRequest {
@@ -3680,6 +3817,80 @@ mod tests {
                         message: "reworded subject".to_string(),
                     },
                 },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_stash_prompt_queues_git_job_and_restores_original_focus() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Stash tracked changes",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateStash,
+                value: "checkpoint".to_string(),
+                return_focus: PaneId::RepoStaged,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-stash");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoStaged);
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateStash {
+                    message: Some("checkpoint".to_string()),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_blank_stash_prompt_queues_git_job_without_message() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Stash tracked changes",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateStash,
+                value: "   ".to_string(),
+                return_focus: PaneId::RepoUnstaged,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-stash");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateStash { message: None },
             })]
         );
     }

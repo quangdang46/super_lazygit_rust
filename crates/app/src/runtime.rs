@@ -592,6 +592,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::CreateStash { .. } => "create_stash",
         GitCommand::ApplyStash { .. } => "apply_stash",
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
