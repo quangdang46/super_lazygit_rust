@@ -1,9 +1,11 @@
+use std::io::IsTerminal;
 use std::time::Instant;
 
 use anyhow::Result;
 use clap::Parser;
 
 mod runtime;
+mod terminal;
 mod watcher;
 
 use runtime::AppRuntime;
@@ -40,6 +42,11 @@ fn main() -> Result<()> {
     let mut runtime = AppRuntime::new(app, workspace, git);
     diagnostics.extend_snapshot(runtime.bootstrap()?);
     runtime.run([Event::Action(Action::RefreshVisibleRepos)]);
+
+    let interactive_terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    if interactive_terminal {
+        terminal::run(&mut runtime)?;
+    }
 
     diagnostics.extend_snapshot(runtime.diagnostics_snapshot());
     diagnostics.record_startup_stage("app.main", startup_started_at.elapsed());

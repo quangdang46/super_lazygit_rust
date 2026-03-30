@@ -6,6 +6,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
+    Frame,
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
@@ -133,6 +134,27 @@ impl TuiApp {
     pub fn render_to_string(&mut self) -> String {
         let buffer = self.render();
         buffer_to_string(&buffer)
+    }
+
+    pub fn draw_frame(&mut self, frame: &mut Frame<'_>) {
+        let area = frame.area();
+        if self.viewport.width != area.width || self.viewport.height != area.height {
+            self.resize(area.width, area.height);
+        }
+
+        let buffer = self.render();
+        let frame_buffer = frame.buffer_mut();
+
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let Some(source) = buffer.cell((x, y)) else {
+                    continue;
+                };
+                if let Some(target) = frame_buffer.cell_mut((area.x + x, area.y + y)) {
+                    *target = source.clone();
+                }
+            }
+        }
     }
 
     fn handle_input(&mut self, input: InputEvent) -> ReduceResult {

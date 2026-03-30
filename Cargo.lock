@@ -761,6 +761,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "crossterm 0.29.0",
+ "ratatui",
  "super-lazygit-config",
  "super-lazygit-core",
  "super-lazygit-git",

@@ -5,6 +5,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use ratatui::Frame;
+
 use crate::watcher::{NullWatcherBackend, WatchRegistration, WatcherBackend};
 use super_lazygit_core::{
     AppWatcherEvent, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId,
@@ -105,6 +107,10 @@ impl AppRuntime {
         let mut diagnostics = self.diagnostics.clone();
         diagnostics.extend_snapshot(self.app.diagnostics_snapshot());
         diagnostics.snapshot()
+    }
+
+    pub fn draw_frame(&mut self, frame: &mut Frame<'_>) {
+        self.app.draw_frame(frame);
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
