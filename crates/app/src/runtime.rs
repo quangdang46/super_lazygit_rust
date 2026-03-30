@@ -615,6 +615,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::ApplyStash { .. } => "apply_stash",
         GitCommand::PopStash { .. } => "pop_stash",
         GitCommand::DropStash { .. } => "drop_stash",
+        GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",

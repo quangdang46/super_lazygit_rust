@@ -165,6 +165,10 @@ pub enum InputPromptOperation {
     RenameBranch {
         current_name: String,
     },
+    RenameStash {
+        stash_ref: String,
+        current_name: String,
+    },
     SetBranchUpstream {
         branch_name: String,
     },

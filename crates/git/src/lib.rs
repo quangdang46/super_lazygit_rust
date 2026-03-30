@@ -670,6 +670,10 @@ impl GitBackend for CliGitBackend {
                 }
                 format!("Renamed {branch_name} to {new_name}")
             }
+            GitCommand::RenameStash { stash_ref, message } => {
+                rename_stash(&repo_path, stash_ref, message)?;
+                format!("Renamed {stash_ref}")
+            }
             GitCommand::DeleteBranch { branch_name } => {
                 git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
                 format!("Deleted {branch_name}")
@@ -874,6 +878,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::RenameBranch { .. } => "rename_branch",
+        GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::DeleteBranch { .. } => "delete_branch",
         GitCommand::CreateStash {
             mode: StashMode::Tracked,
@@ -1663,6 +1668,25 @@ fn has_staged_entries(repo_path: &Path) -> GitResult<bool> {
     Ok(!git_stdout(repo_path, ["diff", "--cached", "--name-only"])?
         .trim()
         .is_empty())
+}
+
+fn rename_stash(repo_path: &Path, stash_ref: &str, message: &str) -> GitResult<()> {
+    let hash = git_stdout(repo_path, ["rev-parse", stash_ref])?;
+    git(repo_path, ["stash", "drop", stash_ref])?;
+
+    let trimmed_message = message.trim();
+    let mut command = Command::new("git");
+    command.arg("stash").arg("store").current_dir(repo_path);
+    if !trimmed_message.is_empty() {
+        command.arg("-m").arg(trimmed_message);
+    }
+    command.arg(hash);
+
+    let output = command.output().map_err(io_error)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    Ok(())
 }
 
 fn command_failure(output: Output) -> GitError {
@@ -2965,6 +2989,30 @@ mod tests {
                 .expect("read stash-untracked.txt"),
             "untracked\n"
         );
+    }
+
+    #[test]
+    fn cli_backend_renames_stash_entries() {
+        let repo = renameable_stash_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let renamed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-rename-stash"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::RenameStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    message: "foo baz".to_string(),
+                },
+            })
+            .expect("stash rename should succeed");
+
+        assert_eq!(renamed.repo_id, repo_id);
+        assert_eq!(renamed.summary, "Renamed stash@{1}");
+        let stash_list = repo.stash_list().expect("stash list");
+        assert!(stash_list.contains("stash@{0}: foo baz"));
+        assert!(stash_list.contains("stash@{1}: On main: bar"));
     }
 
     #[test]
@@ -4531,6 +4579,17 @@ mod tests {
         repo.write_file("mixed.txt", "1 staged\n2\n3\n")?;
         repo.stage("mixed.txt")?;
         repo.write_file("mixed.txt", "1 staged\n2 unstaged\n3\n")?;
+        Ok(repo)
+    }
+
+    fn renameable_stash_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file("file.txt", "base\n")?;
+        repo.commit_all("initial")?;
+        repo.write_file("file.txt", "change to stash1\n")?;
+        repo.git(["stash", "push", "-m", "foo"])?;
+        repo.write_file("file.txt", "change to stash2\n")?;
+        repo.git(["stash", "push", "-m", "bar"])?;
         Ok(repo)
     }
 

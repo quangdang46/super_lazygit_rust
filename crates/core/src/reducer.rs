@@ -1827,6 +1827,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::RenameBranch { current_name } => {
             format!("Rename branch {current_name}")
         }
+        InputPromptOperation::RenameStash { stash_ref, .. } => {
+            format!("Rename stash: {stash_ref}")
+        }
         InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Set upstream for {branch_name}")
         }
@@ -1840,6 +1843,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
     match operation {
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
+        InputPromptOperation::RenameStash { current_name, .. } => current_name.clone(),
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
         InputPromptOperation::CreateStash { mode: _ } => String::new(),
         InputPromptOperation::CreateWorktree => String::new(),
@@ -1856,6 +1860,7 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
         && !matches!(
             pending.operation,
             InputPromptOperation::CreateStash { mode: _ }
+                | InputPromptOperation::RenameStash { .. }
         )
     {
         state.pending_input_prompt = Some(pending);
@@ -1880,6 +1885,13 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 new_name: value.clone(),
             },
             format!("Rename branch {current_name} to {value}"),
+        ),
+        InputPromptOperation::RenameStash { stash_ref, .. } => (
+            GitCommand::RenameStash {
+                stash_ref: stash_ref.clone(),
+                message: value.clone(),
+            },
+            format!("Rename stash {stash_ref}"),
         ),
         InputPromptOperation::SetBranchUpstream { branch_name } => (
             GitCommand::SetBranchUpstream {
@@ -2905,6 +2917,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CreateBranch { .. } => "create-branch",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
         GitCommand::RenameBranch { .. } => "rename-branch",
+        GitCommand::RenameStash { .. } => "rename-stash",
         GitCommand::DeleteBranch { .. } => "delete-branch",
         GitCommand::CreateStash {
             mode: StashMode::Tracked,
@@ -4381,6 +4394,56 @@ mod tests {
                 repo_id,
                 command: GitCommand::CreateBranch {
                     branch_name: "feature/new-ui".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_stash_rename_prompt_queues_git_job_and_allows_empty_messages() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Rename stash: stash@{1}",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::RenameStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    current_name: "prior experiment".to_string(),
+                },
+                value: String::new(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:rename-stash");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::RenameStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    message: String::new(),
                 },
             })]
         );

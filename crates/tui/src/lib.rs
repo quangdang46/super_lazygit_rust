@@ -966,6 +966,26 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "open_rename_stash_prompt",
+                            raw,
+                            normalized,
+                            &["r"],
+                        ) {
+                            if let Some(stash) = selected_stash(
+                                repo_mode.detail.as_ref(),
+                                repo_mode.stash_view.selected_index,
+                            ) {
+                                return Some(Action::OpenInputPrompt {
+                                    operation:
+                                        super_lazygit_core::InputPromptOperation::RenameStash {
+                                            stash_ref: stash.stash_ref.clone(),
+                                            current_name: stash_message_label(&stash.label),
+                                        },
+                                });
+                            }
+                        }
+
+                        if self.binding_matches_action(
                             "pop_selected_stash",
                             raw,
                             normalized,
@@ -2258,6 +2278,21 @@ fn selected_branch(
     detail.branches.get(selected_index)
 }
 
+fn selected_stash(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+) -> Option<&super_lazygit_core::StashItem> {
+    let detail = detail?;
+    let selected_index = selected_index.unwrap_or(0);
+    detail.stashes.get(selected_index)
+}
+
+fn stash_message_label(label: &str) -> String {
+    label
+        .rsplit_once(": ")
+        .map_or_else(|| label.to_string(), |(_, message)| message.to_string())
+}
+
 fn repo_stash_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
@@ -3089,6 +3124,11 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         }
         super_lazygit_core::InputPromptOperation::RenameBranch { current_name } => {
             format!("Enter the new name for {current_name}.")
+        }
+        super_lazygit_core::InputPromptOperation::RenameStash { stash_ref, .. } => {
+            format!(
+                "Enter the new message for {stash_ref}. Leave it blank to use Git's default stash message."
+            )
         }
         super_lazygit_core::InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Enter the upstream ref for {branch_name}, for example origin/main.")
@@ -5334,6 +5374,17 @@ mod tests {
     }
 
     #[test]
+    fn input_prompt_copy_describes_stash_rename() {
+        let rename = input_prompt_copy(&super_lazygit_core::InputPromptOperation::RenameStash {
+            stash_ref: "stash@{1}".to_string(),
+            current_name: "prior experiment".to_string(),
+        });
+
+        assert!(rename.contains("new message for stash@{1}"));
+        assert!(rename.contains("default stash message"));
+    }
+
+    #[test]
     fn repo_mode_commit_detail_routes_jk_between_commits() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -5475,7 +5526,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_mode_stash_detail_routes_selection_apply_pop_and_drop() {
+    fn repo_mode_stash_detail_routes_selection_rename_apply_pop_and_drop() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
@@ -5509,6 +5560,37 @@ mod tests {
                 ..
             }) if stash_ref == "stash@{1}"
         )));
+
+        let mut rename_app = TuiApp::new(state.clone(), AppConfig::default());
+        let down = rename_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_view.selected_index),
+            Some(1)
+        );
+
+        let rename = rename_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "r".to_string(),
+        })));
+        assert_eq!(rename.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            rename
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::RenameStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    current_name: "prior experiment".to_string(),
+                },
+                "prior experiment"
+            ))
+        );
 
         let pop = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "g".to_string(),
