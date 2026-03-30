@@ -27,7 +27,7 @@ That means:
 - Commit history detail view with compare-target context
 - Branch detail view with checkout, create, rename, delete, and upstream-setting actions
 - Compare, rebase, stash, reflog, and worktree detail subviews
-- Stash create/apply/pop/drop/rename, stash-options menu parity for tracked, keep-index, include-untracked, staged, and lazygit-style unstaged creation, reflog restore, and worktree create/remove flows
+- Stash create/apply/pop/drop/rename/new-branch, stash-options menu parity for tracked, keep-index, include-untracked, staged, and lazygit-style unstaged creation, reflog restore, and worktree create/remove flows
 - Keybinding overrides for routed command keys across modal, workspace, repo, and commit-box actions
 - Watcher health reporting with degraded fallback polling
 - Fixture-heavy Git integration coverage for dirty repos, conflicts, upstream divergence, stashes, reflog, and worktrees

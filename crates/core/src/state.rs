@@ -169,6 +169,10 @@ pub enum InputPromptOperation {
         stash_ref: String,
         current_name: String,
     },
+    CreateBranchFromStash {
+        stash_ref: String,
+        stash_label: String,
+    },
     SetBranchUpstream {
         branch_name: String,
     },

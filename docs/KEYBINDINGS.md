@@ -150,6 +150,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `j` / `Down` | Select the next stash entry |
 | `k` / `Up` | Select the previous stash entry |
 | `Enter` | Apply the selected stash |
+| `n` | Open create-branch-from-stash prompt |
 | `r` | Open rename-stash prompt |
 | `g` | Open pop-stash confirmation |
 | `d` | Open drop-stash confirmation |

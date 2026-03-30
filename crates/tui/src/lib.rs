@@ -966,6 +966,25 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "open_create_branch_from_stash_prompt",
+                            raw,
+                            normalized,
+                            &["n"],
+                        ) {
+                            if let Some(stash) = selected_stash(
+                                repo_mode.detail.as_ref(),
+                                repo_mode.stash_view.selected_index,
+                            ) {
+                                return Some(Action::OpenInputPrompt {
+                                    operation: super_lazygit_core::InputPromptOperation::CreateBranchFromStash {
+                                        stash_ref: stash.stash_ref.clone(),
+                                        stash_label: stash.label.clone(),
+                                    },
+                                });
+                            }
+                        }
+
+                        if self.binding_matches_action(
                             "open_rename_stash_prompt",
                             raw,
                             normalized,
@@ -2337,7 +2356,7 @@ fn repo_stash_lines(
         )]),
         Line::from(format!("Selected: {}", selected_stash.stash_ref)),
         Line::from(selected_stash.label.clone()),
-        Line::from("Enter applies. g pops. d drops."),
+        Line::from("Enter applies. n branches off. r renames. g pops. d drops."),
         Line::from(""),
     ];
 
@@ -3130,6 +3149,11 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
                 "Enter the new message for {stash_ref}. Leave it blank to use Git's default stash message."
             )
         }
+        super_lazygit_core::InputPromptOperation::CreateBranchFromStash {
+            stash_label, ..
+        } => format!(
+            "Enter the new branch name. The branch will be created from '{stash_label}', checked out, and the stash will be dropped if it applies cleanly."
+        ),
         super_lazygit_core::InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Enter the upstream ref for {branch_name}, for example origin/main.")
         }
@@ -5385,6 +5409,20 @@ mod tests {
     }
 
     #[test]
+    fn input_prompt_copy_describes_branch_creation_from_stash() {
+        let copy = input_prompt_copy(
+            &super_lazygit_core::InputPromptOperation::CreateBranchFromStash {
+                stash_ref: "stash@{1}".to_string(),
+                stash_label: "stash@{1}: On feature: prior experiment".to_string(),
+            },
+        );
+
+        assert!(copy.contains("new branch name"));
+        assert!(copy.contains("stash@{1}: On feature: prior experiment"));
+        assert!(copy.contains("stash will be dropped"));
+    }
+
+    #[test]
     fn repo_mode_commit_detail_routes_jk_between_commits() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -5526,7 +5564,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_mode_stash_detail_routes_selection_rename_apply_pop_and_drop() {
+    fn repo_mode_stash_detail_routes_selection_create_branch_rename_apply_pop_and_drop() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
@@ -5560,6 +5598,37 @@ mod tests {
                 ..
             }) if stash_ref == "stash@{1}"
         )));
+
+        let mut branch_app = TuiApp::new(state.clone(), AppConfig::default());
+        let down = branch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.stash_view.selected_index),
+            Some(1)
+        );
+
+        let branch = branch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(branch.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            branch
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CreateBranchFromStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    stash_label: "stash@{1}: On feature: prior experiment".to_string(),
+                },
+                ""
+            ))
+        );
 
         let mut rename_app = TuiApp::new(state.clone(), AppConfig::default());
         let down = rename_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
@@ -6651,7 +6720,10 @@ mod tests {
 
         assert!(rendered.contains("Detail: Stash"));
         assert!(rendered.contains("Selected: stash@{1}"));
-        assert!(rendered.contains("Enter applies. g pops. d drops."));
+        assert!(rendered.contains("Enter applies."));
+        assert!(rendered.contains("n branches off."));
+        assert!(rendered.contains("r renames."));
+        assert!(rendered.contains("g pops."));
         assert!(rendered.contains("stash@{0}: WIP on main: fixture stash"));
         assert!(rendered.contains("stash@{1}: On feature: prior experiment"));
     }

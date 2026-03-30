@@ -652,6 +652,16 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["checkout", "-b", branch_name.as_str()])?;
                 format!("Created and checked out {branch_name}")
             }
+            GitCommand::CreateBranchFromStash {
+                stash_ref,
+                branch_name,
+            } => {
+                git(
+                    &repo_path,
+                    ["stash", "branch", branch_name.as_str(), stash_ref.as_str()],
+                )?;
+                format!("Created and checked out {branch_name} from {stash_ref}")
+            }
             GitCommand::CheckoutBranch { branch_ref } => {
                 git(&repo_path, ["checkout", branch_ref.as_str()])?;
                 format!("Checked out {branch_ref}")
@@ -876,6 +886,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CreateBranch { .. } => "create_branch",
+        GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::RenameStash { .. } => "rename_stash",
@@ -3013,6 +3024,41 @@ mod tests {
         let stash_list = repo.stash_list().expect("stash list");
         assert!(stash_list.contains("stash@{0}: foo baz"));
         assert!(stash_list.contains("stash@{1}: On main: bar"));
+    }
+
+    #[test]
+    fn cli_backend_creates_branch_from_stash_entries() {
+        let repo = renameable_stash_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let created = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-branch-from-stash"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateBranchFromStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    branch_name: "stash-feature".to_string(),
+                },
+            })
+            .expect("stash branch creation should succeed");
+
+        assert_eq!(created.repo_id, repo_id);
+        assert_eq!(
+            created.summary,
+            "Created and checked out stash-feature from stash@{1}"
+        );
+        assert_eq!(
+            repo.current_branch().expect("current branch"),
+            "stash-feature"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("file.txt")).expect("file contents"),
+            "change to stash1\n"
+        );
+        let stash_list = repo.stash_list().expect("stash list");
+        assert!(!stash_list.contains("foo"));
+        assert!(stash_list.contains("bar"));
     }
 
     #[test]

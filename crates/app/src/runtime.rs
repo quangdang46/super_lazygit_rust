@@ -590,6 +590,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::CreateBranch { .. } => "create_branch",
+        GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
         GitCommand::CreateStash {

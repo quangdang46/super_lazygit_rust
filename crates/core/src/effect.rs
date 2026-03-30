@@ -116,6 +116,10 @@ pub enum GitCommand {
         stash_ref: String,
         message: String,
     },
+    CreateBranchFromStash {
+        stash_ref: String,
+        branch_name: String,
+    },
     DeleteBranch {
         branch_name: String,
     },

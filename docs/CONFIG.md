@@ -84,7 +84,7 @@ Supported routed action IDs:
 - Branches detail: `select_next_branch`, `select_previous_branch`, `checkout_selected_branch`, `open_create_branch_prompt`, `open_rename_branch_prompt`, `delete_selected_branch`, `open_set_branch_upstream_prompt`, `toggle_comparison_selection`, `clear_comparison`
 - Commits detail: `select_next_commit`, `select_previous_commit`, `start_interactive_rebase`, `amend_selected_commit`, `fixup_selected_commit`, `reword_selected_commit`, `cherry_pick_selected_commit`, `revert_selected_commit`, `soft_reset_to_selected_commit`, `mixed_reset_to_selected_commit`, `hard_reset_to_selected_commit`, `toggle_comparison_selection`, `clear_comparison`
 - Rebase detail: `continue_rebase`, `skip_rebase`, `abort_rebase`, `scroll_repo_detail_down`, `scroll_repo_detail_up`
-- Stash detail: `select_next_stash`, `select_previous_stash`, `apply_selected_stash`, `open_rename_stash_prompt`, `pop_selected_stash`, `drop_selected_stash`
+- Stash detail: `select_next_stash`, `select_previous_stash`, `apply_selected_stash`, `open_create_branch_from_stash_prompt`, `open_rename_stash_prompt`, `pop_selected_stash`, `drop_selected_stash`
 - Reflog detail: `select_next_reflog`, `select_previous_reflog`, `restore_selected_reflog_entry`
 - Worktrees detail: `select_next_worktree`, `select_previous_worktree`, `create_worktree`, `remove_selected_worktree`
 - Commit box: `cancel_commit_box`, `submit_commit_box`, `backspace_commit_input`

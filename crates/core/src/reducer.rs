@@ -1830,6 +1830,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::RenameStash { stash_ref, .. } => {
             format!("Rename stash: {stash_ref}")
         }
+        InputPromptOperation::CreateBranchFromStash { stash_label, .. } => {
+            format!("New branch name (branch is off of '{stash_label}')")
+        }
         InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Set upstream for {branch_name}")
         }
@@ -1844,6 +1847,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::RenameStash { current_name, .. } => current_name.clone(),
+        InputPromptOperation::CreateBranchFromStash { .. } => String::new(),
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
         InputPromptOperation::CreateStash { mode: _ } => String::new(),
         InputPromptOperation::CreateWorktree => String::new(),
@@ -1892,6 +1896,13 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 message: value.clone(),
             },
             format!("Rename stash {stash_ref}"),
+        ),
+        InputPromptOperation::CreateBranchFromStash { stash_ref, .. } => (
+            GitCommand::CreateBranchFromStash {
+                stash_ref: stash_ref.clone(),
+                branch_name: value.clone(),
+            },
+            format!("Create branch {value} from {stash_ref}"),
         ),
         InputPromptOperation::SetBranchUpstream { branch_name } => (
             GitCommand::SetBranchUpstream {
@@ -2918,6 +2929,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
         GitCommand::RenameBranch { .. } => "rename-branch",
         GitCommand::RenameStash { .. } => "rename-stash",
+        GitCommand::CreateBranchFromStash { .. } => "create-branch-from-stash",
         GitCommand::DeleteBranch { .. } => "delete-branch",
         GitCommand::CreateStash {
             mode: StashMode::Tracked,
@@ -4483,6 +4495,48 @@ mod tests {
                 command: GitCommand::CreateWorktree {
                     path: std::path::PathBuf::from("../repo-feature"),
                     branch_ref: "feature".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_create_branch_from_stash_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "New branch name (branch is off of 'stash@{1}: On main: foo')",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateBranchFromStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    stash_label: "stash@{1}: On main: foo".to_string(),
+                },
+                value: "feature/from-stash".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-branch-from-stash");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateBranchFromStash {
+                    stash_ref: "stash@{1}".to_string(),
+                    branch_name: "feature/from-stash".to_string(),
                 },
             })]
         );
