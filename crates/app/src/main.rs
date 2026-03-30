@@ -27,11 +27,8 @@ struct Cli {
 fn main() -> Result<()> {
     let startup_started_at = Instant::now();
     let cli = Cli::parse();
-    let config = AppConfig::default();
-    let workspace_root = cli
-        .workspace
-        .or_else(|| config.workspace.roots.first().cloned())
-        .or_else(|| std::env::current_dir().ok());
+    let config = AppConfig::load()?.config;
+    let workspace_root = resolve_workspace_root(cli.workspace, &config);
     let state = AppState::default();
     let app = TuiApp::new(state, config.clone());
     let workspace = WorkspaceRegistry::new(workspace_root);
@@ -63,6 +60,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn resolve_workspace_root(
+    cli_workspace: Option<std::path::PathBuf>,
+    config: &AppConfig,
+) -> Option<std::path::PathBuf> {
+    cli_workspace
+        .or_else(|| config.workspace.roots.first().cloned())
+        .or_else(|| std::env::current_dir().ok())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -79,6 +85,38 @@ mod tests {
         WorkerEvent, WorkspaceState,
     };
     use super_lazygit_test_support::{clean_repo, TempRepo};
+
+    #[test]
+    fn resolve_workspace_root_prefers_cli_path_over_config_roots() {
+        let config = AppConfig {
+            workspace: super_lazygit_config::WorkspaceConfig {
+                roots: vec![PathBuf::from("/config-root")],
+                ..Default::default()
+            },
+            ..AppConfig::default()
+        };
+
+        assert_eq!(
+            resolve_workspace_root(Some(PathBuf::from("/cli-root")), &config),
+            Some(PathBuf::from("/cli-root"))
+        );
+    }
+
+    #[test]
+    fn resolve_workspace_root_uses_first_config_root_when_cli_is_absent() {
+        let config = AppConfig {
+            workspace: super_lazygit_config::WorkspaceConfig {
+                roots: vec![PathBuf::from("/config-root"), PathBuf::from("/later-root")],
+                ..Default::default()
+            },
+            ..AppConfig::default()
+        };
+
+        assert_eq!(
+            resolve_workspace_root(None, &config),
+            Some(PathBuf::from("/config-root"))
+        );
+    }
 
     #[test]
     fn runtime_processes_effects_until_worker_events_update_state() {
