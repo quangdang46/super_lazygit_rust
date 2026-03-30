@@ -108,6 +108,9 @@ pub enum GitCommand {
     CreateBranch {
         branch_name: String,
     },
+    CreateTag {
+        tag_name: String,
+    },
     CreateBranchFromCommit {
         branch_name: String,
         commit: String,
@@ -122,6 +125,9 @@ pub enum GitCommand {
     CheckoutRemoteBranch {
         remote_branch_ref: String,
         local_branch_name: String,
+    },
+    CheckoutTag {
+        tag_name: String,
     },
     CheckoutCommit {
         commit: String,
@@ -148,6 +154,13 @@ pub enum GitCommand {
     DeleteRemoteBranch {
         remote_name: String,
         branch_name: String,
+    },
+    DeleteTag {
+        tag_name: String,
+    },
+    PushTag {
+        remote_name: String,
+        tag_name: String,
     },
     CreateStash {
         message: Option<String>,

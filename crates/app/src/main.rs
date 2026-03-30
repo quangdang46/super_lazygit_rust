@@ -897,6 +897,149 @@ mod tests {
     }
 
     #[test]
+    fn e2e_keyboard_harness_runs_tag_filter_create_push_delete_cycle() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("seed push main");
+        seed.git(["tag", "-a", "v1.0.0", "-m", "release v1.0.0"])
+            .expect("create annotated tag");
+        seed.push("origin", "refs/tags/v1.0.0")
+            .expect("push annotated tag");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        repo.git(["branch", "--set-upstream-to=origin/main", "main"])
+            .expect("set upstream");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+
+        harness.press("open tags detail", "t");
+        harness.assert_latest_contains("Detail: Tags");
+        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
+
+        harness.press("focus tag filter", "/");
+        harness.paste("filter tags", "v1");
+        harness.assert_latest_contains("Filter /v1_");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_tag = repo_mode
+                        .tags_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.tags.get(index))
+                        })
+                        .map(|tag| tag.name.as_str());
+                    repo_mode.tags_filter.focused
+                        && repo_mode.tags_filter.query == "v1"
+                        && selected_tag == Some("v1.0.0")
+                })
+            },
+            "filtering tags should focus the contextual query and reselect the matching row",
+        );
+
+        harness.press("blur tag filter", "enter");
+        harness.press("open selected tag commits", "enter");
+        harness.assert_latest_contains("Detail: Commits");
+        harness.assert_latest_contains("initial");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    repo_mode.active_subview == RepoSubview::Commits
+                        && repo_mode.commit_history_ref.as_deref() == Some("v1.0.0")
+                })
+            },
+            "enter from tags should drill into the selected tag history",
+        );
+
+        harness.press("return to tags detail", "t");
+        harness.press("checkout selected tag", "space");
+        assert_eq!(
+            command_stdout(&repo, ["rev-parse", "--abbrev-ref", "HEAD"]).expect("detached head"),
+            "HEAD",
+            "space from tags should check out the selected tag in detached HEAD mode\n{}",
+            harness.timeline()
+        );
+
+        harness.press("open create tag prompt", "n");
+        harness.assert_latest_contains("Create tag");
+        harness.paste("type new tag name", "release-candidate");
+        harness.press("submit create tag prompt", "enter");
+        assert_eq!(
+            command_stdout(&repo, ["tag", "--list", "release-candidate"]).expect("local tag list"),
+            "release-candidate",
+            "creating a tag from the tags panel should write the local ref\n{}",
+            harness.timeline()
+        );
+
+        harness.press("focus tag filter again", "/");
+        harness.press("clear first filter character", "backspace");
+        harness.press("clear second filter character", "backspace");
+        harness.paste("filter created tag", "release-candidate");
+        harness.press("blur created tag filter", "enter");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_tag = repo_mode
+                        .tags_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.tags.get(index))
+                        })
+                        .map(|tag| tag.name.as_str());
+                    selected_tag == Some("release-candidate")
+                })
+            },
+            "filtering to the newly created tag should select it",
+        );
+
+        harness.press("open push tag confirmation", "P");
+        harness.assert_latest_contains("Push tag release-candidate to origin");
+        harness.press("confirm push tag", "enter");
+        assert_eq!(
+            command_stdout(&remote, ["tag", "--list", "release-candidate"])
+                .expect("remote tag list"),
+            "release-candidate",
+            "pushing the selected tag should create it on the remote\n{}",
+            harness.timeline()
+        );
+
+        harness.press("refocus tag detail", "t");
+        harness.press("open delete tag confirmation", "d");
+        harness.assert_latest_contains("Delete tag release-candidate");
+        harness.press("confirm delete tag", "enter");
+        assert_eq!(
+            command_stdout(&repo, ["tag", "--list", "release-candidate"])
+                .expect("local deleted tag"),
+            "",
+            "deleting the selected tag should remove the local ref\n{}",
+            harness.timeline()
+        );
+    }
+
+    #[test]
     fn e2e_keyboard_harness_runs_commit_history_file_and_detached_checkout_cycle() {
         let repo = TempRepo::new().expect("repo fixture");
         repo.write_file("src/lib.rs", "pub fn version() -> u8 {\n    1\n}\n")

@@ -144,6 +144,13 @@ pub enum ConfirmableOperation {
         remote_name: String,
         branch_name: String,
     },
+    DeleteTag {
+        tag_name: String,
+    },
+    PushTag {
+        remote_name: String,
+        tag_name: String,
+    },
     PopStash {
         stash_ref: String,
     },
@@ -167,6 +174,7 @@ pub struct PendingInputPrompt {
 pub enum InputPromptOperation {
     CheckoutBranch,
     CreateBranch,
+    CreateTag,
     CreateBranchFromCommit {
         commit: String,
         summary: String,
@@ -554,6 +562,7 @@ pub struct RepoModeState {
     pub commit_box: CommitBoxState,
     pub branches_view: ListViewState,
     pub remote_branches_view: ListViewState,
+    pub tags_view: ListViewState,
     pub commits_view: ListViewState,
     pub commit_files_view: ListViewState,
     pub stash_view: ListViewState,
@@ -561,6 +570,7 @@ pub struct RepoModeState {
     pub worktree_view: ListViewState,
     pub branches_filter: RepoSubviewFilterState,
     pub remote_branches_filter: RepoSubviewFilterState,
+    pub tags_filter: RepoSubviewFilterState,
     pub commits_filter: RepoSubviewFilterState,
     pub commit_files_filter: RepoSubviewFilterState,
     pub commit_history_ref: Option<String>,
@@ -592,6 +602,7 @@ impl RepoModeState {
             commit_box: CommitBoxState::default(),
             branches_view: ListViewState::default(),
             remote_branches_view: ListViewState::default(),
+            tags_view: ListViewState::default(),
             commits_view: ListViewState::default(),
             commit_files_view: ListViewState::default(),
             stash_view: ListViewState::default(),
@@ -599,6 +610,7 @@ impl RepoModeState {
             worktree_view: ListViewState::default(),
             branches_filter: RepoSubviewFilterState::default(),
             remote_branches_filter: RepoSubviewFilterState::default(),
+            tags_filter: RepoSubviewFilterState::default(),
             commits_filter: RepoSubviewFilterState::default(),
             commit_files_filter: RepoSubviewFilterState::default(),
             commit_history_ref: None,
@@ -619,6 +631,7 @@ impl RepoModeState {
         match subview {
             RepoSubview::Branches => Some(&self.branches_filter),
             RepoSubview::RemoteBranches => Some(&self.remote_branches_filter),
+            RepoSubview::Tags => Some(&self.tags_filter),
             RepoSubview::Commits => Some(match self.commit_subview_mode {
                 CommitSubviewMode::History => &self.commits_filter,
                 CommitSubviewMode::Files => &self.commit_files_filter,
@@ -637,6 +650,7 @@ impl RepoModeState {
         match subview {
             RepoSubview::Branches => Some(&mut self.branches_filter),
             RepoSubview::RemoteBranches => Some(&mut self.remote_branches_filter),
+            RepoSubview::Tags => Some(&mut self.tags_filter),
             RepoSubview::Commits => Some(match self.commit_subview_mode {
                 CommitSubviewMode::History => &mut self.commits_filter,
                 CommitSubviewMode::Files => &mut self.commit_files_filter,
@@ -683,6 +697,7 @@ pub enum RepoSubview {
     Status,
     Branches,
     RemoteBranches,
+    Tags,
     Commits,
     Compare,
     Rebase,
@@ -698,6 +713,7 @@ impl RepoSubview {
             self,
             Self::Branches
                 | Self::RemoteBranches
+                | Self::Tags
                 | Self::Commits
                 | Self::Stash
                 | Self::Reflog
@@ -832,6 +848,7 @@ pub struct RepoDetail {
     pub diff: DiffModel,
     pub branches: Vec<BranchItem>,
     pub remote_branches: Vec<RemoteBranchItem>,
+    pub tags: Vec<TagItem>,
     pub commits: Vec<CommitItem>,
     pub commit_graph_lines: Vec<String>,
     pub rebase_state: Option<RebaseState>,
@@ -942,6 +959,15 @@ pub struct RemoteBranchItem {
     pub name: String,
     pub remote_name: String,
     pub branch_name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagItem {
+    pub name: String,
+    pub target_oid: String,
+    pub target_short_oid: String,
+    pub summary: String,
+    pub annotated: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1236,6 +1262,24 @@ pub fn remote_branch_matches_filter(branch: &RemoteBranchItem, normalized_query:
         branch.name.as_str(),
         branch.remote_name.as_str(),
         branch.branch_name.as_str(),
+    ]
+    .into_iter()
+    .map(normalize_search_text)
+    .any(|field| fuzzy_matches(&field, normalized_query))
+}
+
+#[must_use]
+pub fn tag_matches_filter(tag: &TagItem, normalized_query: &str) -> bool {
+    [
+        tag.name.as_str(),
+        tag.target_oid.as_str(),
+        tag.target_short_oid.as_str(),
+        tag.summary.as_str(),
+        if tag.annotated {
+            "annotated"
+        } else {
+            "lightweight"
+        },
     ]
     .into_iter()
     .map(normalize_search_text)

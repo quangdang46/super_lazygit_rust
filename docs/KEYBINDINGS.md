@@ -54,8 +54,9 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `7` | Switch detail pane to `Reflog` |
 | `8` | Switch detail pane to `Worktrees` |
 | `9` | Switch detail pane to `Remote Branches` |
+| `t` | Switch detail pane to `Tags` |
 | `0` in `Repo detail` | Return focus to the last active main pane (`Working tree` or `Staged changes`) |
-| `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remote Branches`, `Commits`, `Stash`, `Reflog`, or `Worktrees`) |
+| `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remote Branches`, `Tags`, `Commits`, `Stash`, `Reflog`, or `Worktrees`) |
 | `w` in `Repo detail` | Switch the current detail subview to `Worktrees` |
 | `r` | Refresh the selected repository |
 | `f` | Open fetch confirmation |
@@ -140,6 +141,22 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Space` | Check out the selected remote branch as a local tracking branch |
 | `n` | Open create-local-branch-from-remote prompt |
 | `d` | Open delete-remote-branch confirmation |
+| `w` | Switch to the worktrees subview |
+
+### Tags detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next tag |
+| `k` / `Up` | Select the previous tag |
+| `Enter` | Open the selected tag's commit history |
+| `Space` | Check out the selected tag in detached-HEAD mode |
+| `n` | Open create-tag prompt |
+| `d` | Open delete-tag confirmation |
+| `P` | Open push-tag confirmation |
+| `S` | Open soft-reset-to-tag confirmation |
+| `M` | Open mixed-reset-to-tag confirmation |
+| `H` | Open hard-reset-to-tag confirmation |
 | `w` | Switch to the worktrees subview |
 
 ### Commits detail subview

@@ -171,6 +171,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextTag => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_tag_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousTag => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_tag_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::SelectNextCommit => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_commit_selection(repo_mode, 1) {
@@ -226,6 +240,31 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
                 repo_mode.commit_history_mode = CommitHistoryMode::Linear;
                 repo_mode.commit_history_ref = Some(branch_ref);
+                repo_mode.pending_commit_selection_oid = None;
+                repo_mode.diff_scroll = 0;
+                close_commit_box(repo_mode);
+                sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
+            }
+            state.focused_pane = PaneId::RepoDetail;
+            effects.push(load_repo_detail_effect(state, repo_id));
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenSelectedTagCommits => {
+            let Some((repo_id, tag_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_tag_item(repo_mode)
+                    .map(|tag| (repo_mode.current_repo_id.clone(), tag.name.clone()))
+            }) else {
+                push_warning(state, "Select a tag before opening its commits.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                clear_repo_subview_filter_focus(repo_mode);
+                repo_mode.active_subview = crate::state::RepoSubview::Commits;
+                repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                repo_mode.commit_history_mode = CommitHistoryMode::Linear;
+                repo_mode.commit_history_ref = Some(tag_ref);
                 repo_mode.pending_commit_selection_oid = None;
                 repo_mode.diff_scroll = 0;
                 close_commit_box(repo_mode);
@@ -535,6 +574,30 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     push_warning(state, message);
                     effects.push(Effect::ScheduleRender);
                 }
+            }
+        }
+        Action::SoftResetToSelectedTag => {
+            if open_tag_reset_confirmation(state, ResetMode::Soft) {
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a tag before resetting HEAD.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::MixedResetToSelectedTag => {
+            if open_tag_reset_confirmation(state, ResetMode::Mixed) {
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a tag before resetting HEAD.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::HardResetToSelectedTag => {
+            if open_tag_reset_confirmation(state, ResetMode::Hard) {
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a tag before resetting HEAD.");
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::ContinueRebase => {
@@ -1031,6 +1094,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::CheckoutSelectedTag => {
+            if let Some((repo_id, tag_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_tag_item(repo_mode)
+                    .map(|tag| (repo_mode.current_repo_id.clone(), tag.name.clone()))
+            }) {
+                let summary = format!("Checkout tag {tag_name}");
+                let job = git_job(repo_id, GitCommand::CheckoutTag { tag_name });
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                push_warning(state, "Select a tag before checking it out.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::CheckoutBranch { branch_ref } => {
             if let Some(repo_mode) = &state.repo_mode {
                 let job = git_job(
@@ -1079,6 +1156,47 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             } else {
                 push_warning(state, "Select a remote branch before deleting it.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::DeleteSelectedTag => {
+            if let Some((repo_id, tag_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_tag_item(repo_mode)
+                    .map(|tag| (repo_mode.current_repo_id.clone(), tag.name.clone()))
+            }) {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::DeleteTag { tag_name },
+                );
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a tag before deleting it.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::PushSelectedTag => {
+            if let Some((repo_id, tag_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_tag_item(repo_mode)
+                    .map(|tag| (repo_mode.current_repo_id.clone(), tag.name.clone()))
+            }) {
+                let remote_name = state
+                    .workspace
+                    .repo_summaries
+                    .get(&repo_id)
+                    .and_then(|summary| summary.remote_summary.remote_name.clone())
+                    .unwrap_or_else(|| "origin".to_string());
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::PushTag {
+                        remote_name,
+                        tag_name,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a tag before pushing it.");
                 effects.push(Effect::ScheduleRender);
             }
         }
@@ -1756,6 +1874,9 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
         crate::state::RepoSubview::RemoteBranches => {
             reduce_action(state, Action::OpenSelectedRemoteBranchCommits, effects);
         }
+        crate::state::RepoSubview::Tags => {
+            reduce_action(state, Action::OpenSelectedTagCommits, effects);
+        }
         crate::state::RepoSubview::Commits => {
             let action = match repo_mode.commit_subview_mode {
                 crate::state::CommitSubviewMode::History => Action::OpenSelectedCommitFiles,
@@ -1910,6 +2031,7 @@ fn close_commit_box(repo_mode: &mut RepoModeState) {
 fn clear_repo_subview_filter_focus(repo_mode: &mut RepoModeState) {
     repo_mode.branches_filter.focused = false;
     repo_mode.remote_branches_filter.focused = false;
+    repo_mode.tags_filter.focused = false;
     repo_mode.commits_filter.focused = false;
     repo_mode.commit_files_filter.focused = false;
     repo_mode.stash_filter.focused = false;
@@ -2151,6 +2273,11 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
             remote_name,
             branch_name,
         } => format!("Delete remote branch {remote_name}/{branch_name}"),
+        ConfirmableOperation::DeleteTag { tag_name } => format!("Delete tag {tag_name}"),
+        ConfirmableOperation::PushTag {
+            remote_name,
+            tag_name,
+        } => format!("Push tag {tag_name} to {remote_name}"),
         ConfirmableOperation::PopStash { stash_ref } => format!("Pop stash {stash_ref}"),
         ConfirmableOperation::DropStash { stash_ref } => format!("Drop stash {stash_ref}"),
         ConfirmableOperation::RemoveWorktree { path } => {
@@ -2238,6 +2365,22 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Delete remote branch",
         ),
+        ConfirmableOperation::DeleteTag { tag_name } => (
+            GitCommand::DeleteTag {
+                tag_name: tag_name.clone(),
+            },
+            "Delete tag",
+        ),
+        ConfirmableOperation::PushTag {
+            remote_name,
+            tag_name,
+        } => (
+            GitCommand::PushTag {
+                remote_name: remote_name.clone(),
+                tag_name: tag_name.clone(),
+            },
+            "Push tag",
+        ),
         ConfirmableOperation::PopStash { stash_ref } => (
             GitCommand::PopStash {
                 stash_ref: stash_ref.clone(),
@@ -2301,6 +2444,7 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
     match operation {
         InputPromptOperation::CheckoutBranch => "Check out branch".to_string(),
         InputPromptOperation::CreateBranch => "Create branch".to_string(),
+        InputPromptOperation::CreateTag => "Create tag".to_string(),
         InputPromptOperation::CreateBranchFromCommit { summary, .. } => {
             format!("New branch name from {summary}")
         }
@@ -2331,6 +2475,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
     match operation {
         InputPromptOperation::CheckoutBranch => String::new(),
         InputPromptOperation::CreateBranch => String::new(),
+        InputPromptOperation::CreateTag => String::new(),
         InputPromptOperation::CreateBranchFromCommit { .. } => String::new(),
         InputPromptOperation::CreateBranchFromRemote { suggested_name, .. } => {
             suggested_name.clone()
@@ -2378,6 +2523,12 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 branch_name: value.clone(),
             },
             format!("Create branch {value}"),
+        ),
+        InputPromptOperation::CreateTag => (
+            GitCommand::CreateTag {
+                tag_name: value.clone(),
+            },
+            format!("Create tag {value}"),
         ),
         InputPromptOperation::CreateBranchFromCommit { commit, summary } => (
             GitCommand::CreateBranchFromCommit {
@@ -2618,6 +2769,20 @@ fn sync_remote_branch_selection(repo_mode: &mut RepoModeState) {
         .iter()
         .copied()
         .find(|index| repo_mode.remote_branches_view.selected_index == Some(*index))
+        .or_else(|| visible_indices.first().copied());
+}
+
+fn sync_tag_selection(repo_mode: &mut RepoModeState) {
+    if repo_mode.detail.is_none() {
+        repo_mode.tags_view.selected_index = None;
+        return;
+    }
+
+    let visible_indices = filtered_tag_indices(repo_mode);
+    repo_mode.tags_view.selected_index = visible_indices
+        .iter()
+        .copied()
+        .find(|index| repo_mode.tags_view.selected_index == Some(*index))
         .or_else(|| visible_indices.first().copied());
 }
 
@@ -2955,6 +3120,7 @@ fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::st
     match subview {
         crate::state::RepoSubview::Branches => sync_branch_selection(repo_mode),
         crate::state::RepoSubview::RemoteBranches => sync_remote_branch_selection(repo_mode),
+        crate::state::RepoSubview::Tags => sync_tag_selection(repo_mode),
         crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
             crate::state::CommitSubviewMode::History => sync_commit_selection(repo_mode),
             crate::state::CommitSubviewMode::Files => sync_commit_file_selection(repo_mode),
@@ -3081,6 +3247,17 @@ fn selected_remote_branch_item(
         .filter(|index| visible_indices.contains(index))
         .or_else(|| visible_indices.first().copied())?;
     detail.remote_branches.get(selected_index)
+}
+
+fn selected_tag_item(repo_mode: &RepoModeState) -> Option<&crate::state::TagItem> {
+    let detail = repo_mode.detail.as_ref()?;
+    let visible_indices = filtered_tag_indices(repo_mode);
+    let selected_index = repo_mode
+        .tags_view
+        .selected_index
+        .filter(|index| visible_indices.contains(index))
+        .or_else(|| visible_indices.first().copied())?;
+    detail.tags.get(selected_index)
 }
 
 fn selected_commit_entry(repo_mode: &RepoModeState) -> Option<(usize, &crate::state::CommitItem)> {
@@ -3324,6 +3501,31 @@ fn open_reset_confirmation(state: &mut AppState, mode: ResetMode) -> Result<bool
     Ok(true)
 }
 
+fn open_tag_reset_confirmation(state: &mut AppState, mode: ResetMode) -> bool {
+    let Some((repo_id, tag_name, summary)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+        selected_tag_item(repo_mode).map(|tag| {
+            (
+                repo_mode.current_repo_id.clone(),
+                tag.name.clone(),
+                format!("tag {} ({})", tag.name, tag.target_short_oid),
+            )
+        })
+    }) else {
+        return false;
+    };
+
+    open_confirmation_modal(
+        state,
+        repo_id,
+        ConfirmableOperation::ResetToCommit {
+            mode,
+            commit: tag_name,
+            summary,
+        },
+    );
+    true
+}
+
 fn selected_comparison_target(repo_mode: &RepoModeState) -> Option<ComparisonTarget> {
     match repo_mode.active_subview {
         crate::state::RepoSubview::Branches => selected_branch_item(repo_mode)
@@ -3379,6 +3581,20 @@ fn step_remote_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> b
     let visible_indices = filtered_remote_branch_indices(repo_mode);
     step_filtered_selection(
         &mut repo_mode.remote_branches_view.selected_index,
+        &visible_indices,
+        step,
+    )
+}
+
+fn step_tag_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    if repo_mode.detail.is_none() {
+        repo_mode.tags_view.selected_index = None;
+        return false;
+    }
+
+    let visible_indices = filtered_tag_indices(repo_mode);
+    step_filtered_selection(
+        &mut repo_mode.tags_view.selected_index,
         &visible_indices,
         step,
     )
@@ -3478,6 +3694,21 @@ fn filtered_remote_branch_indices(repo_mode: &RepoModeState) -> Vec<usize> {
         .filter_map(|(index, branch)| {
             crate::state::remote_branch_matches_filter(branch, &query).then_some(index)
         })
+        .collect()
+}
+
+fn filtered_tag_indices(repo_mode: &RepoModeState) -> Vec<usize> {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+    let Some(query) = repo_mode.tags_filter.active_query() else {
+        return (0..detail.tags.len()).collect();
+    };
+    detail
+        .tags
+        .iter()
+        .enumerate()
+        .filter_map(|(index, tag)| crate::state::tag_matches_filter(tag, &query).then_some(index))
         .collect()
 }
 
@@ -3847,10 +4078,12 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::AbortRebase => "abort-rebase",
         GitCommand::SkipRebase => "skip-rebase",
         GitCommand::CreateBranch { .. } => "create-branch",
+        GitCommand::CreateTag { .. } => "create-tag",
         GitCommand::CreateBranchFromCommit { .. } => "create-branch-from-commit",
         GitCommand::CreateBranchFromRef { .. } => "create-branch-from-ref",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
         GitCommand::CheckoutRemoteBranch { .. } => "checkout-remote-branch",
+        GitCommand::CheckoutTag { .. } => "checkout-tag",
         GitCommand::CheckoutCommit { .. } => "checkout-commit",
         GitCommand::CheckoutCommitFile { .. } => "checkout-commit-file",
         GitCommand::RenameBranch { .. } => "rename-branch",
@@ -3858,6 +4091,8 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CreateBranchFromStash { .. } => "create-branch-from-stash",
         GitCommand::DeleteBranch { .. } => "delete-branch",
         GitCommand::DeleteRemoteBranch { .. } => "delete-remote-branch",
+        GitCommand::DeleteTag { .. } => "delete-tag",
+        GitCommand::PushTag { .. } => "push-tag",
         GitCommand::CreateStash {
             mode: StashMode::Tracked,
             ..
@@ -4924,6 +5159,128 @@ mod tests {
     }
 
     #[test]
+    fn delete_selected_tag_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Tags,
+                detail: Some(RepoDetail {
+                    tags: vec![
+                        crate::state::TagItem {
+                            name: "v1.0.0".to_string(),
+                            target_oid: "abcdef1234567890".to_string(),
+                            target_short_oid: "abcdef1".to_string(),
+                            summary: "release v1.0.0".to_string(),
+                            annotated: true,
+                        },
+                        crate::state::TagItem {
+                            name: "snapshot".to_string(),
+                            target_oid: "1234567890abcdef".to_string(),
+                            target_short_oid: "1234567".to_string(),
+                            summary: "second".to_string(),
+                            annotated: false,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                tags_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DeleteSelectedTag));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::DeleteTag {
+                    tag_name: "snapshot".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn open_selected_tag_commits_switches_to_history_and_loads_tag_ref() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Tags,
+                detail: Some(RepoDetail {
+                    tags: vec![
+                        crate::state::TagItem {
+                            name: "v1.0.0".to_string(),
+                            target_oid: "abcdef1234567890".to_string(),
+                            target_short_oid: "abcdef1".to_string(),
+                            summary: "release v1.0.0".to_string(),
+                            annotated: true,
+                        },
+                        crate::state::TagItem {
+                            name: "snapshot".to_string(),
+                            target_oid: "1234567890abcdef".to_string(),
+                            target_short_oid: "1234567".to_string(),
+                            summary: "second".to_string(),
+                            annotated: false,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                tags_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedTagCommits));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            Some("snapshot")
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: Some("snapshot".to_string()),
+                    commit_history_mode: CommitHistoryMode::Linear,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
     fn open_all_branch_graph_switches_to_graph_history_and_loads_detail() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -5103,6 +5460,62 @@ mod tests {
                     mode: crate::state::ResetMode::Hard,
                     commit: "1234567890abcdef".to_string(),
                     summary: "1234567 second".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn hard_reset_selected_tag_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Tags,
+                detail: Some(RepoDetail {
+                    tags: vec![
+                        crate::state::TagItem {
+                            name: "v1.0.0".to_string(),
+                            target_oid: "abcdef1234567890".to_string(),
+                            target_short_oid: "abcdef1".to_string(),
+                            summary: "release v1.0.0".to_string(),
+                            annotated: true,
+                        },
+                        crate::state::TagItem {
+                            name: "snapshot".to_string(),
+                            target_oid: "1234567890abcdef".to_string(),
+                            target_short_oid: "1234567".to_string(),
+                            summary: "second".to_string(),
+                            annotated: false,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                tags_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::HardResetToSelectedTag));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::ResetToCommit {
+                    mode: crate::state::ResetMode::Hard,
+                    commit: "snapshot".to_string(),
+                    summary: "tag snapshot (1234567)".to_string(),
                 }
             ))
         );
@@ -6391,6 +6804,52 @@ mod tests {
     }
 
     #[test]
+    fn submit_create_tag_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Create tag",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateTag,
+                value: "release-candidate".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-tag");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateTag {
+                    tag_name: "release-candidate".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
     fn submit_stash_rename_prompt_queues_git_job_and_allows_empty_messages() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -7528,6 +7987,57 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.remote_branches_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+    }
+
+    #[test]
+    fn switch_repo_subview_tags_selects_first_visible_match() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(RepoDetail {
+                    tags: vec![
+                        crate::state::TagItem {
+                            name: "v1.0.0".to_string(),
+                            target_oid: "abcdef1234567890".to_string(),
+                            target_short_oid: "abcdef1".to_string(),
+                            summary: "release v1.0.0".to_string(),
+                            annotated: true,
+                        },
+                        crate::state::TagItem {
+                            name: "release-candidate".to_string(),
+                            target_oid: "1234567890abcdef".to_string(),
+                            target_short_oid: "1234567".to_string(),
+                            summary: "second".to_string(),
+                            annotated: false,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                tags_filter: crate::state::RepoSubviewFilterState {
+                    query: "candidate".to_string(),
+                    focused: false,
+                },
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SwitchRepoSubview(RepoSubview::Tags)),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.tags_view.selected_index),
             Some(1)
         );
         assert_eq!(result.state.focused_pane, PaneId::RepoDetail);

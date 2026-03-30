@@ -503,6 +503,20 @@ impl TuiApp {
             };
         }
 
+        if matches!(self.state.focused_pane, PaneId::RepoDetail)
+            && self.binding_matches_action("push_selected_tag", raw, normalized, &["P"])
+            && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                matches!(repo_mode.active_subview, RepoSubview::Tags)
+                    && selected_tag(
+                        repo_mode.detail.as_ref(),
+                        repo_mode.tags_view.selected_index,
+                    )
+                    .is_some()
+            })
+        {
+            return Some(Action::PushSelectedTag);
+        }
+
         if self.binding_matches_action("push_current_branch", raw, normalized, &["P"]) {
             return Some(Action::PushCurrentBranch);
         }
@@ -626,6 +640,7 @@ impl TuiApp {
                     RepoSubview::Status
                         | RepoSubview::Branches
                         | RepoSubview::RemoteBranches
+                        | RepoSubview::Tags
                         | RepoSubview::Commits
                         | RepoSubview::Compare
                         | RepoSubview::Rebase
@@ -817,6 +832,90 @@ impl TuiApp {
                             &["d"],
                         ) {
                             return Some(Action::DeleteSelectedRemoteBranch);
+                        }
+                    }
+                    RepoSubview::Tags => {
+                        if self.binding_matches_action(
+                            "select_next_tag",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextTag);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_tag",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousTag);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_selected_tag_commits",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return Some(Action::OpenSelectedTagCommits);
+                        }
+
+                        if self.binding_matches_action(
+                            "checkout_selected_tag",
+                            raw,
+                            normalized,
+                            &["space"],
+                        ) {
+                            return Some(Action::CheckoutSelectedTag);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_create_tag_prompt",
+                            raw,
+                            normalized,
+                            &["n"],
+                        ) {
+                            return Some(Action::OpenInputPrompt {
+                                operation: super_lazygit_core::InputPromptOperation::CreateTag,
+                            });
+                        }
+
+                        if self.binding_matches_action(
+                            "delete_selected_tag",
+                            raw,
+                            normalized,
+                            &["d"],
+                        ) {
+                            return Some(Action::DeleteSelectedTag);
+                        }
+
+                        if self.binding_matches_action(
+                            "soft_reset_to_selected_tag",
+                            raw,
+                            normalized,
+                            &["S"],
+                        ) {
+                            return Some(Action::SoftResetToSelectedTag);
+                        }
+
+                        if self.binding_matches_action(
+                            "mixed_reset_to_selected_tag",
+                            raw,
+                            normalized,
+                            &["M"],
+                        ) {
+                            return Some(Action::MixedResetToSelectedTag);
+                        }
+
+                        if self.binding_matches_action(
+                            "hard_reset_to_selected_tag",
+                            raw,
+                            normalized,
+                            &["H"],
+                        ) {
+                            return Some(Action::HardResetToSelectedTag);
                         }
                     }
                     RepoSubview::Status => {
@@ -1511,6 +1610,10 @@ impl TuiApp {
             return Some(Action::SwitchRepoSubview(RepoSubview::RemoteBranches));
         }
 
+        if self.binding_matches_action("switch_repo_subview_tags", raw, normalized, &["t"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Tags));
+        }
+
         if self.binding_matches_action("switch_repo_subview_commits", raw, normalized, &["3"]) {
             return Some(Action::SwitchRepoSubview(RepoSubview::Commits));
         }
@@ -1898,6 +2001,19 @@ impl TuiApp {
                         .unwrap_or(""),
                     repo_mode
                         .subview_filter(RepoSubview::RemoteBranches)
+                        .is_some_and(|filter| filter.focused),
+                    self.state.focused_pane == PaneId::RepoDetail,
+                    theme,
+                ),
+                RepoSubview::Tags => repo_tag_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.tags_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Tags)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Tags)
                         .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
@@ -2824,6 +2940,102 @@ fn repo_remote_branch_lines(
     lines
 }
 
+fn repo_tag_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Tags",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    let visible_indices = visible_tag_indices(detail, filter_query);
+    if visible_indices.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Tags",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.tags.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.tags.is_empty() {
+                "No tags available.".to_string()
+            } else {
+                format!("No tags match /{}.", filter_query)
+            }),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
+    let selected_tag = &detail.tags[selected_index];
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "Tags",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("Selected: {}", selected_tag.name)),
+        Line::from(format!("Target: {}", selected_tag.target_short_oid)),
+        Line::from(format!(
+            "Type: {}",
+            if selected_tag.annotated {
+                "annotated"
+            } else {
+                "lightweight"
+            }
+        )),
+        Line::from(format!("Summary: {}", selected_tag.summary)),
+    ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.tags.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
+        Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
+        Line::from("Other: n create tag. d delete tag. P push tag. S/M/H reset to tag."),
+        Line::from(""),
+    ]);
+
+    for index in visible_indices {
+        let tag = &detail.tags[index];
+        let style = if index == selected_index {
+            let mut style = Style::default()
+                .fg(theme.foreground)
+                .add_modifier(Modifier::BOLD);
+            if is_focused {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            style
+        } else {
+            Style::default().fg(theme.foreground)
+        };
+        lines.push(Line::from(Span::styled(tag_row_label(tag), style)));
+    }
+
+    lines
+}
+
 fn branch_row_label(branch: &super_lazygit_core::BranchItem) -> String {
     let head = if branch.is_head { "*" } else { " " };
     let upstream = branch.upstream.as_deref().unwrap_or("-");
@@ -2835,6 +3047,15 @@ fn remote_branch_row_label(branch: &super_lazygit_core::RemoteBranchItem) -> Str
         "  {:<28} remote={} local={}",
         branch.name, branch.remote_name, branch.branch_name
     )
+}
+
+fn tag_row_label(tag: &super_lazygit_core::TagItem) -> String {
+    let kind = if tag.annotated {
+        "annotated"
+    } else {
+        "lightweight"
+    };
+    format!("  {:<24} {}  {}", tag.name, tag.target_short_oid, kind)
 }
 
 fn branch_row_style(
@@ -2882,6 +3103,17 @@ fn selected_remote_branch(
         .filter(|index| *index < detail.remote_branches.len())
         .unwrap_or(0);
     detail.remote_branches.get(selected_index)
+}
+
+fn selected_tag(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+) -> Option<&super_lazygit_core::TagItem> {
+    let detail = detail?;
+    let selected_index = selected_index
+        .filter(|index| *index < detail.tags.len())
+        .unwrap_or(0);
+    detail.tags.get(selected_index)
 }
 
 fn selected_stash(
@@ -3450,6 +3682,21 @@ fn visible_remote_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec
         .enumerate()
         .filter_map(|(index, branch)| {
             super_lazygit_core::remote_branch_matches_filter(branch, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn visible_tag_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.tags.len()).collect();
+    }
+    detail
+        .tags
+        .iter()
+        .enumerate()
+        .filter_map(|(index, tag)| {
+            super_lazygit_core::tag_matches_filter(tag, &normalized).then_some(index)
         })
         .collect()
 }
@@ -4071,6 +4318,15 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         } => format!(
             "Delete remote branch {remote_name}/{branch_name}? This runs git push {remote_name} --delete {branch_name}."
         ),
+        super_lazygit_core::ConfirmableOperation::DeleteTag { tag_name } => {
+            format!("Delete tag {tag_name}? This removes the local tag reference.")
+        }
+        super_lazygit_core::ConfirmableOperation::PushTag {
+            remote_name,
+            tag_name,
+        } => format!(
+            "Push tag {tag_name} to {remote_name}? This runs git push {remote_name} refs/tags/{tag_name}."
+        ),
         super_lazygit_core::ConfirmableOperation::PopStash { stash_ref } => {
             format!("Pop {stash_ref}? This applies it and removes it from the stash list.")
         }
@@ -4107,6 +4363,9 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         super_lazygit_core::InputPromptOperation::CreateBranch => {
             "Enter the new branch name. The branch will be created from HEAD and checked out."
                 .to_string()
+        }
+        super_lazygit_core::InputPromptOperation::CreateTag => {
+            "Enter the new tag name. The tag will be created at the current HEAD.".to_string()
         }
         super_lazygit_core::InputPromptOperation::CreateBranchFromCommit {
             summary, ..
@@ -4517,6 +4776,7 @@ fn repo_subview_label(subview: RepoSubview) -> &'static str {
         RepoSubview::Status => "Status",
         RepoSubview::Branches => "Branches",
         RepoSubview::RemoteBranches => "Remote Branches",
+        RepoSubview::Tags => "Tags",
         RepoSubview::Commits => "Commits",
         RepoSubview::Compare => "Compare",
         RepoSubview::Rebase => "Rebase",
@@ -4531,6 +4791,7 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
         (RepoSubview::Status, "1 Status"),
         (RepoSubview::Branches, "2 Branches"),
         (RepoSubview::RemoteBranches, "9 Remote"),
+        (RepoSubview::Tags, "t Tags"),
         (RepoSubview::Commits, "3 Commits"),
         (RepoSubview::Compare, "4 Compare"),
         (RepoSubview::Rebase, "5 Rebase"),
@@ -4960,6 +5221,22 @@ mod tests {
                     name: "origin/feature".to_string(),
                     remote_name: "origin".to_string(),
                     branch_name: "feature".to_string(),
+                },
+            ],
+            tags: vec![
+                super_lazygit_core::TagItem {
+                    name: "v1.0.0".to_string(),
+                    target_oid: "abcdef1234567890".to_string(),
+                    target_short_oid: "abcdef1".to_string(),
+                    summary: "release v1.0.0".to_string(),
+                    annotated: true,
+                },
+                super_lazygit_core::TagItem {
+                    name: "snapshot".to_string(),
+                    target_oid: "1234567890abcdef".to_string(),
+                    target_short_oid: "1234567".to_string(),
+                    summary: "second".to_string(),
+                    annotated: false,
                 },
             ],
             commits: vec![
@@ -5853,6 +6130,24 @@ mod tests {
             result.state.repo_mode.expect("repo mode").active_subview,
             RepoSubview::RemoteBranches
         );
+
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "t".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result.state.repo_mode.expect("repo mode").active_subview,
+            RepoSubview::Tags
+        );
     }
 
     #[test]
@@ -6015,6 +6310,222 @@ mod tests {
                 .map(|repo_mode| repo_mode.commits_filter.focused),
             Some(true)
         );
+    }
+
+    #[test]
+    fn repo_mode_tags_detail_routes_filter_navigation_and_actions() {
+        let repo_id = RepoId::new("repo-1");
+        let base_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        display_path: "/tmp/repo-1".to_string(),
+                        remote_summary: super_lazygit_core::RemoteSummary {
+                            remote_name: Some("origin".to_string()),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Tags,
+                detail: Some(sample_repo_detail()),
+                tags_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+
+        let mut next_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let moved_next = next_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            moved_next
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.tags_view.selected_index),
+            Some(1)
+        );
+
+        let mut previous_app = TuiApp::new(moved_next.state, AppConfig::default());
+        let moved_previous =
+            previous_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "k".to_string(),
+            })));
+        assert_eq!(
+            moved_previous
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.tags_view.selected_index),
+            Some(0)
+        );
+
+        let mut filter_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let filter_focus = filter_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "/".to_string(),
+        })));
+        assert_eq!(
+            filter_focus
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.tags_filter.focused),
+            Some(true)
+        );
+
+        let mut paste_app = TuiApp::new(filter_focus.state, AppConfig::default());
+        let filtered = paste_app.dispatch(Event::Input(InputEvent::Paste("snap".to_string())));
+        assert_eq!(
+            filtered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.tags_filter.query.as_str()),
+            Some("snap")
+        );
+        assert_eq!(
+            filtered
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.tags_view.selected_index),
+            Some(1)
+        );
+
+        let mut blur_app = TuiApp::new(filtered.state.clone(), AppConfig::default());
+        let blurred = blur_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            blurred
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.tags_filter.focused),
+            Some(false)
+        );
+
+        let mut commits_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let tag_commits = commits_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            tag_commits
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            tag_commits
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            Some("snapshot")
+        );
+
+        let mut checkout_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let checkout = checkout_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert_eq!(
+            checkout.effects,
+            vec![super_lazygit_core::Effect::RunGitCommand(
+                super_lazygit_core::GitCommandRequest {
+                    job_id: super_lazygit_core::JobId::new("git:repo-1:checkout-tag"),
+                    repo_id: repo_id.clone(),
+                    command: super_lazygit_core::GitCommand::CheckoutTag {
+                        tag_name: "snapshot".to_string(),
+                    },
+                }
+            )]
+        );
+
+        let mut prompt_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let prompt = prompt_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(prompt.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            prompt
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::InputPromptOperation::CreateTag)
+        );
+
+        let mut delete_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let delete = delete_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "d".to_string(),
+        })));
+        assert_eq!(delete.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            delete
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::DeleteTag {
+                tag_name: "snapshot".to_string(),
+            })
+        );
+
+        let mut push_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let push = push_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "P".to_string(),
+        })));
+        assert_eq!(push.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            push.state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::PushTag {
+                remote_name: "origin".to_string(),
+                tag_name: "snapshot".to_string(),
+            })
+        );
+
+        for (key, mode) in [
+            ("S", super_lazygit_core::ResetMode::Soft),
+            ("M", super_lazygit_core::ResetMode::Mixed),
+            ("H", super_lazygit_core::ResetMode::Hard),
+        ] {
+            let mut reset_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+            let reset = reset_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: key.to_string(),
+            })));
+            assert_eq!(reset.state.focused_pane, PaneId::Modal);
+            assert_eq!(
+                reset
+                    .state
+                    .pending_confirmation
+                    .as_ref()
+                    .map(|pending| pending.operation.clone()),
+                Some(super_lazygit_core::ConfirmableOperation::ResetToCommit {
+                    mode,
+                    commit: "snapshot".to_string(),
+                    summary: "tag snapshot (1234567)".to_string(),
+                }),
+                "expected reset key {key} to target the selected tag",
+            );
+        }
     }
 
     #[test]
@@ -8729,6 +9240,61 @@ mod tests {
     }
 
     #[test]
+    fn render_repo_shell_shows_tag_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Tags,
+                detail: Some(sample_repo_detail()),
+                tags_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                tags_filter: super_lazygit_core::RepoSubviewFilterState {
+                    query: "v1".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Tags"));
+        assert!(rendered.contains("Selected: v1.0.0"));
+        assert!(rendered.contains("Target: abcdef1"));
+        assert!(rendered.contains("Type: annotated"));
+        assert!(rendered.contains("Summary: release v1.0.0"));
+        assert!(rendered.contains("Filter /v1_  Matches: 1/2  (focused)"));
+        assert!(rendered.contains("Context: Enter commits. Space checkout."));
+        assert!(rendered.contains("n create tag"));
+        assert!(rendered.contains("P push tag"));
+    }
+
+    #[test]
     fn render_repo_shell_shows_stash_management_details() {
         let mut state = AppState {
             mode: AppMode::Repository,
@@ -8866,6 +9432,22 @@ mod tests {
     }
 
     #[test]
+    fn tag_confirmation_copy_mentions_delete_and_push_commands() {
+        let delete = confirmation_copy(&super_lazygit_core::ConfirmableOperation::DeleteTag {
+            tag_name: "release-candidate".to_string(),
+        });
+        let push = confirmation_copy(&super_lazygit_core::ConfirmableOperation::PushTag {
+            remote_name: "origin".to_string(),
+            tag_name: "release-candidate".to_string(),
+        });
+
+        assert!(delete.contains("Delete tag release-candidate?"));
+        assert!(delete.contains("local tag reference"));
+        assert!(push.contains("Push tag release-candidate to origin?"));
+        assert!(push.contains("git push origin refs/tags/release-candidate"));
+    }
+
+    #[test]
     fn create_branch_from_remote_prompt_copy_mentions_selected_ref() {
         let copy = input_prompt_copy(
             &super_lazygit_core::InputPromptOperation::CreateBranchFromRemote {
@@ -8876,6 +9458,14 @@ mod tests {
 
         assert!(copy.contains("origin/feature"));
         assert!(copy.contains("created from origin/feature and checked out"));
+    }
+
+    #[test]
+    fn create_tag_prompt_copy_mentions_current_head() {
+        let copy = input_prompt_copy(&super_lazygit_core::InputPromptOperation::CreateTag);
+
+        assert!(copy.contains("new tag name"));
+        assert!(copy.contains("created at the current HEAD"));
     }
 
     #[test]

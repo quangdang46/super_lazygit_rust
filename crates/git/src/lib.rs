@@ -14,8 +14,8 @@ use super_lazygit_core::{
     DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus,
     FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode,
     RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteSummary,
-    RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, Timestamp,
-    WatcherFreshness, WorktreeItem,
+    RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, TagItem,
+    Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -515,6 +515,7 @@ impl GitBackend for CliGitBackend {
             diff,
             branches: read_branches(&repo_path),
             remote_branches: read_remote_branches(&repo_path),
+            tags: read_tags(&repo_path),
             commits: commit_history.commits,
             commit_graph_lines: commit_history.graph_lines,
             rebase_state: read_rebase_state(&repo_path),
@@ -661,6 +662,10 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["checkout", "-b", branch_name.as_str()])?;
                 format!("Created and checked out {branch_name}")
             }
+            GitCommand::CreateTag { tag_name } => {
+                git(&repo_path, ["tag", tag_name.as_str()])?;
+                format!("Created tag {tag_name}")
+            }
             GitCommand::CreateBranchFromCommit {
                 branch_name,
                 commit,
@@ -718,6 +723,10 @@ impl GitBackend for CliGitBackend {
                     )
                 }
             }
+            GitCommand::CheckoutTag { tag_name } => {
+                git(&repo_path, ["checkout", tag_name.as_str()])?;
+                format!("Checked out tag {tag_name}")
+            }
             GitCommand::CheckoutCommit { commit } => {
                 git(&repo_path, ["checkout", commit.as_str()])?;
                 format!("Checked out commit {commit}")
@@ -766,6 +775,18 @@ impl GitBackend for CliGitBackend {
                     ],
                 )?;
                 format!("Deleted remote branch {remote_name}/{branch_name}")
+            }
+            GitCommand::DeleteTag { tag_name } => {
+                git(&repo_path, ["tag", "-d", tag_name.as_str()])?;
+                format!("Deleted tag {tag_name}")
+            }
+            GitCommand::PushTag {
+                remote_name,
+                tag_name,
+            } => {
+                let refspec = format!("refs/tags/{tag_name}");
+                git(&repo_path, ["push", remote_name.as_str(), refspec.as_str()])?;
+                format!("Pushed tag {tag_name} to {remote_name}")
             }
             GitCommand::CreateStash { message, mode } => {
                 match mode {
@@ -965,17 +986,21 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CreateBranch { .. } => "create_branch",
+        GitCommand::CreateTag { .. } => "create_tag",
         GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
         GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::CheckoutRemoteBranch { .. } => "checkout_remote_branch",
+        GitCommand::CheckoutTag { .. } => "checkout_tag",
         GitCommand::CheckoutCommit { .. } => "checkout_commit",
         GitCommand::CheckoutCommitFile { .. } => "checkout_commit_file",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::DeleteBranch { .. } => "delete_branch",
         GitCommand::DeleteRemoteBranch { .. } => "delete_remote_branch",
+        GitCommand::DeleteTag { .. } => "delete_tag",
+        GitCommand::PushTag { .. } => "push_tag",
         GitCommand::CreateStash {
             mode: StashMode::Tracked,
             ..
@@ -2199,6 +2224,54 @@ fn read_remote_branches(repo_path: &Path) -> Vec<RemoteBranchItem> {
                     name: name.to_string(),
                     remote_name: remote_name.to_string(),
                     branch_name: branch_name.to_string(),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn read_tags(repo_path: &Path) -> Vec<TagItem> {
+    git_stdout(
+        repo_path,
+        [
+            "for-each-ref",
+            "--sort=-creatordate",
+            "--format=%(refname:short)%00%(objecttype)%00%(objectname)%00%(*objectname)%00%(subject)",
+            "refs/tags",
+        ],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let mut parts = trimmed.split('\0');
+                let name = parts.next().unwrap_or_default().trim();
+                let object_type = parts.next().unwrap_or_default().trim();
+                let object_oid = parts.next().unwrap_or_default().trim();
+                let peeled_oid = parts.next().unwrap_or_default().trim();
+                let summary = parts.next().unwrap_or_default().trim();
+                if name.is_empty() {
+                    return None;
+                }
+                let target_oid = if peeled_oid.is_empty() {
+                    object_oid
+                } else {
+                    peeled_oid
+                };
+                if target_oid.is_empty() {
+                    return None;
+                }
+                Some(TagItem {
+                    name: name.to_string(),
+                    target_oid: target_oid.to_string(),
+                    target_short_oid: target_oid.chars().take(7).collect(),
+                    summary: summary.to_string(),
+                    annotated: object_type == "tag",
                 })
             })
             .collect()
@@ -4641,6 +4714,170 @@ mod tests {
         remote
             .git_expect_failure(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
             .expect("remote branch should be deleted");
+    }
+
+    #[test]
+    fn cli_backend_reads_lightweight_and_annotated_tags() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        let annotated_target = repo.rev_parse("HEAD").expect("annotated target");
+        repo.git(["tag", "-a", "v1.0.0", "-m", "release v1.0.0"])
+            .expect("create annotated tag");
+        repo.write_file("tracked.txt", "base\nsnapshot\n")
+            .expect("write second commit");
+        repo.commit_all("snapshot commit").expect("snapshot commit");
+        let lightweight_target = repo.rev_parse("HEAD").expect("lightweight target");
+        repo.git(["tag", "snapshot"])
+            .expect("create lightweight tag");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+            })
+            .expect("detail succeeds");
+
+        let annotated = detail
+            .tags
+            .iter()
+            .find(|tag| tag.name == "v1.0.0")
+            .expect("annotated tag present");
+        assert!(annotated.annotated);
+        assert_eq!(annotated.summary, "release v1.0.0");
+        assert_eq!(annotated.target_oid, annotated_target);
+        assert_eq!(
+            annotated.target_short_oid,
+            annotated_target.chars().take(7).collect::<String>()
+        );
+
+        let lightweight = detail
+            .tags
+            .iter()
+            .find(|tag| tag.name == "snapshot")
+            .expect("lightweight tag present");
+        assert!(!lightweight.annotated);
+        assert_eq!(lightweight.summary, "snapshot commit");
+        assert_eq!(lightweight.target_oid, lightweight_target);
+        assert_eq!(
+            lightweight.target_short_oid,
+            lightweight_target.chars().take(7).collect::<String>()
+        );
+    }
+
+    #[test]
+    fn cli_backend_runs_tag_lifecycle_commands() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("push main");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let created = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-tag"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateTag {
+                    tag_name: "release-candidate".to_string(),
+                },
+            })
+            .expect("create tag should succeed");
+        assert_eq!(created.summary, "Created tag release-candidate");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show-ref", "--verify", "refs/tags/release-candidate"])
+                    .expect("local tag ref"),
+            )
+            .expect("local tag output")
+            .lines()
+            .count(),
+            1
+        );
+
+        let pushed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-push-tag"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::PushTag {
+                    remote_name: "origin".to_string(),
+                    tag_name: "release-candidate".to_string(),
+                },
+            })
+            .expect("push tag should succeed");
+        assert_eq!(pushed.summary, "Pushed tag release-candidate to origin");
+        assert_eq!(
+            stdout_string(
+                remote
+                    .git_capture(["show-ref", "--verify", "refs/tags/release-candidate"])
+                    .expect("remote tag ref"),
+            )
+            .expect("remote tag output")
+            .lines()
+            .count(),
+            1
+        );
+
+        let deleted = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-delete-tag"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::DeleteTag {
+                    tag_name: "release-candidate".to_string(),
+                },
+            })
+            .expect("delete tag should succeed");
+        assert_eq!(deleted.summary, "Deleted tag release-candidate");
+        repo.git_expect_failure([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/tags/release-candidate",
+        ])
+        .expect("local tag should be deleted");
+    }
+
+    #[test]
+    fn cli_backend_checkout_tag_detaches_head() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.git(["tag", "snapshot"]).expect("create tag");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let checkout = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-checkout-tag"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CheckoutTag {
+                    tag_name: "snapshot".to_string(),
+                },
+            })
+            .expect("checkout tag should succeed");
+
+        assert_eq!(checkout.repo_id, repo_id);
+        assert_eq!(checkout.summary, "Checked out tag snapshot");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-parse", "--abbrev-ref", "HEAD"])
+                    .expect("head name"),
+            )
+            .expect("head text"),
+            "HEAD"
+        );
     }
 
     #[test]
