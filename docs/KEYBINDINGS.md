@@ -171,6 +171,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | --- | --- |
 | `j` / `Down` | Select the next worktree |
 | `k` / `Up` | Select the previous worktree |
+| `Space` | Switch to the selected worktree |
 | `n` | Open create-worktree prompt |
 | `c` | Open create-worktree prompt (legacy alias) |
 | `o` | Open the selected worktree in the configured editor |

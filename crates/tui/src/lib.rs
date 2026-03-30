@@ -185,6 +185,20 @@ impl TuiApp {
             .any(|binding| binding_matches_key(binding, raw, normalized))
     }
 
+    fn selected_worktree_repo_id(&self) -> Option<RepoId> {
+        let repo_mode = self.state.repo_mode.as_ref()?;
+        let detail = repo_mode.detail.as_ref()?;
+        let selected_index = repo_mode
+            .worktree_view
+            .selected_index
+            .filter(|index| *index < detail.worktrees.len())
+            .unwrap_or(0);
+        detail
+            .worktrees
+            .get(selected_index)
+            .map(|worktree| RepoId::new(worktree.path.to_string_lossy().into_owned()))
+    }
+
     fn handle_input(&mut self, input: InputEvent) -> ReduceResult {
         match input {
             InputEvent::Resize { width, height } => {
@@ -1089,6 +1103,17 @@ impl TuiApp {
                             &["k", "up"],
                         ) {
                             return Some(Action::SelectPreviousWorktree);
+                        }
+
+                        if self.binding_matches_action(
+                            "switch_to_selected_worktree",
+                            raw,
+                            normalized,
+                            &["space"],
+                        ) {
+                            return self
+                                .selected_worktree_repo_id()
+                                .map(|repo_id| Action::EnterRepoMode { repo_id });
                         }
 
                         if self.binding_matches_action(
@@ -2521,7 +2546,8 @@ fn repo_worktree_lines(
             "Branch: {}",
             selected_worktree.branch.as_deref().unwrap_or("(detached)")
         )),
-        Line::from("n creates. o opens selected worktree. d removes linked worktree."),
+        Line::from("Space switches. n creates. o opens selected worktree."),
+        Line::from("d removes linked worktree."),
         Line::from(""),
     ];
 
@@ -5901,7 +5927,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_mode_worktree_detail_routes_selection_create_open_and_remove() {
+    fn repo_mode_worktree_detail_routes_selection_switch_create_open_and_remove() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
@@ -5939,6 +5965,30 @@ mod tests {
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.worktree_view.selected_index),
             Some(1)
+        );
+
+        let mut switch_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let switch = switch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert_eq!(
+            switch
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone()),
+            Some(RepoId::new("/tmp/repo-1-feature"))
+        );
+        assert_eq!(
+            switch.effects,
+            vec![
+                super_lazygit_core::Effect::LoadRepoDetail {
+                    repo_id: RepoId::new("/tmp/repo-1-feature"),
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                },
+                super_lazygit_core::Effect::ScheduleRender,
+            ]
         );
 
         let mut create_app = TuiApp::new(down.state.clone(), AppConfig::default());
@@ -6995,6 +7045,7 @@ mod tests {
         assert!(rendered.contains("Detail: Worktrees"));
         assert!(rendered.contains("Selected: /tmp/repo-1-feature"));
         assert!(rendered.contains("Branch: feature"));
+        assert!(rendered.contains("Space switches."));
         assert!(rendered.contains("n creates."));
         assert!(rendered.contains("opens selected worktree"));
         assert!(rendered.contains("/tmp/repo-1  [main]"));
