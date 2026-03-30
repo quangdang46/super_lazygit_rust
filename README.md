@@ -31,10 +31,13 @@ That means:
 - Remote-branch detail view with filtering, commit-history drill-down, tracking checkout, local-branch creation, and remote deletion
 - Tags detail view with filtering, commit-history drill-down, detached checkout, create/delete/push flows, and reset-on-tag actions
 - Compare, rebase, stash, reflog, and worktree detail subviews
+- Submodules detail view with filtering, nested repo entry/return flow, and add/edit-url/init/update/remove actions
 - Stash create/apply/pop/drop/rename/new-branch, stash-options menu parity for tracked, keep-index, include-untracked, staged, and lazygit-style unstaged creation, plus stash changed-file drill-down inspection before apply and reflog commit-history handoff, detached checkout, branch-off, cherry-pick, restore, and reset flows
 - Keybinding overrides for routed command keys across modal, workspace, repo, and commit-box actions
 - Watcher health reporting with degraded fallback polling
-- Fixture-heavy Git integration coverage for dirty repos, conflicts, upstream divergence, stashes, reflog, and worktrees
+- Fixture-heavy Git integration coverage for dirty repos, conflicts, upstream divergence, stashes, reflog, worktrees, and submodules
+
+Current submodule scope intentionally does not include lazygit's broader bulk submodule option menus. The shipped surface is the per-submodule panel and lifecycle actions listed above, and unsupported bulk behavior is left explicit rather than silently implied.
 
 ## Running the current build
 

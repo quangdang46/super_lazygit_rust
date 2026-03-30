@@ -135,6 +135,40 @@ pub fn worktree_repo() -> io::Result<TempRepo> {
     Ok(repo)
 }
 
+pub fn submodule_repo() -> io::Result<TempRepo> {
+    let mut parent = TempRepo::new()?;
+
+    parent.write_file("parent.txt", "parent\n")?;
+    parent.commit_all("initial")?;
+
+    let child_root = tempfile::tempdir()?;
+    let child_path = child_root.path().join("child-module");
+    fs::create_dir_all(&child_path)?;
+    run_git(&child_path, &["init", "--initial-branch=main"])?;
+    run_git(&child_path, &["config", "user.name", "Super Lazygit Tests"])?;
+    run_git(&child_path, &["config", "user.email", "tests@example.com"])?;
+    fs::write(child_path.join("child.txt"), "child\n")?;
+    run_git(&child_path, &["add", "."])?;
+    run_git(&child_path, &["commit", "-m", "child init"])?;
+
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            child_path.to_str().unwrap_or("child-module"),
+            "vendor/child-module",
+        ])
+        .current_dir(parent.path())
+        .output()?;
+    ensure_success("git submodule add", &output)?;
+    parent.commit_all("add submodule")?;
+    parent.attached_dirs.push(child_root);
+
+    Ok(parent)
+}
+
 pub fn rebase_in_progress_repo() -> io::Result<TempRepo> {
     let repo = TempRepo::new()?;
 
@@ -358,6 +392,11 @@ impl TempRepo {
     }
 }
 
+fn run_git(dir: &Path, args: &[&str]) -> io::Result<()> {
+    let output = Command::new("git").args(args).current_dir(dir).output()?;
+    ensure_success("git", &output)
+}
+
 fn ensure_success(command: &str, output: &Output) -> io::Result<()> {
     if output.status.success() {
         return Ok(());
@@ -469,6 +508,16 @@ mod tests {
         let worktrees = repo.worktree_list()?;
         assert!(worktrees.contains("branch refs/heads/feature"));
         assert!(worktrees.contains("feature-tree"));
+        Ok(())
+    }
+
+    #[test]
+    fn creates_submodule_repo() -> io::Result<()> {
+        let repo = submodule_repo()?;
+
+        let status = stdout_string(repo.git_capture(["submodule", "status"])?)?;
+        assert!(status.contains("vendor/child-module"));
+        assert!(repo.path().join("vendor/child-module/.git").exists());
         Ok(())
     }
 }

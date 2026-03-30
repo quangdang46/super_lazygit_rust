@@ -15,7 +15,7 @@ use super_lazygit_core::{
     FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode,
     RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteItem,
     RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode,
-    TagItem, Timestamp, WatcherFreshness, WorktreeItem,
+    SubmoduleItem, TagItem, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -512,6 +512,7 @@ impl GitBackend for CliGitBackend {
         );
         let remote_branches = read_remote_branches(&repo_path);
         let remotes = read_remotes(&repo_path, &remote_branches);
+        let submodules = read_submodules(&repo_path);
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
@@ -525,6 +526,7 @@ impl GitBackend for CliGitBackend {
             stashes: read_stashes(&repo_path),
             reflog_items: read_reflog(&repo_path),
             worktrees: read_worktrees(&repo_path),
+            submodules,
             commit_input: String::new(),
             merge_state: read_merge_state(&repo_path),
         })
@@ -903,6 +905,62 @@ impl GitBackend for CliGitBackend {
                 }
                 format!("Removed worktree {}", path.display())
             }
+            GitCommand::AddSubmodule { path, url } => {
+                let path_value = path.to_string_lossy().into_owned();
+                git_with_env(
+                    &repo_path,
+                    [
+                        "-c",
+                        "protocol.file.allow=always",
+                        "submodule",
+                        "add",
+                        url.as_str(),
+                        path_value.as_str(),
+                    ],
+                    &[],
+                )?;
+                format!("Added submodule {} from {url}", path.display())
+            }
+            GitCommand::EditSubmoduleUrl { name, path, url } => {
+                edit_submodule_url(&repo_path, name, path, url)?;
+                format!("Updated submodule {} URL", path.display())
+            }
+            GitCommand::InitSubmodule { path } => {
+                let path_value = path.to_string_lossy().into_owned();
+                git(
+                    &repo_path,
+                    [
+                        "-c",
+                        "protocol.file.allow=always",
+                        "submodule",
+                        "update",
+                        "--init",
+                        "--",
+                        path_value.as_str(),
+                    ],
+                )?;
+                format!("Initialized submodule {}", path.display())
+            }
+            GitCommand::UpdateSubmodule { path } => {
+                let path_value = path.to_string_lossy().into_owned();
+                git(
+                    &repo_path,
+                    [
+                        "-c",
+                        "protocol.file.allow=always",
+                        "submodule",
+                        "update",
+                        "--remote",
+                        "--",
+                        path_value.as_str(),
+                    ],
+                )?;
+                format!("Updated submodule {}", path.display())
+            }
+            GitCommand::RemoveSubmodule { path } => {
+                remove_submodule(&repo_path, path)?;
+                format!("Removed submodule {}", path.display())
+            }
             GitCommand::SetBranchUpstream {
                 branch_name,
                 upstream_ref,
@@ -1070,6 +1128,11 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",
+        GitCommand::AddSubmodule { .. } => "add_submodule",
+        GitCommand::EditSubmoduleUrl { .. } => "edit_submodule_url",
+        GitCommand::InitSubmodule { .. } => "init_submodule",
+        GitCommand::UpdateSubmodule { .. } => "update_submodule",
+        GitCommand::RemoveSubmodule { .. } => "remove_submodule",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
         GitCommand::FetchRemote { .. } => "fetch_remote",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
@@ -1851,6 +1914,41 @@ fn rename_stash(repo_path: &Path, stash_ref: &str, message: &str) -> GitResult<(
     let output = command.output().map_err(io_error)?;
     if !output.status.success() {
         return Err(command_failure(output));
+    }
+    Ok(())
+}
+
+fn edit_submodule_url(repo_path: &Path, name: &str, path: &Path, url: &str) -> GitResult<()> {
+    let url_key = format!("submodule.{name}.url");
+    git(
+        repo_path,
+        ["config", "-f", ".gitmodules", url_key.as_str(), url],
+    )?;
+    git(repo_path, ["config", url_key.as_str(), url])?;
+    git(
+        repo_path,
+        ["submodule", "sync", "--", &path.to_string_lossy()],
+    )?;
+    if repo_path.join(".gitmodules").exists() {
+        git_path(repo_path, ["add"], Path::new(".gitmodules"))?;
+    }
+    Ok(())
+}
+
+fn remove_submodule(repo_path: &Path, path: &Path) -> GitResult<()> {
+    let _ = git_path(repo_path, ["submodule", "deinit", "-f"], path);
+    git_path(repo_path, ["rm", "-f"], path)?;
+    if let Some(modules_path) = resolve_git_path(
+        repo_path,
+        format!("modules/{}", path.to_string_lossy()).as_str(),
+    ) {
+        if modules_path.exists() {
+            if modules_path.is_dir() {
+                fs::remove_dir_all(modules_path).map_err(io_error)?;
+            } else {
+                fs::remove_file(modules_path).map_err(io_error)?;
+            }
+        }
     }
     Ok(())
 }
@@ -2648,6 +2746,143 @@ fn read_worktrees(repo_path: &Path) -> Vec<WorktreeItem> {
     items
 }
 
+#[derive(Debug, Clone, Default)]
+struct SubmoduleStatusSnapshot {
+    short_oid: Option<String>,
+    initialized: bool,
+    dirty: bool,
+    conflicted: bool,
+    branch: Option<String>,
+}
+
+fn read_submodules(repo_path: &Path) -> Vec<SubmoduleItem> {
+    let paths_output = match git_stdout_allow_failure(
+        repo_path,
+        [
+            "config",
+            "-f",
+            ".gitmodules",
+            "--get-regexp",
+            r"^submodule\..*\.path$",
+        ],
+    ) {
+        Ok(output) => output,
+        Err(_) => return Vec::new(),
+    };
+    if paths_output.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let status_by_path = read_submodule_statuses(repo_path);
+    let mut submodules = Vec::new();
+    for line in paths_output.lines() {
+        let Some((key, path_value)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let Some(name) = key
+            .strip_prefix("submodule.")
+            .and_then(|value| value.strip_suffix(".path"))
+        else {
+            continue;
+        };
+        let path = PathBuf::from(path_value.trim());
+        let url_key = format!("submodule.{name}.url");
+        let url = git_stdout_allow_failure(
+            repo_path,
+            ["config", "-f", ".gitmodules", "--get", url_key.as_str()],
+        )
+        .unwrap_or_default();
+        let status = status_by_path
+            .get(path.as_os_str())
+            .cloned()
+            .unwrap_or_default();
+        let submodule_repo_path = repo_path.join(&path);
+        let initialized = status.initialized || submodule_repo_path.join(".git").exists();
+        let short_oid = if initialized {
+            git_stdout_allow_failure(&submodule_repo_path, ["rev-parse", "--short", "HEAD"])
+                .ok()
+                .filter(|value| !value.is_empty())
+                .or(status.short_oid)
+        } else {
+            status.short_oid
+        };
+        let branch = if initialized {
+            git_stdout_allow_failure(&submodule_repo_path, ["branch", "--show-current"])
+                .ok()
+                .filter(|value| !value.is_empty())
+                .or(status.branch)
+        } else {
+            status.branch
+        };
+        let dirty = if initialized {
+            let has_changes = git_stdout_allow_failure(&submodule_repo_path, ["status", "--short"])
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            status.dirty || has_changes
+        } else {
+            status.dirty
+        };
+        submodules.push(SubmoduleItem {
+            name: name.to_string(),
+            path,
+            url,
+            branch,
+            short_oid,
+            initialized,
+            dirty,
+            conflicted: status.conflicted,
+        });
+    }
+    submodules.sort_by(|left, right| left.path.cmp(&right.path));
+    submodules
+}
+
+fn read_submodule_statuses(
+    repo_path: &Path,
+) -> BTreeMap<std::ffi::OsString, SubmoduleStatusSnapshot> {
+    let output = match git_stdout_allow_failure(repo_path, ["submodule", "status", "--recursive"]) {
+        Ok(output) => output,
+        Err(_) => return BTreeMap::new(),
+    };
+
+    let mut statuses = BTreeMap::new();
+    for line in output.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let status_char = line.chars().next().unwrap_or(' ');
+        let remainder = line[1..].trim_start();
+        let mut parts = remainder.split_whitespace();
+        let oid = parts.next().unwrap_or_default();
+        let Some(path) = parts.next() else {
+            continue;
+        };
+        let branch = line
+            .split_once(" (")
+            .and_then(|(_, suffix)| suffix.strip_suffix(')'))
+            .map(normalize_submodule_branch_hint);
+        statuses.insert(
+            std::ffi::OsString::from(path),
+            SubmoduleStatusSnapshot {
+                short_oid: (!oid.is_empty()).then(|| oid.chars().take(7).collect()),
+                initialized: status_char != '-',
+                dirty: status_char == '+',
+                conflicted: status_char == 'U',
+                branch,
+            },
+        );
+    }
+    statuses
+}
+
+fn normalize_submodule_branch_hint(value: &str) -> String {
+    value
+        .strip_prefix("heads/")
+        .or_else(|| value.strip_prefix("remotes/"))
+        .unwrap_or(value)
+        .to_string()
+}
+
 fn read_rebase_state(repo_path: &Path) -> Option<RebaseState> {
     let merge_dir = resolve_git_path(repo_path, "rebase-merge").filter(|path| path.exists());
     let apply_dir = resolve_git_path(repo_path, "rebase-apply").filter(|path| path.exists());
@@ -2788,7 +3023,7 @@ mod tests {
     };
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
-        rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, temp_repo,
+        rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, submodule_repo, temp_repo,
         upstream_diverged_repo, worktree_repo, TempRepo,
     };
 
@@ -5672,6 +5907,175 @@ mod tests {
         assert!(!unstaged.contains("+two staged"));
         assert!(unstaged.contains("+three staged"));
         assert!(unstaged.contains("+four staged"));
+    }
+
+    #[test]
+    fn cli_backend_reads_submodule_inventory() {
+        let repo = submodule_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+            })
+            .expect("detail succeeds");
+
+        let submodule = detail
+            .submodules
+            .iter()
+            .find(|item| item.path == Path::new("vendor/child-module"))
+            .expect("fixture submodule is listed");
+
+        assert_eq!(submodule.name, "vendor/child-module");
+        assert!(submodule.initialized);
+        assert_eq!(submodule.branch.as_deref(), Some("main"));
+        assert!(submodule.short_oid.is_some());
+    }
+
+    #[test]
+    fn cli_backend_runs_submodule_lifecycle_commands() {
+        let repo = submodule_repo().expect("fixture repo");
+        let extra_repo = temp_repo().expect("extra repo");
+        extra_repo
+            .write_file("extra.txt", "extra\n")
+            .expect("write extra file");
+        extra_repo
+            .commit_all("extra init")
+            .expect("commit extra repo");
+        let alternate_repo = temp_repo().expect("alternate repo");
+        alternate_repo
+            .write_file("alt.txt", "alt\n")
+            .expect("write alternate file");
+        alternate_repo
+            .commit_all("alternate init")
+            .expect("commit alternate repo");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let base_request = RepoDetailRequest {
+            repo_id: repo_id.clone(),
+            selected_path: None,
+            diff_presentation: DiffPresentation::Unstaged,
+            commit_ref: None,
+            commit_history_mode: CommitHistoryMode::Linear,
+        };
+
+        let added = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:test:add-submodule"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::AddSubmodule {
+                    path: PathBuf::from("vendor/extra"),
+                    url: extra_repo.path().display().to_string(),
+                },
+            })
+            .expect("add submodule succeeds");
+        assert!(added.summary.contains("Added submodule vendor/extra"));
+
+        let detail = backend
+            .read_repo_detail(base_request.clone())
+            .expect("detail after add succeeds");
+        let extra = detail
+            .submodules
+            .iter()
+            .find(|item| item.path == Path::new("vendor/extra"))
+            .expect("new submodule exists after add");
+        assert_eq!(extra.url, extra_repo.path().display().to_string());
+        assert!(extra.initialized);
+
+        let edited = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:test:edit-submodule"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::EditSubmoduleUrl {
+                    name: "vendor/extra".to_string(),
+                    path: PathBuf::from("vendor/extra"),
+                    url: alternate_repo.path().display().to_string(),
+                },
+            })
+            .expect("edit submodule succeeds");
+        assert!(edited
+            .summary
+            .contains("Updated submodule vendor/extra URL"));
+
+        let detail = backend
+            .read_repo_detail(base_request.clone())
+            .expect("detail after edit succeeds");
+        let extra = detail
+            .submodules
+            .iter()
+            .find(|item| item.path == Path::new("vendor/extra"))
+            .expect("edited submodule exists");
+        assert_eq!(extra.url, alternate_repo.path().display().to_string());
+
+        repo.git(["submodule", "deinit", "-f", "--", "vendor/extra"])
+            .expect("deinit submodule");
+        let detail = backend
+            .read_repo_detail(base_request.clone())
+            .expect("detail after deinit succeeds");
+        let extra = detail
+            .submodules
+            .iter()
+            .find(|item| item.path == Path::new("vendor/extra"))
+            .expect("deinitialized submodule still listed");
+        assert!(!extra.initialized);
+
+        let initialized = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:test:init-submodule"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::InitSubmodule {
+                    path: PathBuf::from("vendor/extra"),
+                },
+            })
+            .expect("init submodule succeeds");
+        assert!(initialized
+            .summary
+            .contains("Initialized submodule vendor/extra"));
+
+        let detail = backend
+            .read_repo_detail(base_request.clone())
+            .expect("detail after init succeeds");
+        let extra = detail
+            .submodules
+            .iter()
+            .find(|item| item.path == Path::new("vendor/extra"))
+            .expect("initialized submodule exists");
+        assert!(extra.initialized);
+
+        let updated = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:test:update-submodule"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::UpdateSubmodule {
+                    path: PathBuf::from("vendor/extra"),
+                },
+            })
+            .expect("update submodule succeeds");
+        assert!(updated.summary.contains("Updated submodule vendor/extra"));
+
+        let removed = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:test:remove-submodule"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::RemoveSubmodule {
+                    path: PathBuf::from("vendor/extra"),
+                },
+            })
+            .expect("remove submodule succeeds");
+        assert!(removed.summary.contains("Removed submodule vendor/extra"));
+
+        let detail = backend
+            .read_repo_detail(base_request)
+            .expect("detail after remove succeeds");
+        assert!(detail
+            .submodules
+            .iter()
+            .all(|item| item.path != Path::new("vendor/extra")));
     }
 
     fn multi_hunk_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {

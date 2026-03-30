@@ -166,6 +166,10 @@ pub enum ConfirmableOperation {
     RemoveWorktree {
         path: PathBuf,
     },
+    RemoveSubmodule {
+        name: String,
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,6 +216,12 @@ pub enum InputPromptOperation {
         mode: StashMode,
     },
     CreateWorktree,
+    CreateSubmodule,
+    EditSubmoduleUrl {
+        name: String,
+        path: PathBuf,
+        current_url: String,
+    },
     RewordCommit {
         commit: String,
         summary: String,
@@ -561,6 +571,7 @@ pub enum WatcherHealth {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoModeState {
     pub current_repo_id: RepoId,
+    pub parent_repo_ids: Vec<RepoId>,
     pub active_subview: RepoSubview,
     pub commit_subview_mode: CommitSubviewMode,
     pub stash_subview_mode: StashSubviewMode,
@@ -582,6 +593,7 @@ pub struct RepoModeState {
     pub stash_files_view: ListViewState,
     pub reflog_view: ListViewState,
     pub worktree_view: ListViewState,
+    pub submodules_view: ListViewState,
     pub branches_filter: RepoSubviewFilterState,
     pub remotes_filter: RepoSubviewFilterState,
     pub remote_branches_filter: RepoSubviewFilterState,
@@ -593,6 +605,7 @@ pub struct RepoModeState {
     pub stash_filter: RepoSubviewFilterState,
     pub reflog_filter: RepoSubviewFilterState,
     pub worktree_filter: RepoSubviewFilterState,
+    pub submodules_filter: RepoSubviewFilterState,
     pub operation_progress: OperationProgress,
     pub comparison_base: Option<ComparisonTarget>,
     pub comparison_target: Option<ComparisonTarget>,
@@ -603,8 +616,14 @@ pub struct RepoModeState {
 impl RepoModeState {
     #[must_use]
     pub fn new(current_repo_id: RepoId) -> Self {
+        Self::new_with_parent(current_repo_id, Vec::new())
+    }
+
+    #[must_use]
+    pub fn new_with_parent(current_repo_id: RepoId, parent_repo_ids: Vec<RepoId>) -> Self {
         Self {
             current_repo_id,
+            parent_repo_ids,
             active_subview: RepoSubview::default(),
             commit_subview_mode: CommitSubviewMode::default(),
             stash_subview_mode: StashSubviewMode::default(),
@@ -626,6 +645,7 @@ impl RepoModeState {
             stash_files_view: ListViewState::default(),
             reflog_view: ListViewState::default(),
             worktree_view: ListViewState::default(),
+            submodules_view: ListViewState::default(),
             branches_filter: RepoSubviewFilterState::default(),
             remotes_filter: RepoSubviewFilterState::default(),
             remote_branches_filter: RepoSubviewFilterState::default(),
@@ -637,6 +657,7 @@ impl RepoModeState {
             stash_filter: RepoSubviewFilterState::default(),
             reflog_filter: RepoSubviewFilterState::default(),
             worktree_filter: RepoSubviewFilterState::default(),
+            submodules_filter: RepoSubviewFilterState::default(),
             operation_progress: OperationProgress::Idle,
             comparison_base: None,
             comparison_target: None,
@@ -662,6 +683,7 @@ impl RepoModeState {
             },
             RepoSubview::Reflog => Some(&self.reflog_filter),
             RepoSubview::Worktrees => Some(&self.worktree_filter),
+            RepoSubview::Submodules => Some(&self.submodules_filter),
             RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
         }
     }
@@ -685,6 +707,7 @@ impl RepoModeState {
             },
             RepoSubview::Reflog => Some(&mut self.reflog_filter),
             RepoSubview::Worktrees => Some(&mut self.worktree_filter),
+            RepoSubview::Submodules => Some(&mut self.submodules_filter),
             RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
         }
     }
@@ -739,6 +762,7 @@ pub enum RepoSubview {
     Stash,
     Reflog,
     Worktrees,
+    Submodules,
 }
 
 impl RepoSubview {
@@ -754,6 +778,7 @@ impl RepoSubview {
                 | Self::Stash
                 | Self::Reflog
                 | Self::Worktrees
+                | Self::Submodules
         )
     }
 }
@@ -892,6 +917,7 @@ pub struct RepoDetail {
     pub stashes: Vec<StashItem>,
     pub reflog_items: Vec<ReflogItem>,
     pub worktrees: Vec<WorktreeItem>,
+    pub submodules: Vec<SubmoduleItem>,
     pub commit_input: String,
     pub merge_state: MergeState,
 }
@@ -1050,6 +1076,18 @@ pub struct ReflogItem {
 pub struct WorktreeItem {
     pub path: PathBuf,
     pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubmoduleItem {
+    pub name: String,
+    pub path: PathBuf,
+    pub url: String,
+    pub branch: Option<String>,
+    pub short_oid: Option<String>,
+    pub initialized: bool,
+    pub dirty: bool,
+    pub conflicted: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1392,6 +1430,29 @@ pub fn worktree_matches_filter(worktree: &WorktreeItem, normalized_query: &str) 
     [
         worktree.path.to_string_lossy().as_ref(),
         worktree.branch.as_deref().unwrap_or("(detached)"),
+    ]
+    .into_iter()
+    .map(normalize_search_text)
+    .any(|field| fuzzy_matches(&field, normalized_query))
+}
+
+#[must_use]
+pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &str) -> bool {
+    [
+        submodule.name.as_str(),
+        submodule.path.to_string_lossy().as_ref(),
+        submodule.url.as_str(),
+        submodule.branch.as_deref().unwrap_or("(detached)"),
+        submodule.short_oid.as_deref().unwrap_or("(uninitialized)"),
+        if submodule.conflicted {
+            "conflicted"
+        } else if !submodule.initialized {
+            "uninitialized"
+        } else if submodule.dirty {
+            "dirty"
+        } else {
+            "clean"
+        },
     ]
     .into_iter()
     .map(normalize_search_text)

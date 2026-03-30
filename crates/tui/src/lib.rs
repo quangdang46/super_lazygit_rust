@@ -648,6 +648,7 @@ impl TuiApp {
                         | RepoSubview::Stash
                         | RepoSubview::Reflog
                         | RepoSubview::Worktrees
+                        | RepoSubview::Submodules
                 )
             })
         {
@@ -1653,6 +1654,79 @@ impl TuiApp {
                             return Some(Action::RemoveSelectedWorktree);
                         }
                     }
+                    RepoSubview::Submodules => {
+                        if self.binding_matches_action(
+                            "select_next_submodule",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextSubmodule);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_submodule",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousSubmodule);
+                        }
+
+                        if self.binding_matches_action(
+                            "enter_selected_submodule",
+                            raw,
+                            normalized,
+                            &["enter", "space"],
+                        ) {
+                            return Some(Action::ActivateRepoSubviewSelection);
+                        }
+
+                        if self.binding_matches_action("create_submodule", raw, normalized, &["n"])
+                        {
+                            return Some(Action::CreateSubmodule);
+                        }
+
+                        if self.binding_matches_action(
+                            "edit_selected_submodule",
+                            raw,
+                            normalized,
+                            &["e"],
+                        ) {
+                            return Some(Action::EditSelectedSubmodule);
+                        }
+
+                        if self.binding_matches_action(
+                            "init_selected_submodule",
+                            raw,
+                            normalized,
+                            &["i"],
+                        ) {
+                            return Some(Action::InitSelectedSubmodule);
+                        }
+
+                        if self.binding_matches_action(
+                            "update_selected_submodule",
+                            raw,
+                            normalized,
+                            &["u"],
+                        ) {
+                            return Some(Action::UpdateSelectedSubmodule);
+                        }
+
+                        if self.binding_matches_action("open_in_editor", raw, normalized, &["o"]) {
+                            return Some(Action::OpenInEditor);
+                        }
+
+                        if self.binding_matches_action(
+                            "remove_selected_submodule",
+                            raw,
+                            normalized,
+                            &["d"],
+                        ) {
+                            return Some(Action::RemoveSelectedSubmodule);
+                        }
+                    }
                 }
 
                 if matches!(repo_mode.active_subview, RepoSubview::Branches)
@@ -1706,6 +1780,12 @@ impl TuiApp {
             && self.binding_matches_action("open_repo_worktrees_subview", raw, normalized, &["w"])
         {
             return Some(Action::OpenRepoWorktreesSubview);
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self.binding_matches_action("open_repo_submodules_subview", raw, normalized, &["b"])
+        {
+            return Some(Action::OpenRepoSubmodulesSubview);
         }
 
         if self.binding_matches_action("focus_repo_left", raw, normalized, &["h", "left"]) {
@@ -1763,6 +1843,10 @@ impl TuiApp {
 
         if self.binding_matches_action("switch_repo_subview_worktrees", raw, normalized, &["8"]) {
             return Some(Action::SwitchRepoSubview(RepoSubview::Worktrees));
+        }
+
+        if self.binding_matches_action("switch_repo_subview_submodules", raw, normalized, &["b"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Submodules));
         }
 
         if self.binding_matches_action("refresh_selected_repo", raw, normalized, &["r"]) {
@@ -2225,6 +2309,19 @@ impl TuiApp {
                         .unwrap_or(""),
                     repo_mode
                         .subview_filter(RepoSubview::Worktrees)
+                        .is_some_and(|filter| filter.focused),
+                    self.state.focused_pane == PaneId::RepoDetail,
+                    theme,
+                ),
+                RepoSubview::Submodules => repo_submodule_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.submodules_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Submodules)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Submodules)
                         .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
@@ -3741,6 +3838,125 @@ fn repo_worktree_lines(
     lines
 }
 
+fn repo_submodule_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Submodules",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    let visible_indices = visible_submodule_indices(detail, filter_query);
+    if visible_indices.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Submodules",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.submodules.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.submodules.is_empty() {
+                "No submodules are configured for this repository.".to_string()
+            } else {
+                format!("No submodules match /{}.", filter_query)
+            }),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
+    let selected_submodule = &detail.submodules[selected_index];
+    let state_label = if selected_submodule.conflicted {
+        "conflicted"
+    } else if !selected_submodule.initialized {
+        "uninitialized"
+    } else if selected_submodule.dirty {
+        "dirty"
+    } else {
+        "clean"
+    };
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "Submodules",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("Selected: {}", selected_submodule.path.display())),
+        Line::from(format!("Name: {}", selected_submodule.name)),
+        Line::from(format!(
+            "State: {state_label}  Branch: {}  HEAD: {}",
+            selected_submodule.branch.as_deref().unwrap_or("(detached)"),
+            selected_submodule
+                .short_oid
+                .as_deref()
+                .unwrap_or("(uninitialized)")
+        )),
+        Line::from(format!("URL: {}", selected_submodule.url)),
+    ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.submodules.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
+        Line::from("Context: Enter/Space open nested repo. 0 main. / filter."),
+        Line::from("Other: n add. e edit URL. i init. u update. o open path. d remove."),
+        Line::from(""),
+    ]);
+
+    for index in visible_indices {
+        let submodule = &detail.submodules[index];
+        let mut style = Style::default().fg(theme.foreground);
+        if index == selected_index {
+            style = style.add_modifier(Modifier::BOLD);
+            if is_focused {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+        }
+        let state_label = if submodule.conflicted {
+            "conflicted"
+        } else if !submodule.initialized {
+            "uninitialized"
+        } else if submodule.dirty {
+            "dirty"
+        } else {
+            "clean"
+        };
+        let branch = submodule.branch.as_deref().unwrap_or("(detached)");
+        let head = submodule.short_oid.as_deref().unwrap_or("-------");
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{}  [{}]  {head}  {state_label}",
+                submodule.path.display(),
+                branch
+            ),
+            style,
+        )));
+    }
+
+    lines
+}
+
 fn repo_commit_lines(
     detail: Option<&RepoDetail>,
     selected_commit_index: Option<usize>,
@@ -4121,6 +4337,21 @@ fn visible_worktree_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usiz
         .enumerate()
         .filter_map(|(index, worktree)| {
             super_lazygit_core::worktree_matches_filter(worktree, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn visible_submodule_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.submodules.len()).collect();
+    }
+    detail
+        .submodules
+        .iter()
+        .enumerate()
+        .filter_map(|(index, submodule)| {
+            super_lazygit_core::submodule_matches_filter(submodule, &normalized).then_some(index)
         })
         .collect()
 }
@@ -4691,6 +4922,12 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 path.display()
             )
         }
+        super_lazygit_core::ConfirmableOperation::RemoveSubmodule { name, path } => {
+            format!(
+                "Remove submodule {name} at {}? This deinitializes it, removes the gitlink, and updates .gitmodules.",
+                path.display()
+            )
+        }
     }
 }
 
@@ -4780,6 +5017,15 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         super_lazygit_core::InputPromptOperation::CreateWorktree => {
             "Enter worktree details as: <path> <branch>. Example: ../repo-feature feature."
                 .to_string()
+        }
+        super_lazygit_core::InputPromptOperation::CreateSubmodule => {
+            "Enter submodule details as: <path> <url>. Example: vendor/lib ../lib.git."
+                .to_string()
+        }
+        super_lazygit_core::InputPromptOperation::EditSubmoduleUrl { name, .. } => {
+            format!(
+                "Enter the new URL for submodule {name}. This updates both .gitmodules and local submodule config."
+            )
         }
         super_lazygit_core::InputPromptOperation::RewordCommit { summary, .. } => {
             format!(
@@ -5145,6 +5391,7 @@ fn repo_subview_label(subview: RepoSubview) -> &'static str {
         RepoSubview::Stash => "Stash",
         RepoSubview::Reflog => "Reflog",
         RepoSubview::Worktrees => "Worktrees",
+        RepoSubview::Submodules => "Submodules",
     }
 }
 
@@ -5161,6 +5408,7 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
         (RepoSubview::Stash, "6 Stash"),
         (RepoSubview::Reflog, "7 Reflog"),
         (RepoSubview::Worktrees, "8 Worktrees"),
+        (RepoSubview::Submodules, "b Submodules"),
     ];
 
     let mut spans = Vec::with_capacity(all.len() * 2);
@@ -5238,16 +5486,16 @@ fn default_status_text(state: &AppState) -> String {
                 || "Repository shell ready.".to_string(),
                 |repo_mode| {
                     if repo_mode.active_subview == RepoSubview::Status {
-                        "Status diff focus; Enter/Space applies the current hunk, a/A open the all-branches graph, 0 returns to the main pane, w opens worktrees, D discards the current file, and X nukes the working tree."
+                        "Status diff focus; Enter/Space applies the current hunk, a/A open the all-branches graph, 0 returns to the main pane, w opens worktrees, b opens submodules, D discards the current file, and X nukes the working tree."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Branches {
-                        "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, w opens worktrees, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
+                        "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, w opens worktrees, b opens submodules, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Remotes {
-                        "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, w opens worktrees, and n/e/d manage remotes."
+                        "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; a/A switch the all-branches graph direction, 0 returns to the main pane, / filters history, w opens worktrees, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; a/A switch the all-branches graph direction, 0 returns to the main pane, / filters history, w opens worktrees, b opens submodules, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, 0 returns to the main pane, and x clears compare."
@@ -5258,19 +5506,22 @@ fn default_status_text(state: &AppState) -> String {
                     } else if repo_mode.active_subview == RepoSubview::Stash {
                         match repo_mode.stash_subview_mode {
                             StashSubviewMode::List => {
-                                "Stash detail focus; Enter opens changed files, Space applies, 0 returns to the main pane, / filters this panel, w opens worktrees, and g/d manage the selected stash."
+                                "Stash detail focus; Enter opens changed files, Space applies, 0 returns to the main pane, / filters this panel, w opens worktrees, b opens submodules, and g/d manage the selected stash."
                                     .to_string()
                             }
                             StashSubviewMode::Files => {
-                                "Stash files focus; Enter returns to the stash list, 0 returns to the main pane, and w opens worktrees. Apply/pop/drop/rename/new-branch stay on the stash list."
+                                "Stash files focus; Enter returns to the stash list, 0 returns to the main pane, and w/b open worktrees or submodules. Apply/pop/drop/rename/new-branch stay on the stash list."
                                     .to_string()
                             }
                         }
                     } else if repo_mode.active_subview == RepoSubview::Reflog {
-                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, n branches off it, C cherry-picks, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, w opens worktrees, and u preserves the explicit restore flow."
+                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, n branches off it, C cherry-picks, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, w opens worktrees, b opens submodules, and u preserves the explicit restore flow."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Worktrees {
-                        "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, and n/o/d manage the selected worktree."
+                        "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, b opens submodules, and n/o/d manage the selected worktree."
+                            .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Submodules {
+                        "Submodules detail focus; Enter opens the selected nested repo, Esc returns to the parent repo, 0 returns to the main pane, / filters this panel, and n/e/i/u/o/d manage the selected submodule."
                             .to_string()
                     } else {
                         format!(
@@ -5319,42 +5570,44 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  s stash tracked changes  S stash options  D discard file  l next pane  1-9/t/m detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  s stash tracked changes  S stash options  D discard file  l next pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-9/t/m detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  Enter apply hunk  0 main pane  w worktrees  D discard file  X nuke working tree  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  Enter apply hunk  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  Enter commits  Space checkout  0 main pane  / filter  w worktrees  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  Enter commits  Space checkout  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
-                    "Remotes pane  j/k move  Enter branches  f fetch remote  0 main pane  / filter  w worktrees  n add  e edit  d remove  h left pane  1-9/t/m switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Remotes pane  j/k move  Enter branches  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  0 main pane  / filter  w worktrees  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
-                    "Compare pane  j/k scroll diff  0 main pane  x clear compare  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Compare pane  j/k scroll diff  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
-                    "Rebase pane  c continue  s skip  A abort  j/k scroll  0 main pane  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Rebase pane  c continue  s skip  A abort  j/k scroll  0 main pane  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Stash {
                     match repo_mode.stash_subview_mode {
                         StashSubviewMode::List => {
-                            "Stash pane  j/k move stash  Enter files  Space apply  0 main pane  / filter  w worktrees  n branch  r rename  g pop  d drop  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash pane  j/k move stash  Enter files  Space apply  0 main pane  / filter  w worktrees  b submodules  n branch  r rename  g pop  d drop  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                         StashSubviewMode::Files => {
-                            "Stash files pane  j/k move file  Enter stash list  0 main pane  w worktrees  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash files pane  j/k move file  Enter stash list  0 main pane  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                     }
                 } else if repo_mode.active_subview == RepoSubview::Reflog {
-                    "Reflog pane  j/k move  Enter commits  Space checkout  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Reflog pane  j/k move  Enter commits  Space checkout  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Worktrees {
-                    "Worktrees pane  j/k move  Enter switch  0 main pane  / filter  n create  o open  d delete  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Worktrees pane  j/k move  Enter switch  0 main pane  / filter  b submodules  n create  o open  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Submodules {
+                    "Submodules pane  j/k move  Enter nested repo  0 main pane  / filter  n add  e edit-url  i init  u update  o open  d remove  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
-                        "{} detail pane  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
+                        "{} detail pane  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
                         repo_subview_label(repo_mode.active_subview)
                     )
                 }
@@ -5762,6 +6015,28 @@ mod tests {
                 super_lazygit_core::WorktreeItem {
                     path: PathBuf::from("/tmp/repo-1-feature"),
                     branch: Some("feature".to_string()),
+                },
+            ],
+            submodules: vec![
+                super_lazygit_core::SubmoduleItem {
+                    name: "child-module".to_string(),
+                    path: PathBuf::from("vendor/child-module"),
+                    url: "../child-module.git".to_string(),
+                    branch: Some("main".to_string()),
+                    short_oid: Some("fedcba9".to_string()),
+                    initialized: true,
+                    dirty: false,
+                    conflicted: false,
+                },
+                super_lazygit_core::SubmoduleItem {
+                    name: "ui-kit".to_string(),
+                    path: PathBuf::from("vendor/ui-kit"),
+                    url: "git@github.com:example/ui-kit.git".to_string(),
+                    branch: None,
+                    short_oid: None,
+                    initialized: false,
+                    dirty: false,
+                    conflicted: false,
                 },
             ],
             ..Default::default()
@@ -10283,6 +10558,82 @@ mod tests {
     }
 
     #[test]
+    fn submodule_prompt_and_confirmation_copy_describe_lifecycle_actions() {
+        let create = input_prompt_copy(&super_lazygit_core::InputPromptOperation::CreateSubmodule);
+        let edit = input_prompt_copy(
+            &super_lazygit_core::InputPromptOperation::EditSubmoduleUrl {
+                name: "child-module".to_string(),
+                path: PathBuf::from("vendor/child-module"),
+                current_url: "../child-module.git".to_string(),
+            },
+        );
+        let remove =
+            confirmation_copy(&super_lazygit_core::ConfirmableOperation::RemoveSubmodule {
+                name: "child-module".to_string(),
+                path: PathBuf::from("vendor/child-module"),
+            });
+
+        assert!(create.contains("<path> <url>"));
+        assert!(edit.contains("submodule child-module"));
+        assert!(edit.contains(".gitmodules"));
+        assert!(remove.contains("deinitializes it"));
+        assert!(remove.contains(".gitmodules"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_submodule_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("/tmp/repo-1")],
+                selected_repo_id: Some(RepoId::new("/tmp/repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("/tmp/repo-1"),
+                active_subview: RepoSubview::Submodules,
+                detail: Some(sample_repo_detail()),
+                submodules_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("/tmp/repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("/tmp/repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Submodules"));
+        assert!(rendered.contains("Selected: vendor/ui-kit"));
+        assert!(rendered.contains("State: uninitialized"));
+        assert!(rendered.contains("URL: git@github.com:example/ui-kit.git"));
+        assert!(rendered.contains("Context: Enter/Space open nested repo. 0 main. / filter."));
+        assert!(rendered.contains("n add."));
+        assert!(rendered.contains("e edit URL."));
+        assert!(rendered.contains("i init."));
+        assert!(rendered.contains("u update."));
+        assert!(rendered.contains("o open path."));
+        assert!(rendered.contains("vendor/child-module  [main]  fedcba9  clean"));
+    }
+
+    #[test]
     fn render_repo_shell_shows_worktree_details() {
         let mut state = AppState {
             mode: AppMode::Repository,
@@ -10330,6 +10681,138 @@ mod tests {
         assert!(rendered.contains("d remove"));
         assert!(rendered.contains("/tmp/repo-1  [main]"));
         assert!(rendered.contains("/tmp/repo-1-feature  [feature]"));
+    }
+
+    #[test]
+    fn route_repository_submodule_keys_cover_subview_and_actions() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let base_state = |active_subview| AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview,
+                detail: Some(sample_repo_detail()),
+                submodules_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Status), AppConfig::default());
+        let switched = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "b".to_string(),
+        })));
+        assert_eq!(
+            switched
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Submodules)
+        );
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let created = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(
+            created
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.operation.clone()),
+            Some(super_lazygit_core::InputPromptOperation::CreateSubmodule)
+        );
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let edited = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "e".to_string(),
+        })));
+        assert_eq!(
+            edited
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.operation.clone()),
+            Some(super_lazygit_core::InputPromptOperation::EditSubmoduleUrl {
+                name: "child-module".to_string(),
+                path: PathBuf::from("vendor/child-module"),
+                current_url: "../child-module.git".to_string(),
+            })
+        );
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let initialized = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "i".to_string(),
+        })));
+        assert!(matches!(
+            initialized.effects.as_slice(),
+            [super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::InitSubmodule { path },
+                ..
+            })] if path == &PathBuf::from("vendor/child-module")
+        ));
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let updated = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "u".to_string(),
+        })));
+        assert!(matches!(
+            updated.effects.as_slice(),
+            [super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::UpdateSubmodule { path },
+                ..
+            })] if path == &PathBuf::from("vendor/child-module")
+        ));
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let removed = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "d".to_string(),
+        })));
+        assert_eq!(
+            removed
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::RemoveSubmodule {
+                name: "child-module".to_string(),
+                path: PathBuf::from("vendor/child-module"),
+            })
+        );
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let entered = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            entered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone()),
+            Some(RepoId::new("/tmp/repo-1/vendor/child-module"))
+        );
+        assert_eq!(
+            entered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.parent_repo_ids.clone()),
+            Some(vec![repo_id])
+        );
     }
 
     #[test]

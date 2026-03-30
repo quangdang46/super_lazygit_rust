@@ -53,11 +53,12 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `6` | Switch detail pane to `Stash` |
 | `7` | Switch detail pane to `Reflog` |
 | `8` | Switch detail pane to `Worktrees` |
+| `b` | Switch detail pane to `Submodules` |
 | `m` | Switch detail pane to `Remotes` |
 | `9` | Switch detail pane to `Remote Branches` |
 | `t` | Switch detail pane to `Tags` |
 | `0` in `Repo detail` | Return focus to the last active main pane (`Working tree` or `Staged changes`) |
-| `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remotes`, `Remote Branches`, `Tags`, `Commits`, `Stash`, `Reflog`, or `Worktrees`) |
+| `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remotes`, `Remote Branches`, `Tags`, `Commits`, `Stash`, `Reflog`, `Worktrees`, or `Submodules`) |
 | `w` in `Repo detail` | Switch the current detail subview to `Worktrees` |
 | `r` | Refresh the selected repository |
 | `f` | Open fetch confirmation |
@@ -76,6 +77,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `0` | Return to the last active main pane without changing the selected detail subview |
 | `/` | Focus the current subview filter when that subview supports filtering |
 | `w` | Jump directly to the `Worktrees` subview |
+| `b` | Jump directly to the `Submodules` subview |
 
 ### Working tree and staged panes
 
@@ -280,6 +282,23 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `c` | Open create-worktree prompt (legacy alias) |
 | `o` | Open the selected worktree in the configured editor |
 | `d` | Open remove-worktree confirmation |
+
+### Submodules detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next submodule |
+| `k` / `Up` | Select the previous submodule |
+| `Enter` / `Space` | Enter the selected submodule as a nested repo |
+| `n` | Open add-submodule prompt (`<path> <url>`) |
+| `e` | Open edit-submodule-URL prompt |
+| `i` | Initialize the selected submodule |
+| `u` | Update the selected submodule |
+| `o` | Open the selected submodule path in the configured editor |
+| `d` | Open remove-submodule confirmation |
+| `/` | Focus the submodule filter |
+| `0` | Return focus to the last active main pane |
+| `Esc` | Return to the parent repo when currently inside a nested submodule repo; otherwise leave repo mode |
 
 ### Repo detail filter
 

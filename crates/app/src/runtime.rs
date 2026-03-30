@@ -636,6 +636,11 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",
+        GitCommand::AddSubmodule { .. } => "add_submodule",
+        GitCommand::EditSubmoduleUrl { .. } => "edit_submodule_url",
+        GitCommand::InitSubmodule { .. } => "init_submodule",
+        GitCommand::UpdateSubmodule { .. } => "update_submodule",
+        GitCommand::RemoveSubmodule { .. } => "remove_submodule",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
         GitCommand::FetchRemote { .. } => "fetch_remote",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
@@ -704,8 +709,10 @@ mod tests {
 
     use super::*;
     use super_lazygit_config::AppConfig;
-    use super_lazygit_core::{AppState, GitCommandRequest};
-    use super_lazygit_test_support::{history_preview_repo, staged_and_unstaged_repo};
+    use super_lazygit_core::{Action, AppMode, AppState, GitCommandRequest, PaneId, RepoSubview};
+    use super_lazygit_test_support::{
+        history_preview_repo, staged_and_unstaged_repo, submodule_repo,
+    };
 
     #[test]
     fn interactive_commit_uses_git_editor() -> io::Result<()> {
@@ -773,6 +780,84 @@ mod tests {
         let log = String::from_utf8(repo.git_capture(["log", "--format=%s", "-n", "3"])?.stdout)
             .map_err(io::Error::other)?;
         assert!(log.lines().any(|line| line == "rewritten second"));
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_enters_and_leaves_nested_submodule_repo() -> io::Result<()> {
+        let repo = submodule_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let child_repo_id = RepoId::new(
+            repo.path()
+                .join("vendor/child-module")
+                .display()
+                .to_string(),
+        );
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        runtime.run([Event::Action(Action::EnterRepoMode {
+            repo_id: repo_id.clone(),
+        })]);
+        let state = runtime.app().state();
+        assert_eq!(state.mode, AppMode::Repository);
+        assert!(state
+            .repo_mode
+            .as_ref()
+            .and_then(|repo_mode| repo_mode.detail.as_ref())
+            .is_some_and(|detail| !detail.submodules.is_empty()));
+
+        runtime.run([Event::Action(Action::SetFocusedPane(PaneId::RepoDetail))]);
+        runtime.run([Event::Action(Action::OpenRepoSubmodulesSubview)]);
+        assert_eq!(
+            runtime
+                .app()
+                .state()
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Submodules)
+        );
+
+        runtime.run([Event::Action(Action::ActivateRepoSubviewSelection)]);
+        let state = runtime.app().state();
+        assert_eq!(
+            state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone()),
+            Some(child_repo_id)
+        );
+        assert_eq!(
+            state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.parent_repo_ids.clone()),
+            Some(vec![repo_id.clone()])
+        );
+
+        runtime.run([Event::Action(Action::LeaveRepoMode)]);
+        let state = runtime.app().state();
+        assert_eq!(state.mode, AppMode::Repository);
+        assert_eq!(state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone()),
+            Some(repo_id)
+        );
+        assert_eq!(
+            state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Submodules)
+        );
+
         Ok(())
     }
 }

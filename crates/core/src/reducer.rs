@@ -32,30 +32,77 @@ pub fn reduce(state: AppState, event: Event) -> ReduceResult {
     ReduceResult { state, effects }
 }
 
+fn enter_repo_mode_with_parents(
+    state: &mut AppState,
+    repo_id: crate::state::RepoId,
+    parent_repo_ids: Vec<crate::state::RepoId>,
+    effects: &mut Vec<Effect>,
+) {
+    state.mode = AppMode::Repository;
+    state.focused_pane = PaneId::RepoUnstaged;
+    state.workspace.search_focused = false;
+    state.workspace.selected_repo_id = Some(repo_id.clone());
+    push_recent_repo(state, repo_id.clone());
+    state.repo_mode = Some(RepoModeState::new_with_parent(
+        repo_id.clone(),
+        parent_repo_ids,
+    ));
+    effects.push(Effect::LoadRepoDetail {
+        repo_id,
+        selected_path: None,
+        diff_presentation: DiffPresentation::Unstaged,
+        commit_ref: None,
+        commit_history_mode: CommitHistoryMode::Linear,
+    });
+    effects.push(Effect::ScheduleRender);
+}
+
 fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>) {
     match action {
         Action::EnterRepoMode { repo_id } => {
-            state.mode = AppMode::Repository;
-            state.focused_pane = PaneId::RepoUnstaged;
-            state.workspace.search_focused = false;
-            state.workspace.selected_repo_id = Some(repo_id.clone());
-            push_recent_repo(state, repo_id.clone());
-            state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
-            effects.push(Effect::LoadRepoDetail {
-                repo_id,
-                selected_path: None,
-                diff_presentation: DiffPresentation::Unstaged,
-                commit_ref: None,
-                commit_history_mode: CommitHistoryMode::Linear,
-            });
-            effects.push(Effect::ScheduleRender);
+            enter_repo_mode_with_parents(state, repo_id, Vec::new(), effects);
+        }
+        Action::EnterNestedRepoMode {
+            repo_id,
+            parent_repo_id,
+        } => {
+            let mut parent_repo_ids = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.parent_repo_ids.clone())
+                .unwrap_or_default();
+            parent_repo_ids.push(parent_repo_id);
+            enter_repo_mode_with_parents(state, repo_id, parent_repo_ids, effects);
         }
         Action::LeaveRepoMode => {
-            state.mode = AppMode::Workspace;
-            state.focused_pane = PaneId::WorkspaceList;
-            state.workspace.search_focused = false;
-            state.repo_mode = None;
-            effects.push(Effect::ScheduleRender);
+            let parent_repo_id = state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.parent_repo_ids.last().cloned());
+            if let Some(parent_repo_id) = parent_repo_id {
+                let mut remaining_parent_repo_ids = state
+                    .repo_mode
+                    .as_ref()
+                    .map(|repo_mode| repo_mode.parent_repo_ids.clone())
+                    .unwrap_or_default();
+                remaining_parent_repo_ids.pop();
+                enter_repo_mode_with_parents(
+                    state,
+                    parent_repo_id,
+                    remaining_parent_repo_ids,
+                    effects,
+                );
+                if let Some(repo_mode) = state.repo_mode.as_mut() {
+                    repo_mode.active_subview = crate::state::RepoSubview::Submodules;
+                    state.focused_pane = PaneId::RepoDetail;
+                }
+            } else {
+                state.mode = AppMode::Workspace;
+                state.focused_pane = PaneId::WorkspaceList;
+                state.workspace.search_focused = false;
+                state.repo_mode = None;
+                effects.push(Effect::ScheduleRender);
+            }
         }
         Action::SelectNextRepo => {
             if state.workspace.select_next().is_some() {
@@ -759,6 +806,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextSubmodule => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_submodule_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousSubmodule => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_submodule_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::ToggleComparisonSelection => {
             toggle_comparison_selection(state, effects);
         }
@@ -1421,6 +1482,73 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::CreateSubmodule => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                open_input_prompt(state, repo_id, InputPromptOperation::CreateSubmodule);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::EditSelectedSubmodule => {
+            if let Some((repo_id, item)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_submodule_item(repo_mode)
+                    .cloned()
+                    .map(|item| (repo_mode.current_repo_id.clone(), item))
+            }) {
+                open_input_prompt(
+                    state,
+                    repo_id,
+                    InputPromptOperation::EditSubmoduleUrl {
+                        name: item.name,
+                        path: item.path,
+                        current_url: item.url,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::InitSelectedSubmodule => {
+            if let Some((repo_id, path)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_submodule_item(repo_mode)
+                    .map(|item| (repo_mode.current_repo_id.clone(), item.path.clone()))
+            }) {
+                let summary = format!("Initialize submodule {}", path.display());
+                let job = git_job(repo_id, GitCommand::InitSubmodule { path });
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::UpdateSelectedSubmodule => {
+            if let Some((repo_id, path)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_submodule_item(repo_mode)
+                    .map(|item| (repo_mode.current_repo_id.clone(), item.path.clone()))
+            }) {
+                let summary = format!("Update submodule {}", path.display());
+                let job = git_job(repo_id, GitCommand::UpdateSubmodule { path });
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::RemoveSelectedSubmodule => {
+            if let Some((repo_id, item)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_submodule_item(repo_mode)
+                    .cloned()
+                    .map(|item| (repo_mode.current_repo_id.clone(), item))
+            }) {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::RemoveSubmodule {
+                        name: item.name,
+                        path: item.path,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::FetchSelectedRepo => {
             if let Some(repo_id) = state
                 .repo_mode
@@ -1465,6 +1593,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 reduce_action(
                     state,
                     Action::SwitchRepoSubview(crate::state::RepoSubview::Worktrees),
+                    effects,
+                );
+            }
+        }
+        Action::OpenRepoSubmodulesSubview => {
+            if matches!(state.mode, AppMode::Repository) && state.focused_pane == PaneId::RepoDetail
+            {
+                reduce_action(
+                    state,
+                    Action::SwitchRepoSubview(crate::state::RepoSubview::Submodules),
                     effects,
                 );
             }
@@ -2008,6 +2146,28 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
                 reduce_action(state, Action::EnterRepoMode { repo_id }, effects);
             }
         }
+        crate::state::RepoSubview::Submodules => {
+            let parent_repo_id = repo_mode.current_repo_id.clone();
+            let repo_root = repo_root_for_id(state, &parent_repo_id);
+            let next_repo_id = selected_submodule_item(repo_mode).map(|submodule| {
+                crate::state::RepoId::new(
+                    repo_root
+                        .join(&submodule.path)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            });
+            if let Some(repo_id) = next_repo_id {
+                reduce_action(
+                    state,
+                    Action::EnterNestedRepoMode {
+                        repo_id,
+                        parent_repo_id,
+                    },
+                    effects,
+                );
+            }
+        }
         crate::state::RepoSubview::Reflog => {
             reduce_action(state, Action::OpenSelectedReflogCommits, effects);
         }
@@ -2402,6 +2562,9 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::RemoveWorktree { path } => {
             format!("Remove worktree {}", path.display())
         }
+        ConfirmableOperation::RemoveSubmodule { name, .. } => {
+            format!("Remove submodule {name}")
+        }
     }
 }
 
@@ -2528,6 +2691,10 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             GitCommand::RemoveWorktree { path: path.clone() },
             "Remove worktree",
         ),
+        ConfirmableOperation::RemoveSubmodule { path, .. } => (
+            GitCommand::RemoveSubmodule { path: path.clone() },
+            "Remove submodule",
+        ),
     };
     let job = git_job(pending.repo_id, command);
     enqueue_git_job(state, &job, summary);
@@ -2602,6 +2769,10 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         }
         InputPromptOperation::CreateStash { mode } => stash_prompt_title(*mode).to_string(),
         InputPromptOperation::CreateWorktree => "Create worktree".to_string(),
+        InputPromptOperation::CreateSubmodule => "Add submodule".to_string(),
+        InputPromptOperation::EditSubmoduleUrl { name, .. } => {
+            format!("Edit submodule {name}")
+        }
         InputPromptOperation::RewordCommit { summary, .. } => format!("Reword {summary}"),
     }
 }
@@ -2626,6 +2797,8 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
         InputPromptOperation::CreateStash { mode: _ } => String::new(),
         InputPromptOperation::CreateWorktree => String::new(),
+        InputPromptOperation::CreateSubmodule => String::new(),
+        InputPromptOperation::EditSubmoduleUrl { current_url, .. } => current_url.clone(),
         InputPromptOperation::RewordCommit {
             initial_message, ..
         } => initial_message.clone(),
@@ -2770,6 +2943,28 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 format!("Create worktree {} from {branch_ref}", path.display()),
             )
         }
+        InputPromptOperation::CreateSubmodule => {
+            let Some((path, url)) = parse_create_submodule_input(&value) else {
+                push_warning(state, "Enter submodule details as: <path> <url>.");
+                state.pending_input_prompt = Some(pending);
+                return None;
+            };
+            (
+                GitCommand::AddSubmodule {
+                    path: path.clone(),
+                    url: url.clone(),
+                },
+                format!("Add submodule {} from {url}", path.display()),
+            )
+        }
+        InputPromptOperation::EditSubmoduleUrl { name, path, .. } => (
+            GitCommand::EditSubmoduleUrl {
+                name: name.clone(),
+                path: path.clone(),
+                url: value.clone(),
+            },
+            format!("Edit submodule {name}"),
+        ),
         InputPromptOperation::RewordCommit {
             commit, summary, ..
         } => (
@@ -2795,6 +2990,16 @@ fn parse_create_worktree_input(value: &str) -> Option<(std::path::PathBuf, Strin
         return None;
     }
     Some((std::path::PathBuf::from(path), branch_ref.to_string()))
+}
+
+fn parse_create_submodule_input(value: &str) -> Option<(std::path::PathBuf, String)> {
+    let (path, url) = value.split_once(char::is_whitespace)?;
+    let path = path.trim();
+    let url = url.trim();
+    if path.is_empty() || url.is_empty() {
+        return None;
+    }
+    Some((std::path::PathBuf::from(path), url.to_string()))
 }
 
 fn parse_remote_input(value: &str) -> Option<(String, String)> {
@@ -3089,6 +3294,20 @@ fn sync_worktree_selection(repo_mode: &mut RepoModeState) {
         .or_else(|| visible_indices.first().copied());
 }
 
+fn sync_submodule_selection(repo_mode: &mut RepoModeState) {
+    if repo_mode.detail.is_none() {
+        repo_mode.submodules_view.selected_index = None;
+        return;
+    }
+
+    let visible_indices = filtered_submodule_indices(repo_mode);
+    repo_mode.submodules_view.selected_index = visible_indices
+        .iter()
+        .copied()
+        .find(|index| repo_mode.submodules_view.selected_index == Some(*index))
+        .or_else(|| visible_indices.first().copied());
+}
+
 fn sync_status_selection(repo_mode: &mut RepoModeState) {
     let Some(detail) = repo_mode.detail.as_ref() else {
         repo_mode.status_view.selected_index = None;
@@ -3347,6 +3566,7 @@ fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::st
         },
         crate::state::RepoSubview::Reflog => sync_reflog_selection(repo_mode),
         crate::state::RepoSubview::Worktrees => sync_worktree_selection(repo_mode),
+        crate::state::RepoSubview::Submodules => sync_submodule_selection(repo_mode),
         crate::state::RepoSubview::Status
         | crate::state::RepoSubview::Compare
         | crate::state::RepoSubview::Rebase => {}
@@ -3402,6 +3622,9 @@ fn selected_repo_editor_path(
         }
         PaneId::RepoDetail if repo_mode.active_subview == crate::state::RepoSubview::Worktrees => {
             selected_worktree_item(repo_mode).map(|worktree| worktree.path.clone())
+        }
+        PaneId::RepoDetail if repo_mode.active_subview == crate::state::RepoSubview::Submodules => {
+            selected_submodule_item(repo_mode).map(|submodule| submodule.path.clone())
         }
         PaneId::RepoDetail
             if repo_mode.active_subview == crate::state::RepoSubview::Commits
@@ -3788,6 +4011,17 @@ fn selected_worktree_item(repo_mode: &RepoModeState) -> Option<&crate::state::Wo
     detail.worktrees.get(selected_index)
 }
 
+fn selected_submodule_item(repo_mode: &RepoModeState) -> Option<&crate::state::SubmoduleItem> {
+    let detail = repo_mode.detail.as_ref()?;
+    let visible_indices = filtered_submodule_indices(repo_mode);
+    let selected_index = repo_mode
+        .submodules_view
+        .selected_index
+        .filter(|index| visible_indices.contains(index))
+        .or_else(|| visible_indices.first().copied())?;
+    detail.submodules.get(selected_index)
+}
+
 fn step_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     if repo_mode.detail.is_none() {
         repo_mode.branches_view.selected_index = None;
@@ -3899,6 +4133,20 @@ fn step_worktree_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     let visible_indices = filtered_worktree_indices(repo_mode);
     step_filtered_selection(
         &mut repo_mode.worktree_view.selected_index,
+        &visible_indices,
+        step,
+    )
+}
+
+fn step_submodule_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    if repo_mode.detail.is_none() {
+        repo_mode.submodules_view.selected_index = None;
+        return false;
+    }
+
+    let visible_indices = filtered_submodule_indices(repo_mode);
+    step_filtered_selection(
+        &mut repo_mode.submodules_view.selected_index,
         &visible_indices,
         step,
     )
@@ -4079,6 +4327,23 @@ fn filtered_worktree_indices(repo_mode: &RepoModeState) -> Vec<usize> {
         .enumerate()
         .filter_map(|(index, worktree)| {
             crate::state::worktree_matches_filter(worktree, &query).then_some(index)
+        })
+        .collect()
+}
+
+fn filtered_submodule_indices(repo_mode: &RepoModeState) -> Vec<usize> {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+    let Some(query) = repo_mode.submodules_filter.active_query() else {
+        return (0..detail.submodules.len()).collect();
+    };
+    detail
+        .submodules
+        .iter()
+        .enumerate()
+        .filter_map(|(index, submodule)| {
+            crate::state::submodule_matches_filter(submodule, &query).then_some(index)
         })
         .collect()
 }
@@ -4408,6 +4673,11 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::DropStash { .. } => "drop-stash",
         GitCommand::CreateWorktree { .. } => "create-worktree",
         GitCommand::RemoveWorktree { .. } => "remove-worktree",
+        GitCommand::AddSubmodule { .. } => "add-submodule",
+        GitCommand::EditSubmoduleUrl { .. } => "edit-submodule-url",
+        GitCommand::InitSubmodule { .. } => "init-submodule",
+        GitCommand::UpdateSubmodule { .. } => "update-submodule",
+        GitCommand::RemoveSubmodule { .. } => "remove-submodule",
         GitCommand::SetBranchUpstream { .. } => "set-branch-upstream",
         GitCommand::FetchSelectedRepo => "fetch-selected-repo",
         GitCommand::PullCurrentBranch => "pull-current-branch",
@@ -4480,8 +4750,8 @@ mod tests {
         DiffModel, DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId,
         MenuOperation, MergeState, MessageLevel, ModalKind, PaneId, RebaseKind, RebaseState,
         ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState,
-        RepoSummary, ScanStatus, SelectedHunk, StashItem, StashMode, Timestamp, WatcherHealth,
-        WorkspaceFilterMode, WorktreeItem,
+        RepoSummary, ScanStatus, SelectedHunk, StashItem, StashMode, SubmoduleItem, Timestamp,
+        WatcherHealth, WorkspaceFilterMode, WorktreeItem,
     };
 
     use super::reduce;
@@ -11390,5 +11660,517 @@ mod tests {
             Some(2)
         );
         assert!(result.effects.is_empty());
+    }
+
+    #[test]
+    fn leave_repo_mode_returns_to_parent_submodule_repo() {
+        let parent_repo_id = RepoId::new("/tmp/repo-1");
+        let child_repo_id = RepoId::new("/tmp/repo-1/vendor/child-module");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: child_repo_id,
+                active_subview: RepoSubview::Status,
+                parent_repo_ids: vec![parent_repo_id.clone()],
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1/vendor/child-module"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::LeaveRepoMode));
+
+        assert_eq!(result.state.mode, AppMode::Repository);
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone()),
+            Some(parent_repo_id.clone())
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Submodules)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.parent_repo_ids.clone()),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id: parent_repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn activate_repo_subview_selection_enters_selected_submodule_repo() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let target_repo_id = RepoId::new("/tmp/repo-1/vendor/ui-kit");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                detail: Some(RepoDetail {
+                    submodules: vec![
+                        SubmoduleItem {
+                            name: "child-module".to_string(),
+                            path: std::path::PathBuf::from("vendor/child-module"),
+                            url: "../child-module.git".to_string(),
+                            branch: Some("main".to_string()),
+                            short_oid: Some("abcdef1".to_string()),
+                            initialized: true,
+                            dirty: false,
+                            conflicted: false,
+                        },
+                        SubmoduleItem {
+                            name: "ui-kit".to_string(),
+                            path: std::path::PathBuf::from("vendor/ui-kit"),
+                            url: "git@github.com:example/ui-kit.git".to_string(),
+                            branch: None,
+                            short_oid: None,
+                            initialized: false,
+                            dirty: false,
+                            conflicted: false,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                submodules_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ActivateRepoSubviewSelection));
+
+        assert_eq!(result.state.mode, AppMode::Repository);
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone()),
+            Some(target_repo_id.clone())
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.parent_repo_ids.clone()),
+            Some(vec![RepoId::new("/tmp/repo-1")])
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id: target_repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn submodule_filter_lifecycle_updates_visible_selection() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Submodules,
+                detail: Some(RepoDetail {
+                    submodules: vec![
+                        SubmoduleItem {
+                            name: "child-module".to_string(),
+                            path: std::path::PathBuf::from("vendor/child-module"),
+                            url: "../child-module.git".to_string(),
+                            branch: Some("main".to_string()),
+                            short_oid: Some("abcdef1".to_string()),
+                            initialized: true,
+                            dirty: false,
+                            conflicted: false,
+                        },
+                        SubmoduleItem {
+                            name: "ui-kit".to_string(),
+                            path: std::path::PathBuf::from("vendor/ui-kit"),
+                            url: "git@github.com:example/ui-kit.git".to_string(),
+                            branch: None,
+                            short_oid: None,
+                            initialized: false,
+                            dirty: false,
+                            conflicted: false,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                submodules_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let focused = reduce(state, Event::Action(Action::FocusRepoSubviewFilter));
+        let filtered = reduce(
+            focused.state,
+            Event::Action(Action::AppendRepoSubviewFilter {
+                text: "child".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            filtered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.submodules_filter.query.as_str()),
+            Some("child")
+        );
+        assert_eq!(
+            filtered
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.submodules_view.selected_index),
+            Some(Some(0))
+        );
+
+        let blurred = reduce(filtered.state, Event::Action(Action::BlurRepoSubviewFilter));
+        assert_eq!(
+            blurred
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.submodules_filter.focused),
+            Some(false)
+        );
+
+        let cancelled = reduce(
+            blurred.state,
+            Event::Action(Action::CancelRepoSubviewFilter),
+        );
+        assert_eq!(
+            cancelled
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.submodules_filter.query.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            cancelled
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.submodules_view.selected_index),
+            Some(Some(0))
+        );
+    }
+
+    #[test]
+    fn create_submodule_opens_input_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CreateSubmodule));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.value.clone(),
+                prompt.return_focus
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::CreateSubmodule,
+                String::new(),
+                PaneId::RepoDetail
+            ))
+        );
+    }
+
+    #[test]
+    fn edit_selected_submodule_opens_input_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                detail: Some(RepoDetail {
+                    submodules: vec![SubmoduleItem {
+                        name: "child-module".to_string(),
+                        path: std::path::PathBuf::from("vendor/child-module"),
+                        url: "../child-module.git".to_string(),
+                        branch: Some("main".to_string()),
+                        short_oid: Some("abcdef1".to_string()),
+                        initialized: true,
+                        dirty: false,
+                        conflicted: false,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                submodules_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::EditSelectedSubmodule));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.value.clone(),
+                prompt.return_focus
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::EditSubmoduleUrl {
+                    name: "child-module".to_string(),
+                    path: std::path::PathBuf::from("vendor/child-module"),
+                    current_url: "../child-module.git".to_string(),
+                },
+                "../child-module.git".to_string(),
+                PaneId::RepoDetail
+            ))
+        );
+    }
+
+    #[test]
+    fn init_selected_submodule_enqueues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                detail: Some(RepoDetail {
+                    submodules: vec![SubmoduleItem {
+                        name: "ui-kit".to_string(),
+                        path: std::path::PathBuf::from("vendor/ui-kit"),
+                        url: "git@github.com:example/ui-kit.git".to_string(),
+                        branch: None,
+                        short_oid: None,
+                        initialized: false,
+                        dirty: false,
+                        conflicted: false,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                submodules_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::InitSelectedSubmodule));
+        let job_id = JobId::new("git:repo-1:init-submodule");
+
+        assert_eq!(
+            result.state.background_jobs.get(&job_id).map(|job| (
+                job.kind,
+                job.target_repo.clone(),
+                job.state.clone()
+            )),
+            Some((
+                BackgroundJobKind::GitCommand,
+                Some(repo_id.clone()),
+                BackgroundJobState::Queued
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Initialize submodule vendor/ui-kit".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::InitSubmodule {
+                    path: std::path::PathBuf::from("vendor/ui-kit"),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn update_selected_submodule_enqueues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                detail: Some(RepoDetail {
+                    submodules: vec![SubmoduleItem {
+                        name: "child-module".to_string(),
+                        path: std::path::PathBuf::from("vendor/child-module"),
+                        url: "../child-module.git".to_string(),
+                        branch: Some("main".to_string()),
+                        short_oid: Some("abcdef1".to_string()),
+                        initialized: true,
+                        dirty: false,
+                        conflicted: false,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                submodules_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::UpdateSelectedSubmodule));
+        let job_id = JobId::new("git:repo-1:update-submodule");
+
+        assert_eq!(
+            result.state.background_jobs.get(&job_id).map(|job| (
+                job.kind,
+                job.target_repo.clone(),
+                job.state.clone()
+            )),
+            Some((
+                BackgroundJobKind::GitCommand,
+                Some(repo_id.clone()),
+                BackgroundJobState::Queued
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Update submodule vendor/child-module".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::UpdateSubmodule {
+                    path: std::path::PathBuf::from("vendor/child-module"),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn remove_selected_submodule_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                detail: Some(RepoDetail {
+                    submodules: vec![SubmoduleItem {
+                        name: "child-module".to_string(),
+                        path: std::path::PathBuf::from("vendor/child-module"),
+                        url: "../child-module.git".to_string(),
+                        branch: Some("main".to_string()),
+                        short_oid: Some("abcdef1".to_string()),
+                        initialized: true,
+                        dirty: false,
+                        conflicted: false,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                submodules_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::RemoveSelectedSubmodule));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::RemoveSubmodule {
+                    name: "child-module".to_string(),
+                    path: std::path::PathBuf::from("vendor/child-module"),
+                }
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .modal_stack
+                .last()
+                .map(|modal| (modal.kind, modal.title.as_str())),
+            Some((ModalKind::Confirm, "Remove submodule child-module"))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 }

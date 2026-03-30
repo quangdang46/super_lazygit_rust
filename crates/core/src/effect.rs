@@ -194,6 +194,24 @@ pub enum GitCommand {
     RemoveWorktree {
         path: PathBuf,
     },
+    AddSubmodule {
+        path: PathBuf,
+        url: String,
+    },
+    EditSubmoduleUrl {
+        name: String,
+        path: PathBuf,
+        url: String,
+    },
+    InitSubmodule {
+        path: PathBuf,
+    },
+    UpdateSubmodule {
+        path: PathBuf,
+    },
+    RemoveSubmodule {
+        path: PathBuf,
+    },
     SetBranchUpstream {
         branch_name: String,
         upstream_ref: String,
