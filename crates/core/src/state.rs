@@ -558,6 +558,7 @@ pub struct CommitBoxState {
 pub enum CommitBoxMode {
     #[default]
     Commit,
+    CommitNoVerify,
     Amend,
 }
 

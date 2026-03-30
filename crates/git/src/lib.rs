@@ -555,6 +555,13 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["commit", "-m", message.as_str()])?;
                 format!("Committed staged changes: {message}")
             }
+            GitCommand::CommitStagedNoVerify { message } => {
+                git(
+                    &repo_path,
+                    ["commit", "--no-verify", "-m", message.as_str()],
+                )?;
+                format!("Committed staged changes without hooks: {message}")
+            }
             GitCommand::CommitStagedWithEditor => {
                 return Err(GitError::OperationFailed {
                     message: "interactive commit must run through the app runtime".to_string(),
@@ -800,6 +807,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::DiscardFile { .. } => "discard_file",
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
+        GitCommand::CommitStagedNoVerify { .. } => "commit_staged_no_verify",
         GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
@@ -3583,6 +3591,40 @@ mod tests {
             .status_porcelain()
             .expect("status")
             .contains("A  untracked.txt"));
+    }
+
+    #[test]
+    fn cli_backend_commits_staged_changes_without_verify() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        repo.stage("staged.txt").expect("stage staged.txt");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-commit-staged-no-verify"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CommitStagedNoVerify {
+                    message: "ship without hooks".to_string(),
+                },
+            })
+            .expect("no-verify commit should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(
+            outcome.summary,
+            "Committed staged changes without hooks: ship without hooks"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(
+                &repo
+                    .git_capture(["show", "-s", "--format=%s", "HEAD"])
+                    .expect("head subject")
+                    .stdout
+            )
+            .trim(),
+            "ship without hooks"
+        );
     }
 
     #[test]

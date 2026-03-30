@@ -502,6 +502,20 @@ impl TuiApp {
                     });
                 }
 
+                if self.state.focused_pane == PaneId::RepoStaged
+                    && self.can_open_commit_box()
+                    && self.binding_matches_action(
+                        "open_commit_no_verify_box",
+                        raw,
+                        normalized,
+                        &["w"],
+                    )
+                {
+                    return Some(Action::OpenCommitBox {
+                        mode: CommitBoxMode::CommitNoVerify,
+                    });
+                }
+
                 if self.binding_matches_action("commit_staged_with_editor", raw, normalized, &["C"])
                 {
                     return Some(Action::CommitStagedWithEditor);
@@ -1326,6 +1340,7 @@ impl TuiApp {
         let title = if repo_mode.is_some_and(|repo_mode| repo_mode.commit_box.focused) {
             match repo_mode.map(|repo_mode| repo_mode.commit_box.mode) {
                 Some(CommitBoxMode::Commit) => "Staged changes · Commit",
+                Some(CommitBoxMode::CommitNoVerify) => "Staged changes · Commit (No Verify)",
                 Some(CommitBoxMode::Amend) => "Staged changes · Amend",
                 None => "Staged changes",
             }
@@ -3172,6 +3187,7 @@ fn repo_staged_lines(
 fn commit_box_title(mode: CommitBoxMode) -> &'static str {
     match mode {
         CommitBoxMode::Commit => "Commit box",
+        CommitBoxMode::CommitNoVerify => "Commit without hooks",
         CommitBoxMode::Amend => "Amend HEAD",
     }
 }
@@ -3211,6 +3227,15 @@ fn commit_box_lines(
         CommitBoxMode::Commit => {
             format!("Ready: create a commit from {staged_count} staged file(s).")
         }
+        CommitBoxMode::CommitNoVerify if staged_count == 0 => {
+            "Validation: stage at least one file before committing.".to_string()
+        }
+        CommitBoxMode::CommitNoVerify if trimmed.is_empty() => {
+            "Validation: enter a commit message before confirming.".to_string()
+        }
+        CommitBoxMode::CommitNoVerify => {
+            format!("Ready: create a no-verify commit from {staged_count} staged file(s).")
+        }
         CommitBoxMode::Amend if !has_commits => {
             "Validation: no commits available to amend.".to_string()
         }
@@ -3224,6 +3249,9 @@ fn commit_box_lines(
         Line::from(vec![Span::styled(
             match mode {
                 CommitBoxMode::Commit => "Type a new commit message without leaving status view.",
+                CommitBoxMode::CommitNoVerify => {
+                    "Type a commit message and skip pre-commit hooks for this commit."
+                }
                 CommitBoxMode::Amend => {
                     "Type a replacement HEAD message, or leave it blank to reuse it."
                 }
@@ -3382,6 +3410,10 @@ fn default_status_text(state: &AppState) -> String {
                         "Commit box focused; type a message, Enter commits, and Esc cancels."
                             .to_string()
                     }
+                    CommitBoxMode::CommitNoVerify => {
+                        "No-verify commit box focused; type a message, Enter commits without hooks, and Esc cancels."
+                            .to_string()
+                    }
                     CommitBoxMode::Amend => {
                         "Amend box focused; Enter confirms, Esc cancels, and blank input keeps the HEAD message."
                             .to_string()
@@ -3395,7 +3427,7 @@ fn default_status_text(state: &AppState) -> String {
                     .to_string()
             }
             PaneId::RepoStaged => {
-                "Staged focus; j/k move, Enter unstages, D discards, c commits, and A amends HEAD."
+                "Staged focus; j/k move, Enter unstages, D discards, c commits, w commits without hooks, and A amends HEAD."
                     .to_string()
             }
             PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
@@ -3439,6 +3471,9 @@ fn repo_help_text(state: &AppState) -> String {
         return match repo_mode.commit_box.mode {
             CommitBoxMode::Commit => {
                 "Commit box  type message  Enter commit  Esc cancel  Backspace delete  Paste insert".to_string()
+            }
+            CommitBoxMode::CommitNoVerify => {
+                "No-verify commit box  type message  Enter commit without hooks  Esc cancel  Backspace delete  Paste insert".to_string()
             }
             CommitBoxMode::Amend => {
                 "Amend box  type message  Enter amend HEAD  Esc cancel  Backspace delete  Paste insert".to_string()
@@ -5524,7 +5559,7 @@ mod tests {
             })
         )));
 
-        let mut amend_app = TuiApp::new(state, AppConfig::default());
+        let mut amend_app = TuiApp::new(state.clone(), AppConfig::default());
         let amend = amend_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "A".to_string(),
         })));
@@ -5535,6 +5570,19 @@ mod tests {
                 .as_ref()
                 .map(|repo_mode| repo_mode.commit_box.mode),
             Some(CommitBoxMode::Amend)
+        );
+
+        let mut no_verify_app = TuiApp::new(state, AppConfig::default());
+        let no_verify = no_verify_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "w".to_string(),
+        })));
+        assert_eq!(
+            no_verify
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box.mode),
+            Some(CommitBoxMode::CommitNoVerify)
         );
     }
 
@@ -6390,5 +6438,73 @@ mod tests {
         assert!(rendered
             .iter()
             .any(|line| line.contains("Message: feat: land repo commit box_")));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_no_verify_commit_box_overlay() {
+        let mut detail = sample_repo_detail();
+        detail.commit_input = "feat: bypass hooks".to_string();
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Status,
+                detail: Some(detail),
+                commit_box: super_lazygit_core::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::CommitNoVerify,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                staged_count: 2,
+                unstaged_count: 3,
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 20);
+
+        let rendered = app.render_to_string();
+        let overlay_lines = commit_box_lines(
+            app.state()
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref()),
+            CommitBoxMode::CommitNoVerify,
+            Theme::from_config(&AppConfig::default()),
+        )
+        .into_iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+        assert!(rendered.contains("Staged changes · Commit (No Verify)"));
+        assert!(rendered.contains("Commit without hooks"));
+        assert!(overlay_lines
+            .iter()
+            .any(|line| line.contains("skip pre-commit hooks")));
     }
 }

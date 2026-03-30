@@ -702,6 +702,18 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunGitCommand(job));
             }
         }
+        Action::CommitStagedNoVerify { message } => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::CommitStagedNoVerify {
+                        message: message.clone(),
+                    },
+                );
+                enqueue_git_job(state, &job, "Commit staged changes without hooks");
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
         Action::AmendHead { message } => {
             if let Some(repo_mode) = &state.repo_mode {
                 let job = git_job(
@@ -1419,6 +1431,17 @@ fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
             }
             GitCommand::CommitStaged { message }
         }
+        CommitBoxMode::CommitNoVerify => {
+            if staged_count == 0 {
+                push_warning(state, "Stage at least one file before committing.");
+                return None;
+            }
+            if message.is_empty() {
+                push_warning(state, "Enter a commit message before confirming.");
+                return None;
+            }
+            GitCommand::CommitStagedNoVerify { message }
+        }
         CommitBoxMode::Amend => {
             if !has_commits {
                 push_warning(state, "No commits are available to amend.");
@@ -1439,6 +1462,7 @@ fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
     }
     let summary = match mode {
         CommitBoxMode::Commit => "Commit staged changes",
+        CommitBoxMode::CommitNoVerify => "Commit staged changes without hooks",
         CommitBoxMode::Amend => "Amend HEAD commit",
     };
     let job = git_job(repo_id, command);
@@ -2598,6 +2622,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::DiscardFile { .. } => "discard-file",
         GitCommand::UnstageFile { .. } => "unstage-file",
         GitCommand::CommitStaged { .. } => "commit-staged",
+        GitCommand::CommitStagedNoVerify { .. } => "commit-staged-no-verify",
         GitCommand::CommitStagedWithEditor => "commit-staged-editor",
         GitCommand::AmendHead { .. } => "amend-head",
         GitCommand::RewordCommitWithEditor { .. } => "reword-commit-editor",
@@ -5445,6 +5470,51 @@ mod tests {
                 repo_id,
                 command: GitCommand::AmendHead { message: None },
             })]
+        );
+    }
+
+    #[test]
+    fn submit_commit_box_queues_no_verify_commit_when_requested() {
+        let repo_id = RepoId::new("repo-1");
+        let mut detail = repo_detail_with_file_tree();
+        detail.commit_input = "ship without hooks".to_string();
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(detail),
+                commit_box: crate::state::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::CommitNoVerify,
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitCommitBox));
+        let job_id = JobId::new("git:repo-1:commit-staged-no-verify");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: job_id.clone(),
+                repo_id,
+                command: GitCommand::CommitStagedNoVerify {
+                    message: "ship without hooks".to_string(),
+                },
+            })]
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id,
+                summary: "Commit staged changes without hooks".to_string(),
+            })
         );
     }
 

@@ -70,6 +70,9 @@ pub enum GitCommand {
     CommitStaged {
         message: String,
     },
+    CommitStagedNoVerify {
+        message: String,
+    },
     CommitStagedWithEditor,
     AmendHead {
         message: Option<String>,

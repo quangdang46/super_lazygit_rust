@@ -567,6 +567,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::DiscardFile { .. } => "discard_file",
         GitCommand::UnstageFile { .. } => "unstage_file",
         GitCommand::CommitStaged { .. } => "commit_staged",
+        GitCommand::CommitStagedNoVerify { .. } => "commit_staged_no_verify",
         GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",

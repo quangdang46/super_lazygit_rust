@@ -72,6 +72,7 @@ pub enum Action {
     BackspaceCommitInput,
     SubmitCommitBox,
     CommitStaged { message: String },
+    CommitStagedNoVerify { message: String },
     CommitStagedWithEditor,
     AmendHead { message: Option<String> },
     SoftResetToSelectedCommit,
