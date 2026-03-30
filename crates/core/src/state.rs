@@ -531,6 +531,7 @@ pub enum WatcherHealth {
 pub struct RepoModeState {
     pub current_repo_id: RepoId,
     pub active_subview: RepoSubview,
+    pub main_focus: PaneId,
     pub diff_scroll: usize,
     pub diff_line_cursor: Option<usize>,
     pub diff_line_anchor: Option<usize>,
@@ -542,6 +543,11 @@ pub struct RepoModeState {
     pub stash_view: ListViewState,
     pub reflog_view: ListViewState,
     pub worktree_view: ListViewState,
+    pub branches_filter: RepoSubviewFilterState,
+    pub commits_filter: RepoSubviewFilterState,
+    pub stash_filter: RepoSubviewFilterState,
+    pub reflog_filter: RepoSubviewFilterState,
+    pub worktree_filter: RepoSubviewFilterState,
     pub operation_progress: OperationProgress,
     pub comparison_base: Option<ComparisonTarget>,
     pub comparison_target: Option<ComparisonTarget>,
@@ -555,6 +561,7 @@ impl RepoModeState {
         Self {
             current_repo_id,
             active_subview: RepoSubview::default(),
+            main_focus: PaneId::RepoUnstaged,
             diff_scroll: 0,
             diff_line_cursor: None,
             diff_line_anchor: None,
@@ -566,11 +573,42 @@ impl RepoModeState {
             stash_view: ListViewState::default(),
             reflog_view: ListViewState::default(),
             worktree_view: ListViewState::default(),
+            branches_filter: RepoSubviewFilterState::default(),
+            commits_filter: RepoSubviewFilterState::default(),
+            stash_filter: RepoSubviewFilterState::default(),
+            reflog_filter: RepoSubviewFilterState::default(),
+            worktree_filter: RepoSubviewFilterState::default(),
             operation_progress: OperationProgress::Idle,
             comparison_base: None,
             comparison_target: None,
             comparison_source: None,
             detail: None,
+        }
+    }
+
+    #[must_use]
+    pub fn subview_filter(&self, subview: RepoSubview) -> Option<&RepoSubviewFilterState> {
+        match subview {
+            RepoSubview::Branches => Some(&self.branches_filter),
+            RepoSubview::Commits => Some(&self.commits_filter),
+            RepoSubview::Stash => Some(&self.stash_filter),
+            RepoSubview::Reflog => Some(&self.reflog_filter),
+            RepoSubview::Worktrees => Some(&self.worktree_filter),
+            RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
+        }
+    }
+
+    pub fn subview_filter_mut(
+        &mut self,
+        subview: RepoSubview,
+    ) -> Option<&mut RepoSubviewFilterState> {
+        match subview {
+            RepoSubview::Branches => Some(&mut self.branches_filter),
+            RepoSubview::Commits => Some(&mut self.commits_filter),
+            RepoSubview::Stash => Some(&mut self.stash_filter),
+            RepoSubview::Reflog => Some(&mut self.reflog_filter),
+            RepoSubview::Worktrees => Some(&mut self.worktree_filter),
+            RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
         }
     }
 }
@@ -586,6 +624,31 @@ pub enum RepoSubview {
     Stash,
     Reflog,
     Worktrees,
+}
+
+impl RepoSubview {
+    #[must_use]
+    pub const fn supports_filter(self) -> bool {
+        matches!(
+            self,
+            Self::Branches | Self::Commits | Self::Stash | Self::Reflog | Self::Worktrees
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSubviewFilterState {
+    pub query: String,
+    #[serde(skip)]
+    pub focused: bool,
+}
+
+impl RepoSubviewFilterState {
+    #[must_use]
+    pub fn active_query(&self) -> Option<String> {
+        let normalized = normalize_search_text(&self.query);
+        (!normalized.is_empty()).then_some(normalized)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1038,11 +1101,11 @@ fn matches_search(repo_id: &RepoId, summary: Option<&RepoSummary>, query: &str) 
     })
 }
 
-fn normalize_search_text(value: &str) -> String {
+pub fn normalize_search_text(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-fn fuzzy_matches(haystack: &str, needle: &str) -> bool {
+pub fn fuzzy_matches(haystack: &str, needle: &str) -> bool {
     if haystack.contains(needle) {
         return true;
     }
@@ -1071,6 +1134,54 @@ fn repo_is_dirty(summary: &RepoSummary) -> bool {
         || summary.staged_count > 0
         || summary.unstaged_count > 0
         || summary.untracked_count > 0
+}
+
+#[must_use]
+pub fn branch_matches_filter(branch: &BranchItem, normalized_query: &str) -> bool {
+    [
+        branch.name.as_str(),
+        branch.upstream.as_deref().unwrap_or("-"),
+    ]
+    .into_iter()
+    .map(normalize_search_text)
+    .any(|field| fuzzy_matches(&field, normalized_query))
+}
+
+#[must_use]
+pub fn commit_matches_filter(commit: &CommitItem, normalized_query: &str) -> bool {
+    fuzzy_matches(&normalize_search_text(&commit.oid), normalized_query)
+        || fuzzy_matches(&normalize_search_text(&commit.short_oid), normalized_query)
+        || fuzzy_matches(&normalize_search_text(&commit.summary), normalized_query)
+        || commit.changed_files.iter().any(|file| {
+            fuzzy_matches(
+                &normalize_search_text(&file.path.to_string_lossy()),
+                normalized_query,
+            )
+        })
+}
+
+#[must_use]
+pub fn stash_matches_filter(stash: &StashItem, normalized_query: &str) -> bool {
+    [stash.stash_ref.as_str(), stash.label.as_str()]
+        .into_iter()
+        .map(normalize_search_text)
+        .any(|field| fuzzy_matches(&field, normalized_query))
+}
+
+#[must_use]
+pub fn reflog_matches_filter(entry: &ReflogItem, normalized_query: &str) -> bool {
+    fuzzy_matches(&normalize_search_text(&entry.description), normalized_query)
+}
+
+#[must_use]
+pub fn worktree_matches_filter(worktree: &WorktreeItem, normalized_query: &str) -> bool {
+    [
+        worktree.path.to_string_lossy().as_ref(),
+        worktree.branch.as_deref().unwrap_or("(detached)"),
+    ]
+    .into_iter()
+    .map(normalize_search_text)
+    .any(|field| fuzzy_matches(&field, normalized_query))
 }
 
 #[cfg(test)]

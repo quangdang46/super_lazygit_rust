@@ -80,7 +80,7 @@ mod tests {
     use super::watcher::{ScriptedWatcherBackend, ScriptedWatcherHandle};
     use super::*;
     use super_lazygit_core::{
-        AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, Event, RepoId,
+        AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, Event, PaneId, RepoId,
         RepoSummary, ScanStatus, TimerEvent, Timestamp, WatcherEventKind, WatcherHealth,
         WorkerEvent, WorkspaceState,
     };
@@ -679,6 +679,99 @@ mod tests {
             "expected the remote head to include the e2e commit\n{}",
             harness.timeline()
         );
+    }
+
+    #[test]
+    fn e2e_keyboard_harness_runs_repo_detail_filter_worktree_and_return_cycle() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("seed push");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        repo.git(["branch", "feature-contract"])
+            .expect("create feature branch");
+        let worktree_root = tempfile::tempdir().expect("worktree root");
+        let worktree_path = worktree_root.path().join("repo-feature-contract");
+        repo.git([
+            "worktree",
+            "add",
+            worktree_path.to_str().expect("utf8 path"),
+            "feature-contract",
+        ])
+        .expect("create feature worktree");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+        harness.assert_latest_contains("Repository shell");
+
+        harness.press("open branches detail", "2");
+        harness.assert_latest_contains("Detail: Branches");
+        harness.assert_latest_contains("Context: Enter checkout. 0 main. / filter. w worktrees.");
+
+        harness.press("focus branches filter", "/");
+        harness.paste("filter branches", "fea");
+        harness.assert_latest_contains("Filter /fea_");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_branch = repo_mode
+                        .branches_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.branches.get(index))
+                        })
+                        .map(|branch| branch.name.as_str());
+                    repo_mode.branches_filter.focused
+                        && repo_mode.branches_filter.query == "fea"
+                        && selected_branch == Some("feature-contract")
+                })
+            },
+            "filtering branches should focus the contextual query and reselect the matching row",
+        );
+
+        harness.press("blur branches filter", "enter");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    !repo_mode.branches_filter.focused && repo_mode.branches_filter.query == "fea"
+                })
+            },
+            "enter should keep the query while leaving the filter field",
+        );
+
+        harness.press("open worktrees detail", "w");
+        harness.assert_latest_contains("Detail: Worktrees");
+        harness.assert_latest_contains(
+            worktree_path
+                .to_str()
+                .expect("worktree path should stay utf8 in test fixture"),
+        );
+
+        harness.press("return to main pane", "0");
+        harness.assert_state(
+            |state| state.focused_pane == PaneId::RepoUnstaged,
+            "0 should return focus to the main repo pane without leaving repo mode",
+        );
+        harness.assert_latest_contains("Working tree");
     }
 
     #[test]

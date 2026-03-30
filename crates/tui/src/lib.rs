@@ -185,20 +185,6 @@ impl TuiApp {
             .any(|binding| binding_matches_key(binding, raw, normalized))
     }
 
-    fn selected_worktree_repo_id(&self) -> Option<RepoId> {
-        let repo_mode = self.state.repo_mode.as_ref()?;
-        let detail = repo_mode.detail.as_ref()?;
-        let selected_index = repo_mode
-            .worktree_view
-            .selected_index
-            .filter(|index| *index < detail.worktrees.len())
-            .unwrap_or(0);
-        detail
-            .worktrees
-            .get(selected_index)
-            .map(|worktree| RepoId::new(worktree.path.to_string_lossy().into_owned()))
-    }
-
     fn handle_input(&mut self, input: InputEvent) -> ReduceResult {
         match input {
             InputEvent::Resize { width, height } => {
@@ -239,6 +225,13 @@ impl TuiApp {
                     let result = reduce(
                         self.state.clone(),
                         Event::Action(Action::AppendWorkspaceSearch { text }),
+                    );
+                    self.state = result.state.clone();
+                    result
+                } else if self.repo_subview_filter_focused() && !text.is_empty() {
+                    let result = reduce(
+                        self.state.clone(),
+                        Event::Action(Action::AppendRepoSubviewFilter { text }),
                     );
                     self.state = result.state.clone();
                     result
@@ -478,6 +471,37 @@ impl TuiApp {
     }
 
     fn route_repo_key(&self, raw: &str, normalized: &str) -> Option<Action> {
+        if self.repo_subview_filter_focused() {
+            if self.binding_matches_action("cancel_repo_subview_filter", raw, normalized, &["esc"])
+            {
+                return Some(Action::CancelRepoSubviewFilter);
+            }
+
+            if self.binding_matches_action("blur_repo_subview_filter", raw, normalized, &["enter"])
+            {
+                return Some(Action::BlurRepoSubviewFilter);
+            }
+
+            if self.binding_matches_action(
+                "backspace_repo_subview_filter",
+                raw,
+                normalized,
+                &["backspace"],
+            ) {
+                return Some(Action::BackspaceRepoSubviewFilter);
+            }
+
+            return match raw {
+                "space" | " " => Some(Action::AppendRepoSubviewFilter {
+                    text: " ".to_string(),
+                }),
+                _ if raw.chars().count() == 1 => Some(Action::AppendRepoSubviewFilter {
+                    text: raw.to_string(),
+                }),
+                _ => None,
+            };
+        }
+
         if self.binding_matches_action("push_current_branch", raw, normalized, &["P"]) {
             return Some(Action::PushCurrentBranch);
         }
@@ -621,7 +645,7 @@ impl TuiApp {
                             normalized,
                             &["enter", "space"],
                         ) {
-                            return Some(Action::CheckoutSelectedBranch);
+                            return Some(Action::ActivateRepoSubviewSelection);
                         }
 
                         if self.binding_matches_action(
@@ -633,15 +657,6 @@ impl TuiApp {
                             return Some(Action::CheckoutBranch {
                                 branch_ref: "-".to_string(),
                             });
-                        }
-
-                        if self.binding_matches_action(
-                            "switch_repo_subview_worktrees",
-                            raw,
-                            normalized,
-                            &["w"],
-                        ) {
-                            return Some(Action::SwitchRepoSubview(RepoSubview::Worktrees));
                         }
 
                         if self.binding_matches_action(
@@ -782,15 +797,7 @@ impl TuiApp {
                             normalized,
                             &["enter", "space"],
                         ) {
-                            return match repo_mode
-                                .detail
-                                .as_ref()
-                                .map(|detail| detail.diff.presentation)
-                            {
-                                Some(DiffPresentation::Unstaged) => Some(Action::StageSelectedHunk),
-                                Some(DiffPresentation::Staged) => Some(Action::UnstageSelectedHunk),
-                                _ => None,
-                            };
+                            return Some(Action::ActivateRepoSubviewSelection);
                         }
 
                         if self.binding_matches_action(
@@ -1007,7 +1014,7 @@ impl TuiApp {
                             normalized,
                             &["enter", "space"],
                         ) {
-                            return Some(Action::ApplySelectedStash);
+                            return Some(Action::ActivateRepoSubviewSelection);
                         }
 
                         if self.binding_matches_action(
@@ -1066,15 +1073,6 @@ impl TuiApp {
                         ) {
                             return Some(Action::DropSelectedStash);
                         }
-
-                        if self.binding_matches_action(
-                            "switch_repo_subview_worktrees",
-                            raw,
-                            normalized,
-                            &["w"],
-                        ) {
-                            return Some(Action::SwitchRepoSubview(RepoSubview::Worktrees));
-                        }
                     }
                     RepoSubview::Reflog => {
                         if self.binding_matches_action(
@@ -1127,11 +1125,9 @@ impl TuiApp {
                             "switch_to_selected_worktree",
                             raw,
                             normalized,
-                            &["space"],
+                            &["enter", "space"],
                         ) {
-                            return self
-                                .selected_worktree_repo_id()
-                                .map(|repo_id| Action::EnterRepoMode { repo_id });
+                            return Some(Action::ActivateRepoSubviewSelection);
                         }
 
                         if self.binding_matches_action(
@@ -1180,6 +1176,24 @@ impl TuiApp {
                     return Some(Action::ClearComparison);
                 }
             }
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self.binding_matches_action("focus_repo_main_pane", raw, normalized, &["0"])
+        {
+            return Some(Action::FocusRepoMainPane);
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self.binding_matches_action("focus_repo_subview_filter", raw, normalized, &["/"])
+        {
+            return Some(Action::FocusRepoSubviewFilter);
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self.binding_matches_action("open_repo_worktrees_subview", raw, normalized, &["w"])
+        {
+            return Some(Action::OpenRepoWorktreesSubview);
         }
 
         if self.binding_matches_action("focus_repo_left", raw, normalized, &["h", "left"]) {
@@ -1309,6 +1323,14 @@ impl TuiApp {
 
     fn workspace_search_focused(&self) -> bool {
         matches!(self.state.mode, AppMode::Workspace) && self.state.workspace.search_focused
+    }
+
+    fn repo_subview_filter_focused(&self) -> bool {
+        self.state
+            .repo_mode
+            .as_ref()
+            .and_then(|repo_mode| repo_mode.subview_filter(repo_mode.active_subview))
+            .is_some_and(|filter| filter.focused)
     }
 
     fn route_commit_box_key(&self, raw: &str, normalized: &str) -> Option<Action> {
@@ -1555,6 +1577,13 @@ impl TuiApp {
                 RepoSubview::Branches => repo_branch_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.branches_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Branches)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Branches)
+                        .is_some_and(|filter| filter.focused),
                     repo_mode.comparison_base.as_ref(),
                     repo_mode.comparison_target.as_ref(),
                     repo_mode.comparison_source,
@@ -1564,6 +1593,13 @@ impl TuiApp {
                 RepoSubview::Commits => repo_commit_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.commits_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Commits)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Commits)
+                        .is_some_and(|filter| filter.focused),
                     repo_mode.comparison_base.as_ref(),
                     repo_mode.comparison_target.as_ref(),
                     repo_mode.comparison_source,
@@ -1587,18 +1623,39 @@ impl TuiApp {
                 RepoSubview::Stash => repo_stash_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.stash_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Stash)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Stash)
+                        .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
                 RepoSubview::Reflog => repo_reflog_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.reflog_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Reflog)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Reflog)
+                        .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
                 RepoSubview::Worktrees => repo_worktree_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.worktree_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Worktrees)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Worktrees)
+                        .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
@@ -2263,6 +2320,8 @@ fn workspace_empty_preview_lines(state: &AppState) -> Vec<Line<'static>> {
 fn repo_branch_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
     comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
     comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
     comparison_source: Option<RepoSubview>,
@@ -2281,7 +2340,8 @@ fn repo_branch_lines(
         ];
     };
 
-    if detail.branches.is_empty() {
+    let visible_indices = visible_branch_indices(detail, filter_query);
+    if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
                 "Branches",
@@ -2289,14 +2349,28 @@ fn repo_branch_lines(
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("No local branches available."),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.branches.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.branches.is_empty() {
+                "No local branches available.".to_string()
+            } else {
+                format!("No branches match /{}.", filter_query)
+            }),
         ];
     }
 
     let selected_index = selected_index
-        .filter(|index| *index < detail.branches.len())
-        .or_else(|| detail.branches.iter().position(|branch| branch.is_head))
-        .unwrap_or(0);
+        .filter(|index| visible_indices.contains(index))
+        .or_else(|| {
+            detail
+                .branches
+                .iter()
+                .enumerate()
+                .find_map(|(index, branch)| {
+                    (branch.is_head && visible_indices.contains(&index)).then_some(index)
+                })
+        })
+        .unwrap_or(visible_indices[0]);
     let selected_branch = &detail.branches[selected_index];
 
     let mut lines = vec![
@@ -2311,21 +2385,30 @@ fn repo_branch_lines(
             "Upstream: {}",
             selected_branch.upstream.as_deref().unwrap_or("-")
         )),
+    ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.branches.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
         Line::from(comparison_status_line(
             RepoSubview::Branches,
             comparison_base,
             comparison_target,
             comparison_source,
         )),
-        Line::from(
-            "Enter/Space checks out. - previous branch. c prompts by name. n creates. R renames.",
-        ),
-        Line::from("d deletes. u sets upstream. v marks compare base/target."),
-        Line::from("w opens worktrees."),
+        Line::from("Context: Enter checkout. 0 main. / filter. w worktrees."),
+        Line::from("Other: - previous. c checkout by name. n create. R rename."),
+        Line::from("       d delete. u upstream. v compare."),
         Line::from(""),
-    ];
+    ]);
 
-    for (index, branch) in detail.branches.iter().enumerate() {
+    for index in visible_indices {
+        let branch = &detail.branches[index];
         let style = branch_row_style(branch, index == selected_index, is_focused, theme);
         lines.push(Line::from(Span::styled(branch_row_label(branch), style)));
     }
@@ -2393,6 +2476,8 @@ fn stash_message_label(label: &str) -> String {
 fn repo_stash_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
     is_focused: bool,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -2408,7 +2493,8 @@ fn repo_stash_lines(
         ];
     };
 
-    if detail.stashes.is_empty() {
+    let visible_indices = visible_stash_indices(detail, filter_query);
+    if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
                 "Stashes",
@@ -2416,13 +2502,19 @@ fn repo_stash_lines(
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("No stashes are available."),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.stashes.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.stashes.is_empty() {
+                "No stashes are available.".to_string()
+            } else {
+                format!("No stashes match /{}.", filter_query)
+            }),
         ];
     }
 
     let selected_index = selected_index
-        .filter(|index| *index < detail.stashes.len())
-        .unwrap_or(0);
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
     let selected_stash = &detail.stashes[selected_index];
 
     let mut lines = vec![
@@ -2434,12 +2526,23 @@ fn repo_stash_lines(
         )]),
         Line::from(format!("Selected: {}", selected_stash.stash_ref)),
         Line::from(selected_stash.label.clone()),
-        Line::from("Enter/Space applies. n branches off. r renames. g pops. d drops."),
-        Line::from("w opens worktrees."),
-        Line::from(""),
     ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.stashes.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
+        Line::from("Context: Enter apply. 0 main. / filter. w worktrees."),
+        Line::from("Other: n branches off. r renames. g pops. d drops."),
+        Line::from(""),
+    ]);
 
-    for (index, stash) in detail.stashes.iter().enumerate() {
+    for index in visible_indices {
+        let stash = &detail.stashes[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
             style = style.add_modifier(Modifier::BOLD);
@@ -2456,6 +2559,8 @@ fn repo_stash_lines(
 fn repo_reflog_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
     is_focused: bool,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -2471,7 +2576,8 @@ fn repo_reflog_lines(
         ];
     };
 
-    if detail.reflog_items.is_empty() {
+    let visible_indices = visible_reflog_indices(detail, filter_query);
+    if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
                 "Reflog",
@@ -2479,13 +2585,19 @@ fn repo_reflog_lines(
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("No reflog entries are available."),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.reflog_items.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.reflog_items.is_empty() {
+                "No reflog entries are available.".to_string()
+            } else {
+                format!("No reflog entries match /{}.", filter_query)
+            }),
         ];
     }
 
     let selected_index = selected_index
-        .filter(|index| *index < detail.reflog_items.len())
-        .unwrap_or(0);
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
     let selected_entry = &detail.reflog_items[selected_index];
 
     let mut lines = vec![
@@ -2497,17 +2609,33 @@ fn repo_reflog_lines(
         )]),
         Line::from(format!(
             "Selected {}/{}",
-            selected_index + 1,
-            detail.reflog_items.len()
+            visible_indices
+                .iter()
+                .position(|index| *index == selected_index)
+                .map(|index| index + 1)
+                .unwrap_or(1),
+            visible_indices.len()
         )),
         Line::from(selected_entry.description.clone()),
+    ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.reflog_items.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
+        Line::from("Context: 0 main. / filter. w worktrees."),
         Line::from("Use j/k to inspect recent HEAD and ref movement."),
         Line::from("u restore HEAD to the selected entry on a clean working tree."),
         Line::from("Limits: no working tree undo; redo is manual by selecting another entry."),
         Line::from(""),
-    ];
+    ]);
 
-    for (index, entry) in detail.reflog_items.iter().enumerate() {
+    for index in visible_indices {
+        let entry = &detail.reflog_items[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
             style = style.add_modifier(Modifier::BOLD);
@@ -2524,6 +2652,8 @@ fn repo_reflog_lines(
 fn repo_worktree_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
     is_focused: bool,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -2539,7 +2669,8 @@ fn repo_worktree_lines(
         ];
     };
 
-    if detail.worktrees.is_empty() {
+    let visible_indices = visible_worktree_indices(detail, filter_query);
+    if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
                 "Worktrees",
@@ -2547,13 +2678,19 @@ fn repo_worktree_lines(
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("No linked worktrees are available."),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.worktrees.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.worktrees.is_empty() {
+                "No linked worktrees are available.".to_string()
+            } else {
+                format!("No worktrees match /{}.", filter_query)
+            }),
         ];
     }
 
     let selected_index = selected_index
-        .filter(|index| *index < detail.worktrees.len())
-        .unwrap_or(0);
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
     let selected_worktree = &detail.worktrees[selected_index];
 
     let mut lines = vec![
@@ -2568,12 +2705,23 @@ fn repo_worktree_lines(
             "Branch: {}",
             selected_worktree.branch.as_deref().unwrap_or("(detached)")
         )),
-        Line::from("Space switches. n creates. o opens selected worktree."),
-        Line::from("d removes linked worktree."),
-        Line::from(""),
     ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.worktrees.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
+        Line::from("Context: Enter/Space switch. 0 main. / filter."),
+        Line::from("Other: n create. o open selected worktree. d remove."),
+        Line::from(""),
+    ]);
 
-    for (index, worktree) in detail.worktrees.iter().enumerate() {
+    for index in visible_indices {
+        let worktree = &detail.worktrees[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
             style = style.add_modifier(Modifier::BOLD);
@@ -2594,6 +2742,8 @@ fn repo_worktree_lines(
 fn repo_commit_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
     comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
     comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
     comparison_source: Option<RepoSubview>,
@@ -2612,7 +2762,8 @@ fn repo_commit_lines(
         ];
     };
 
-    if detail.commits.is_empty() {
+    let visible_indices = visible_commit_indices(detail, filter_query);
+    if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
                 "Commit history",
@@ -2620,21 +2771,31 @@ fn repo_commit_lines(
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("No commits available for this repository."),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.commits.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.commits.is_empty() {
+                "No commits available for this repository.".to_string()
+            } else {
+                format!("No commits match /{}.", filter_query)
+            }),
         ];
     }
 
     let selected_index = selected_index
-        .filter(|index| *index < detail.commits.len())
-        .unwrap_or(0);
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
     let selected = &detail.commits[selected_index];
+    let selected_position = visible_indices
+        .iter()
+        .position(|index| *index == selected_index)
+        .unwrap_or(0);
 
     let mut lines = vec![
         Line::from(vec![Span::styled(
             format!(
                 "Selected {}/{}  {}  {}",
-                selected_index + 1,
-                detail.commits.len(),
+                selected_position + 1,
+                visible_indices.len(),
                 selected.short_oid,
                 selected.summary
             ),
@@ -2649,24 +2810,25 @@ fn repo_commit_lines(
             comparison_source,
         )),
         Line::from(history_operation_state_line(&detail.merge_state)),
+        Line::from(repo_commit_context_line(
+            filter_query,
+            filter_focused,
+            visible_indices.len(),
+            detail.commits.len(),
+        )),
         Line::from("Actions: i rebase  A amend  F fixup  R reword"),
         Line::from("         C cherry-pick  V revert  S soft  M mixed  H hard"),
         Line::from("History:"),
     ];
 
-    let window_start = selected_index.saturating_sub(2);
-    let window_end = (window_start + 5).min(detail.commits.len());
+    let window_start = selected_position.saturating_sub(2);
+    let window_end = (window_start + 5).min(visible_indices.len());
     lines.extend(
-        detail.commits[window_start..window_end]
+        visible_indices[window_start..window_end]
             .iter()
-            .enumerate()
-            .map(|(offset, commit)| {
-                let absolute_index = window_start + offset;
-                let prefix = if absolute_index == selected_index {
-                    ">"
-                } else {
-                    " "
-                };
+            .map(|index| {
+                let commit = &detail.commits[*index];
+                let prefix = if *index == selected_index { ">" } else { " " };
                 Line::from(format!("{prefix} {} {}", commit.short_oid, commit.summary))
             }),
     );
@@ -2702,6 +2864,124 @@ fn repo_commit_lines(
 
     lines.truncate(viewport_lines.max(1));
     lines
+}
+
+fn visible_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.branches.len()).collect();
+    }
+    detail
+        .branches
+        .iter()
+        .enumerate()
+        .filter_map(|(index, branch)| {
+            super_lazygit_core::branch_matches_filter(branch, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn visible_commit_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.commits.len()).collect();
+    }
+    detail
+        .commits
+        .iter()
+        .enumerate()
+        .filter_map(|(index, commit)| {
+            super_lazygit_core::commit_matches_filter(commit, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn visible_stash_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.stashes.len()).collect();
+    }
+    detail
+        .stashes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, stash)| {
+            super_lazygit_core::stash_matches_filter(stash, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn visible_reflog_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.reflog_items.len()).collect();
+    }
+    detail
+        .reflog_items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            super_lazygit_core::reflog_matches_filter(entry, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn visible_worktree_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.worktrees.len()).collect();
+    }
+    detail
+        .worktrees
+        .iter()
+        .enumerate()
+        .filter_map(|(index, worktree)| {
+            super_lazygit_core::worktree_matches_filter(worktree, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn repo_filter_summary_line(
+    filter_query: &str,
+    filter_focused: bool,
+    visible_count: usize,
+    total_count: usize,
+) -> Option<Line<'static>> {
+    if filter_query.is_empty() && !filter_focused {
+        return None;
+    }
+    let query = if filter_query.is_empty() {
+        "_".to_string()
+    } else if filter_focused {
+        format!("{filter_query}_")
+    } else {
+        filter_query.to_string()
+    };
+    Some(Line::from(format!(
+        "Filter /{query}  Matches: {visible_count}/{total_count}{}",
+        if filter_focused { "  (focused)" } else { "" }
+    )))
+}
+
+fn repo_commit_context_line(
+    filter_query: &str,
+    filter_focused: bool,
+    visible_count: usize,
+    total_count: usize,
+) -> String {
+    let mut line = "Context: 0 main. / filter. w worktrees.".to_string();
+    if let Some(filter_line) =
+        repo_filter_summary_line(filter_query, filter_focused, visible_count, total_count)
+    {
+        let rendered = filter_line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        line.push_str("  ");
+        line.push_str(&rendered);
+    }
+    line
 }
 
 fn repo_compare_lines(
@@ -3695,6 +3975,16 @@ fn default_status_text(state: &AppState) -> String {
                 };
             }
 
+            if state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.subview_filter(repo_mode.active_subview))
+                .is_some_and(|filter| filter.focused)
+            {
+                return "Detail filter focused; type to narrow the current panel, Enter keeps the query, and Esc clears it."
+                    .to_string();
+            }
+
             match state.focused_pane {
             PaneId::RepoUnstaged => {
                 "Working tree focus; j/k move, Enter stages, and D discards the selected file."
@@ -3708,19 +3998,28 @@ fn default_status_text(state: &AppState) -> String {
                 || "Repository shell ready.".to_string(),
                 |repo_mode| {
                     if repo_mode.active_subview == RepoSubview::Status {
-                        "Status diff focus; j/k move hunks, D discards the current file, and X nukes the working tree."
+                        "Status diff focus; Enter/Space applies the current hunk, 0 returns to the main pane, w opens worktrees, D discards the current file, and X nukes the working tree."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Branches {
-                        "Branches detail focus; j/k move, v compares refs, x clears compare, Enter checks out, c creates, R renames, d deletes, and u sets upstream."
+                        "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, w opens worktrees, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; j/k browse history, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; 0 returns to the main pane, / filters history, w opens worktrees, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Compare {
-                        "Compare detail focus; j/k scroll the comparison diff and x clears compare."
+                        "Compare detail focus; j/k scroll the comparison diff, 0 returns to the main pane, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Rebase {
-                        "Rebase detail focus; c continues, s skips, A aborts, and j/k scroll the active step."
+                        "Rebase detail focus; c continues, s skips, A aborts, 0 returns to the main pane, and j/k scroll the active step."
+                            .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Stash {
+                        "Stash detail focus; Enter/Space applies, 0 returns to the main pane, / filters this panel, w opens worktrees, and g/d manage the selected stash."
+                            .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Reflog {
+                        "Reflog detail focus; 0 returns to the main pane, / filters this panel, w opens worktrees, and u restores the selected reflog entry."
+                            .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Worktrees {
+                        "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, and n/o/d manage the selected worktree."
                             .to_string()
                     } else {
                         format!(
@@ -3755,6 +4054,18 @@ fn repo_help_text(state: &AppState) -> String {
         };
     }
 
+    if let Some(filter) = state
+        .repo_mode
+        .as_ref()
+        .and_then(|repo_mode| repo_mode.subview_filter(repo_mode.active_subview))
+        .filter(|filter| filter.focused)
+    {
+        return format!(
+            "Detail filter  type to filter  Paste insert  Backspace delete  Enter keep  Esc clear  query=/{}",
+            filter.query
+        );
+    }
+
     match state.focused_pane {
         PaneId::RepoUnstaged => {
             "Working tree pane  j/k move  Enter stage file  s stash tracked changes  S stash options  D discard file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
@@ -3766,15 +4077,21 @@ fn repo_help_text(state: &AppState) -> String {
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  D discard file  X nuke working tree  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  Enter apply hunk  0 main pane  w worktrees  D discard file  X nuke working tree  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  v compare  x clear compare  Enter checkout  c create  R rename  d delete  u upstream  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  Enter checkout  0 main pane  / filter  w worktrees  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  0 main pane  / filter  w worktrees  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
-                    "Compare pane  j/k scroll diff  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Compare pane  j/k scroll diff  0 main pane  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
-                    "Rebase pane  c continue  s skip  A abort  j/k scroll  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Rebase pane  c continue  s skip  A abort  j/k scroll  0 main pane  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Stash {
+                    "Stash pane  j/k move  Enter apply  0 main pane  / filter  w worktrees  n branch  r rename  g pop  d drop  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Reflog {
+                    "Reflog pane  j/k move  0 main pane  / filter  w worktrees  u restore  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Worktrees {
+                    "Worktrees pane  j/k move  Enter switch  0 main pane  / filter  n create  o open  d delete  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
                         "{} detail pane  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
@@ -4877,6 +5194,129 @@ mod tests {
         assert_eq!(
             result.state.repo_mode.expect("repo mode").active_subview,
             RepoSubview::Branches
+        );
+    }
+
+    #[test]
+    fn repo_mode_detail_contract_routes_filter_worktrees_and_main_return() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                main_focus: PaneId::RepoStaged,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+
+        let mut filter_app = TuiApp::new(state, AppConfig::default());
+        let filter_focus = filter_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "/".to_string(),
+        })));
+        assert_eq!(
+            filter_focus
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.focused),
+            Some(true)
+        );
+
+        let mut paste_app = TuiApp::new(filter_focus.state, AppConfig::default());
+        let pasted = paste_app.dispatch(Event::Input(InputEvent::Paste("fea".to_string())));
+        assert_eq!(
+            pasted
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.query.as_str()),
+            Some("fea")
+        );
+        assert_eq!(
+            pasted
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(1)
+        );
+
+        let mut blur_app = TuiApp::new(pasted.state, AppConfig::default());
+        let blurred = blur_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            blurred
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.focused),
+            Some(false)
+        );
+        assert_eq!(
+            blurred
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.query.as_str()),
+            Some("fea")
+        );
+
+        let mut worktree_app = TuiApp::new(blurred.state, AppConfig::default());
+        let worktrees = worktree_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "w".to_string(),
+        })));
+        assert_eq!(
+            worktrees
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Worktrees)
+        );
+        assert_eq!(worktrees.state.focused_pane, PaneId::RepoDetail);
+
+        let mut return_app = TuiApp::new(worktrees.state, AppConfig::default());
+        let returned = return_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "0".to_string(),
+        })));
+        assert_eq!(returned.state.focused_pane, PaneId::RepoStaged);
+        assert_eq!(
+            returned
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Worktrees)
+        );
+
+        let commit_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut commit_filter_app = TuiApp::new(commit_state, AppConfig::default());
+        let commit_filter =
+            commit_filter_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "/".to_string(),
+            })));
+        assert_eq!(
+            commit_filter
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commits_filter.focused),
+            Some(true)
         );
     }
 
@@ -6946,12 +7386,59 @@ mod tests {
 
         assert!(rendered.contains("Detail: Branches"));
         assert!(rendered.contains("Selected: feature"));
-        assert!(rendered.contains("checks out."));
-        assert!(rendered.contains("previous"));
-        assert!(rendered.contains("prompts"));
-        assert!(rendered.contains("opens worktrees."));
+        assert!(rendered.contains("Context: Enter checkout. 0 main. / filter. w worktrees."));
+        assert!(rendered.contains("checkout by name"));
+        assert!(rendered.contains("u upstream"));
         assert!(rendered.contains("* main"));
         assert!(rendered.contains("feature"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_branch_filter_summary_when_focused() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Branches,
+                detail: Some(sample_repo_detail()),
+                branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                branches_filter: super_lazygit_core::RepoSubviewFilterState {
+                    query: "fea".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Filter /fea_  Matches: 1/2  (focused)"));
+        assert!(rendered.contains("Context: Enter checkout. 0 main. / filter. w worktrees."));
     }
 
     #[test]
@@ -6996,11 +7483,9 @@ mod tests {
 
         assert!(rendered.contains("Detail: Stash"));
         assert!(rendered.contains("Selected: stash@{1}"));
-        assert!(rendered.contains("applies."));
-        assert!(rendered.contains("n branches off."));
-        assert!(rendered.contains("r renames."));
-        assert!(rendered.contains("g pops."));
-        assert!(rendered.contains("opens worktrees."));
+        assert!(rendered.contains("Context: Enter apply. 0 main. / filter. w worktrees."));
+        assert!(rendered.contains("n branches off"));
+        assert!(rendered.contains("g pops"));
         assert!(rendered.contains("stash@{0}: WIP on main: fixture stash"));
         assert!(rendered.contains("stash@{1}: On feature: prior experiment"));
     }
@@ -7121,9 +7606,9 @@ mod tests {
         assert!(rendered.contains("Detail: Worktrees"));
         assert!(rendered.contains("Selected: /tmp/repo-1-feature"));
         assert!(rendered.contains("Branch: feature"));
-        assert!(rendered.contains("Space switches."));
-        assert!(rendered.contains("n creates."));
-        assert!(rendered.contains("opens selected worktree"));
+        assert!(rendered.contains("Context: Enter/Space switch. 0 main. / filter."));
+        assert!(rendered.contains("o open selected worktree"));
+        assert!(rendered.contains("d remove"));
         assert!(rendered.contains("/tmp/repo-1  [main]"));
         assert!(rendered.contains("/tmp/repo-1-feature  [feature]"));
     }

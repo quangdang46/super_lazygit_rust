@@ -53,11 +53,26 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `6` | Switch detail pane to `Stash` |
 | `7` | Switch detail pane to `Reflog` |
 | `8` | Switch detail pane to `Worktrees` |
+| `0` in `Repo detail` | Return focus to the last active main pane (`Working tree` or `Staged changes`) |
+| `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Commits`, `Stash`, `Reflog`, or `Worktrees`) |
+| `w` in `Repo detail` | Switch the current detail subview to `Worktrees` |
 | `r` | Refresh the selected repository |
 | `f` | Open fetch confirmation |
 | `p` | Open pull confirmation |
 | `P` | Open push confirmation |
 | `Esc` | Return to workspace mode |
+
+### Repo detail contract
+
+When focus is in `Repo detail`, the shared lazygit-style contract is:
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Run the contextual primary action for the current detail subview |
+| `Space` | Alias the primary action in `Status`, `Branches`, `Stash`, and `Worktrees` |
+| `0` | Return to the last active main pane without changing the selected detail subview |
+| `/` | Focus the current subview filter when that subview supports filtering |
+| `w` | Jump directly to the `Worktrees` subview |
 
 ### Working tree and staged panes
 
@@ -128,6 +143,9 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `H` | Open hard-reset confirmation |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
+| `/` | Focus the commit-history filter |
+| `w` | Switch to the worktrees subview |
+| `0` | Return focus to the last active main pane |
 
 ### Compare detail subview
 
@@ -181,6 +199,17 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `o` | Open the selected worktree in the configured editor |
 | `d` | Open remove-worktree confirmation |
 
+### Repo detail filter
+
+| Key | Action |
+| --- | --- |
+| Any printable character | Append text to the active panel-local filter |
+| `Space` | Insert a space |
+| `Backspace` | Delete the previous character |
+| `Enter` | Blur the filter and keep the query active |
+| `Esc` | Exit the filter; if the query is non-empty it also clears the query |
+| Paste | Insert pasted text |
+
 ## Overlays
 
 ### Confirmation modal
@@ -225,4 +254,4 @@ This document reflects the current interactive terminal behavior shipped by the 
 - Routed command bindings can be replaced from config; see [CONFIG.md](CONFIG.md).
 - Override action IDs accept both stable snake_case names such as `enter_repo_mode` and legacy enum-style names such as `EnterRepoMode`.
 - Single-character overrides are case-sensitive, so rebinding `push_current_branch` must use `P` or another exact single-character key if you want uppercase behavior.
-- Text insertion and paste behavior in the workspace search box, input prompts, and commit box are intentionally not remapped.
+- Text insertion and paste behavior in the workspace search box, repo detail filters, input prompts, and commit box are intentionally not remapped.
