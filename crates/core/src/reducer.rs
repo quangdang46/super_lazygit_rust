@@ -1823,6 +1823,7 @@ fn open_menu(state: &mut AppState, repo_id: crate::state::RepoId, operation: Men
 
 fn input_prompt_title(operation: &InputPromptOperation) -> String {
     match operation {
+        InputPromptOperation::CheckoutBranch => "Check out branch".to_string(),
         InputPromptOperation::CreateBranch => "Create branch".to_string(),
         InputPromptOperation::RenameBranch { current_name } => {
             format!("Rename branch {current_name}")
@@ -1844,6 +1845,7 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
 
 fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
     match operation {
+        InputPromptOperation::CheckoutBranch => String::new(),
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::RenameStash { current_name, .. } => current_name.clone(),
@@ -1877,6 +1879,12 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
     }
 
     let (command, summary) = match pending.operation {
+        InputPromptOperation::CheckoutBranch => (
+            GitCommand::CheckoutBranch {
+                branch_ref: value.clone(),
+            },
+            format!("Checkout branch {value}"),
+        ),
         InputPromptOperation::CreateBranch => (
             GitCommand::CreateBranch {
                 branch_name: value.clone(),
@@ -4406,6 +4414,52 @@ mod tests {
                 repo_id,
                 command: GitCommand::CreateBranch {
                     branch_name: "feature/new-ui".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_branch_checkout_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Check out branch",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CheckoutBranch,
+                value: "origin/feature/new-ui".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:checkout-branch");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CheckoutBranch {
+                    branch_ref: "origin/feature/new-ui".to_string(),
                 },
             })]
         );

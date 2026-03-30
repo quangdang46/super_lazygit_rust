@@ -630,10 +630,21 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
-                            "open_create_branch_prompt",
+                            "open_checkout_branch_prompt",
                             raw,
                             normalized,
                             &["c"],
+                        ) {
+                            return Some(Action::OpenInputPrompt {
+                                operation: super_lazygit_core::InputPromptOperation::CheckoutBranch,
+                            });
+                        }
+
+                        if self.binding_matches_action(
+                            "open_create_branch_prompt",
+                            raw,
+                            normalized,
+                            &["n"],
                         ) {
                             return Some(Action::OpenInputPrompt {
                                 operation: super_lazygit_core::InputPromptOperation::CreateBranch,
@@ -2243,7 +2254,10 @@ fn repo_branch_lines(
             comparison_target,
             comparison_source,
         )),
-        Line::from("Enter checks out. v marks compare base/target. c creates. R renames. d deletes. u sets upstream."),
+        Line::from(
+            "Enter checks out. c prompts checkout by name. n creates. R renames. d deletes. u sets upstream.",
+        ),
+        Line::from("v marks compare base/target."),
         Line::from(""),
     ];
 
@@ -3137,6 +3151,10 @@ fn history_operation_state_line(merge_state: &super_lazygit_core::MergeState) ->
 
 fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> String {
     match operation {
+        super_lazygit_core::InputPromptOperation::CheckoutBranch => {
+            "Enter a branch name, remote ref, or -. Use - to switch back to the previous branch."
+                .to_string()
+        }
         super_lazygit_core::InputPromptOperation::CreateBranch => {
             "Enter the new branch name. The branch will be created from HEAD and checked out."
                 .to_string()
@@ -5088,6 +5106,60 @@ mod tests {
             Some(1)
         );
 
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut checkout_app = TuiApp::new(state, AppConfig::default());
+
+        let checkout_by_name =
+            checkout_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "c".to_string(),
+            })));
+        assert_eq!(checkout_by_name.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            checkout_by_name
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CheckoutBranch,
+                ""
+            ))
+        );
+
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut create_app = TuiApp::new(state, AppConfig::default());
+
+        let create = create_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(create.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            create
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((&super_lazygit_core::InputPromptOperation::CreateBranch, ""))
+        );
+
         let rename = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "R".to_string(),
         })));
@@ -5420,6 +5492,15 @@ mod tests {
         assert!(copy.contains("new branch name"));
         assert!(copy.contains("stash@{1}: On feature: prior experiment"));
         assert!(copy.contains("stash will be dropped"));
+    }
+
+    #[test]
+    fn input_prompt_copy_describes_checkout_by_name() {
+        let copy = input_prompt_copy(&super_lazygit_core::InputPromptOperation::CheckoutBranch);
+
+        assert!(copy.contains("branch name"));
+        assert!(copy.contains("remote ref"));
+        assert!(copy.contains("Use - to switch back"));
     }
 
     #[test]
@@ -6674,6 +6755,8 @@ mod tests {
         assert!(rendered.contains("Detail: Branches"));
         assert!(rendered.contains("Selected: feature"));
         assert!(rendered.contains("Enter checks out."));
+        assert!(rendered.contains("c prompts checkout by name."));
+        assert!(rendered.contains("n creates."));
         assert!(rendered.contains("* main"));
         assert!(rendered.contains("feature"));
     }

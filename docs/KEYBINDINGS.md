@@ -100,7 +100,8 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `j` / `Down` | Select the next branch |
 | `k` / `Up` | Select the previous branch |
 | `Enter` | Check out the selected branch |
-| `c` | Open create-branch prompt |
+| `c` | Open checkout-by-name prompt (`-` switches to the previous branch) |
+| `n` | Open create-branch prompt |
 | `R` | Open rename-branch prompt |
 | `d` | Open delete-branch confirmation |
 | `u` | Open set-upstream prompt |

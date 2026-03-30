@@ -161,6 +161,7 @@ pub struct PendingInputPrompt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputPromptOperation {
+    CheckoutBranch,
     CreateBranch,
     RenameBranch {
         current_name: String,
