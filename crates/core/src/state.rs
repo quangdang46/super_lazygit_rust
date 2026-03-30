@@ -901,6 +901,27 @@ impl ListViewState {
         self.selected_index = Some(next);
         Some(next)
     }
+
+    pub fn select_first(&mut self, len: usize) -> Option<usize> {
+        if len == 0 {
+            self.selected_index = None;
+            return None;
+        }
+
+        self.selected_index = Some(0);
+        Some(0)
+    }
+
+    pub fn select_last(&mut self, len: usize) -> Option<usize> {
+        if len == 0 {
+            self.selected_index = None;
+            return None;
+        }
+
+        let last = len.saturating_sub(1);
+        self.selected_index = Some(last);
+        Some(last)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

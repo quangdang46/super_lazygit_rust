@@ -35,6 +35,14 @@ pub enum Action {
     SelectPreviousTag,
     SelectNextCommit,
     SelectPreviousCommit,
+    PageDownRepoList {
+        page_size: usize,
+    },
+    PageUpRepoList {
+        page_size: usize,
+    },
+    SelectFirstRepoListEntry,
+    SelectLastRepoListEntry,
     OpenSelectedBranchCommits,
     OpenSelectedRemoteBranches,
     OpenSelectedRemoteBranchCommits,
@@ -181,6 +189,8 @@ pub enum Action {
     FocusRepoMainPane,
     OpenRepoWorktreesSubview,
     OpenRepoSubmodulesSubview,
+    SelectNextRepoSubview,
+    SelectPreviousRepoSubview,
     FocusRepoSubviewFilter,
     BlurRepoSubviewFilter,
     CancelRepoSubviewFilter,

@@ -162,6 +162,27 @@ impl TuiApp {
         }
     }
 
+    fn repo_list_page_size(&self) -> usize {
+        self.viewport.height.saturating_sub(8).max(1) as usize
+    }
+
+    fn repo_detail_supports_shared_list_navigation(&self) -> bool {
+        self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+            !matches!(
+                repo_mode.active_subview,
+                RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase
+            )
+        })
+    }
+
+    fn repo_focus_supports_shared_list_navigation(&self) -> bool {
+        matches!(
+            self.state.focused_pane,
+            PaneId::RepoUnstaged | PaneId::RepoStaged
+        ) || (self.state.focused_pane == PaneId::RepoDetail
+            && self.repo_detail_supports_shared_list_navigation())
+    }
+
     fn binding_matches_action(
         &self,
         action_id: &str,
@@ -519,6 +540,51 @@ impl TuiApp {
             return Some(Action::OpenInputPrompt {
                 operation: InputPromptOperation::ShellCommand,
             });
+        }
+
+        if self.repo_focus_supports_shared_list_navigation() {
+            if self.binding_matches_action(
+                "page_down_repo_list",
+                raw,
+                normalized,
+                &[".", "pagedown"],
+            ) {
+                return Some(Action::PageDownRepoList {
+                    page_size: self.repo_list_page_size(),
+                });
+            }
+
+            if self.binding_matches_action("page_up_repo_list", raw, normalized, &[",", "pageup"]) {
+                return Some(Action::PageUpRepoList {
+                    page_size: self.repo_list_page_size(),
+                });
+            }
+
+            if self.binding_matches_action(
+                "select_first_repo_list_entry",
+                raw,
+                normalized,
+                &["<", "home"],
+            ) {
+                return Some(Action::SelectFirstRepoListEntry);
+            }
+
+            if self.binding_matches_action(
+                "select_last_repo_list_entry",
+                raw,
+                normalized,
+                &[">", "end"],
+            ) {
+                return Some(Action::SelectLastRepoListEntry);
+            }
+        }
+
+        if self.binding_matches_action("select_previous_repo_subview", raw, normalized, &["["]) {
+            return Some(Action::SelectPreviousRepoSubview);
+        }
+
+        if self.binding_matches_action("select_next_repo_subview", raw, normalized, &["]"]) {
+            return Some(Action::SelectNextRepoSubview);
         }
 
         if self.state.focused_pane == PaneId::RepoDetail
@@ -6037,10 +6103,10 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  l next pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  ,/. page  </> top/bottom  Enter stage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  l next pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  ,/. page  </> top/bottom  Enter unstage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
@@ -6048,11 +6114,15 @@ fn repo_help_text(state: &AppState) -> String {
                 if repo_mode.active_subview == RepoSubview::Status {
                     "Status diff pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Enter apply hunk  Ctrl+P patch menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  Enter commits  Space checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
-                    "Remotes pane  j/k move  Enter branches  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Remotes pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter branches  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::RemoteBranches {
+                    "Remote branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  n local branch  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Tags {
+                    "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -6060,18 +6130,18 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Stash {
                     match repo_mode.stash_subview_mode {
                         StashSubviewMode::List => {
-                            "Stash pane  j/k move stash  Enter files  Space apply  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  w worktrees  b submodules  n branch  g pop  d drop  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash pane  j/k move stash  ,/. page  </> top/bottom  [/] tabs  Enter files  Space apply  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  w worktrees  b submodules  n branch  g pop  d drop  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                         StashSubviewMode::Files => {
-                            "Stash files pane  j/k move file  Enter stash list  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash files pane  j/k move file  ,/. page  </> top/bottom  [/] tabs  Enter stash list  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                     }
                 } else if repo_mode.active_subview == RepoSubview::Reflog {
-                    "Reflog pane  j/k move  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Reflog pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Worktrees {
-                    "Worktrees pane  j/k move  Enter switch  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  b submodules  n create  o open  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Worktrees pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter switch  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  b submodules  n create  o open  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Submodules {
-                    "Submodules pane  j/k move  Enter nested repo  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  n add  e edit-url  i init  u update  o open  d remove  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Submodules pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter nested repo  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  n add  e edit-url  i init  u update  o open  d remove  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
                         "{} detail pane  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
@@ -7203,6 +7273,152 @@ mod tests {
         assert_eq!(
             previous.state.settings.screen_mode,
             super_lazygit_core::ScreenMode::HalfScreen
+        );
+    }
+
+    #[test]
+    fn route_repository_shared_navigation_keys_cover_pages_edges_and_tabs() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let detail_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        super_lazygit_core::BranchItem {
+                            name: "alpha".to_string(),
+                            is_head: true,
+                            upstream: None,
+                        },
+                        super_lazygit_core::BranchItem {
+                            name: "beta".to_string(),
+                            is_head: false,
+                            upstream: None,
+                        },
+                        super_lazygit_core::BranchItem {
+                            name: "gamma".to_string(),
+                            is_head: false,
+                            upstream: None,
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+
+        let mut page_app = TuiApp::new(detail_state.clone(), AppConfig::default());
+        page_app.resize(100, 10);
+        let paged = page_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "pagedown".to_string(),
+        })));
+        assert_eq!(
+            paged
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(2)
+        );
+
+        let mut edge_app = TuiApp::new(detail_state.clone(), AppConfig::default());
+        let last = edge_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "end".to_string(),
+        })));
+        assert_eq!(
+            last.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(2)
+        );
+
+        let first = edge_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "home".to_string(),
+        })));
+        assert_eq!(
+            first
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(0)
+        );
+
+        let mut tabs_app = TuiApp::new(detail_state, AppConfig::default());
+        let next_tab = tabs_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "]".to_string(),
+        })));
+        assert_eq!(
+            next_tab
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Remotes)
+        );
+
+        let previous_tab = tabs_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "[".to_string(),
+        })));
+        assert_eq!(
+            previous_tab
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Branches)
+        );
+
+        let main_pane_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                status_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut main_pane_app = TuiApp::new(main_pane_state, AppConfig::default());
+        let main_last = main_pane_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: ">".to_string(),
+        })));
+        assert_eq!(
+            main_last
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.status_view.selected_index),
+            Some(1)
         );
     }
 

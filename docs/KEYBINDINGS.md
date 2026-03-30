@@ -58,6 +58,11 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `9` | Switch detail pane to `Remote Branches` |
 | `t` | Switch detail pane to `Tags` |
 | `0` in `Repo detail` | Return focus to the last active main pane (`Working tree` or `Staged changes`) |
+| `,` / `PageUp` on list-focused repo surfaces | Move one page up in `Working tree`, `Staged changes`, or list-style detail subviews |
+| `.` / `PageDown` on list-focused repo surfaces | Move one page down in `Working tree`, `Staged changes`, or list-style detail subviews |
+| `<` / `Home` on list-focused repo surfaces | Jump to the first entry in the current list |
+| `>` / `End` on list-focused repo surfaces | Jump to the last entry in the current list |
+| `[` / `]` | Move to the previous or next repository detail subview tab |
 | `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remotes`, `Remote Branches`, `Tags`, `Commits`, `Stash`, `Reflog`, `Worktrees`, or `Submodules`) |
 | `w` in `Repo detail` | Switch the current detail subview to `Worktrees` |
 | `r` | Refresh the selected repository |
@@ -89,6 +94,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Enter` | Run the contextual primary action for the current detail subview |
 | `Space` | Run the contextual checkout/apply action in detail subviews that expose one |
 | `0` | Return to the last active main pane without changing the selected detail subview |
+| `,` / `PageUp` | Move one page up on list-style detail surfaces |
+| `.` / `PageDown` | Move one page down on list-style detail surfaces |
+| `<` / `Home` | Jump to the first entry on list-style detail surfaces |
+| `>` / `End` | Jump to the last entry on list-style detail surfaces |
+| `[` / `]` | Move to the previous or next detail tab |
 | `/` | Focus the current subview filter when that subview supports filtering |
 | `w` | Jump directly to the `Worktrees` subview |
 | `b` | Jump directly to the `Submodules` subview |
@@ -99,6 +109,10 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next status entry |
 | `k` / `Up` | Select the previous status entry |
+| `,` / `PageUp` | Move one page up in the current status list |
+| `.` / `PageDown` | Move one page down in the current status list |
+| `<` / `Home` | Jump to the first status entry |
+| `>` / `End` | Jump to the last status entry |
 | `Enter` or `Space` in `Working tree` | Stage the selected file |
 | `Enter` or `Space` in `Staged changes` | Unstage the selected file |
 | `c` in `Staged changes` | Open the commit box |
@@ -141,6 +155,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next branch |
 | `k` / `Up` | Select the previous branch |
+| `,` / `PageUp` | Move one page up in the filtered branch list |
+| `.` / `PageDown` | Move one page down in the filtered branch list |
+| `<` / `Home` | Jump to the first visible branch |
+| `>` / `End` | Jump to the last visible branch |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected branch's commit history |
 | `Space` | Check out the selected branch |
 | `-` | Check out the previous branch |
@@ -161,6 +180,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next remote |
 | `k` / `Up` | Select the previous remote |
+| `,` / `PageUp` | Move one page up in the filtered remote list |
+| `.` / `PageDown` | Move one page down in the filtered remote list |
+| `<` / `Home` | Jump to the first visible remote |
+| `>` / `End` | Jump to the last visible remote |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected remote's branch list in `Remote Branches` |
 | `n` | Open the add-remote prompt (`<name> <url>`) |
 | `e` | Open the edit-remote prompt for the selected remote |
@@ -174,6 +198,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next remote branch |
 | `k` / `Up` | Select the previous remote branch |
+| `,` / `PageUp` | Move one page up in the filtered remote-branch list |
+| `.` / `PageDown` | Move one page down in the filtered remote-branch list |
+| `<` / `Home` | Jump to the first visible remote branch |
+| `>` / `End` | Jump to the last visible remote branch |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected remote branch's commit history |
 | `Space` | Check out the selected remote branch as a local tracking branch |
 | `n` | Open create-local-branch-from-remote prompt |
@@ -186,6 +215,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next tag |
 | `k` / `Up` | Select the previous tag |
+| `,` / `PageUp` | Move one page up in the tag list |
+| `.` / `PageDown` | Move one page down in the tag list |
+| `<` / `Home` | Jump to the first visible tag |
+| `>` / `End` | Jump to the last visible tag |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected tag's commit history |
 | `Space` | Check out the selected tag in detached-HEAD mode |
 | `n` | Open create-tag prompt |
@@ -202,6 +236,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next commit |
 | `k` / `Up` | Select the previous commit |
+| `,` / `PageUp` | Move one page up in the filtered commit list or commit-files list |
+| `.` / `PageDown` | Move one page down in the filtered commit list or commit-files list |
+| `<` / `Home` | Jump to the first visible commit or commit file |
+| `>` / `End` | Jump to the last visible commit or commit file |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected commit's changed-files view |
 | `Space` | Check out the selected commit in detached-HEAD mode |
 | `a` | Switch to the all-branches commit graph, newest first |
@@ -234,6 +273,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next changed file from the active commit |
 | `k` / `Up` | Select the previous changed file from the active commit |
+| `,` / `PageUp` | Move one page up in the changed-files list |
+| `.` / `PageDown` | Move one page down in the changed-files list |
+| `<` / `Home` | Jump to the first visible changed file |
+| `>` / `End` | Jump to the last visible changed file |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Return to commit history for the same selected commit |
 | `Space` | Check out the selected file from the selected commit |
 | `e` | Open the selected file in the configured editor |
@@ -270,6 +314,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next stash entry |
 | `k` / `Up` | Select the previous stash entry |
+| `,` / `PageUp` | Move one page up in the filtered stash list or stash-files list |
+| `.` / `PageDown` | Move one page down in the filtered stash list or stash-files list |
+| `<` / `Home` | Jump to the first visible stash or stash file |
+| `>` / `End` | Jump to the last visible stash or stash file |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected stash's changed-files view |
 | `Space` | Apply the selected stash |
 | `n` | Open create-branch-from-stash prompt |
@@ -284,6 +333,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next changed file from the selected stash |
 | `k` / `Up` | Select the previous changed file from the selected stash |
+| `,` / `PageUp` | Move one page up in the stash-files list |
+| `.` / `PageDown` | Move one page down in the stash-files list |
+| `<` / `Home` | Jump to the first stash file |
+| `>` / `End` | Jump to the last stash file |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Return to the stash list for the same selected stash |
 | `0` | Return focus to the last active main pane |
 | `w` | Switch to the worktrees subview |
@@ -294,6 +348,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next reflog entry |
 | `k` / `Up` | Select the previous reflog entry |
+| `,` / `PageUp` | Move one page up in the filtered reflog list |
+| `.` / `PageDown` | Move one page down in the filtered reflog list |
+| `<` / `Home` | Jump to the first visible reflog entry |
+| `>` / `End` | Jump to the last visible reflog entry |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected reflog target in the all-branches commit history view |
 | `Space` | Check out the selected reflog target in detached HEAD |
 | `n` | Open create-branch-from-commit prompt for the selected reflog target |
@@ -309,6 +368,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next worktree |
 | `k` / `Up` | Select the previous worktree |
+| `,` / `PageUp` | Move one page up in the filtered worktree list |
+| `.` / `PageDown` | Move one page down in the filtered worktree list |
+| `<` / `Home` | Jump to the first visible worktree |
+| `>` / `End` | Jump to the last visible worktree |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` / `Space` | Switch to the selected worktree |
 | `n` | Open create-worktree prompt |
 | `c` | Open create-worktree prompt (legacy alias) |
@@ -323,6 +387,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next submodule |
 | `k` / `Up` | Select the previous submodule |
+| `,` / `PageUp` | Move one page up in the filtered submodule list |
+| `.` / `PageDown` | Move one page down in the filtered submodule list |
+| `<` / `Home` | Jump to the first visible submodule |
+| `>` / `End` | Jump to the last visible submodule |
+| `[` / `]` | Move to the previous or next detail tab |
 | `Enter` / `Space` | Enter the selected submodule as a nested repo |
 | `n` | Open add-submodule prompt (`<path> <url>`) |
 | `e` | Open edit-submodule-URL prompt |
