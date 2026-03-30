@@ -517,6 +517,29 @@ impl TuiApp {
             });
         }
 
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                matches!(
+                    repo_mode.active_subview,
+                    RepoSubview::Commits | RepoSubview::Rebase
+                )
+            })
+            && self.binding_matches_action("open_merge_rebase_options", raw, normalized, &["m"])
+        {
+            return Some(Action::OpenMergeRebaseOptions);
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self
+                .state
+                .repo_mode
+                .as_ref()
+                .is_some_and(|repo_mode| repo_mode.active_subview == RepoSubview::Status)
+            && self.binding_matches_action("open_patch_options", raw, normalized, &["ctrl+p"])
+        {
+            return Some(Action::OpenPatchOptions);
+        }
+
         if matches!(self.state.focused_pane, PaneId::RepoDetail)
             && self.binding_matches_action("push_selected_tag", raw, normalized, &["P"])
             && self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
@@ -5066,6 +5089,12 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::StashOptions => {
             "Choose which stash scope to save from the current repository state."
         }
+        super_lazygit_core::MenuOperation::MergeRebaseOptions => {
+            "Open the shipped merge/rebase flows that make sense in the current repository context."
+        }
+        super_lazygit_core::MenuOperation::PatchOptions => {
+            "Jump directly into the shipped hunk/line patch flows for the current status diff."
+        }
         super_lazygit_core::MenuOperation::RecentRepos => {
             "Switch directly to one of the repositories you visited recently."
         }
@@ -5088,6 +5117,8 @@ fn menu_lines(
             "Stash staged changes".to_string(),
             "Stash unstaged changes".to_string(),
         ],
+        super_lazygit_core::MenuOperation::MergeRebaseOptions => merge_rebase_menu_lines(state),
+        super_lazygit_core::MenuOperation::PatchOptions => patch_menu_lines(state),
         super_lazygit_core::MenuOperation::RecentRepos => recent_repo_menu_lines(state),
         super_lazygit_core::MenuOperation::CommandLog => command_log_menu_lines(state),
     };
@@ -5190,6 +5221,79 @@ fn command_log_menu_lines(state: &AppState) -> Vec<String> {
         .rev()
         .map(|message| format!("[{:?}] {}", message.level, message.text))
         .collect()
+}
+
+fn merge_rebase_menu_lines(state: &AppState) -> Vec<String> {
+    let mut entries = Vec::new();
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return entries;
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return entries;
+    };
+
+    if detail.merge_state == super_lazygit_core::MergeState::RebaseInProgress
+        && detail.rebase_state.is_some()
+    {
+        entries.extend([
+            "Continue active rebase".to_string(),
+            "Skip current rebase step".to_string(),
+            "Abort active rebase".to_string(),
+        ]);
+    }
+
+    if repo_mode.active_subview == RepoSubview::Commits
+        && repo_mode.commit_subview_mode == CommitSubviewMode::History
+    {
+        entries.extend([
+            "Interactive rebase from selected commit".to_string(),
+            "Amend older commit at selection".to_string(),
+            "Fixup onto selected commit".to_string(),
+            "Reword selected commit".to_string(),
+            "Reword selected commit in editor".to_string(),
+        ]);
+    }
+
+    entries.push(
+        if detail.merge_state == super_lazygit_core::MergeState::None {
+            "Open rebase / merge panel".to_string()
+        } else {
+            "Open rebase / merge status panel".to_string()
+        },
+    );
+
+    entries
+}
+
+fn patch_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+    if detail.diff.selected_path.is_none() || detail.diff.selected_hunk.is_none() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    match detail.diff.presentation {
+        DiffPresentation::Unstaged => {
+            entries.push("Stage selected hunk".to_string());
+            if repo_mode.diff_line_cursor.is_some() {
+                entries.push("Stage selected line range".to_string());
+            }
+        }
+        DiffPresentation::Staged => {
+            entries.push("Unstage selected hunk".to_string());
+            if repo_mode.diff_line_cursor.is_some() {
+                entries.push("Unstage selected line range".to_string());
+            }
+        }
+        DiffPresentation::Comparison => {}
+    }
+
+    entries
 }
 
 fn compile_keybinding_overrides(config: &AppConfig) -> BTreeMap<String, Vec<String>> {
@@ -5654,17 +5758,17 @@ fn repo_help_text(state: &AppState) -> String {
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  Enter apply hunk  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  Enter apply hunk  Ctrl+P patch menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
                     "Branches pane  j/k move  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
                     "Remotes pane  j/k move  Enter branches  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
-                    "Rebase pane  c continue  s skip  A abort  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  j/k scroll  0 main pane  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Rebase pane  c continue  s skip  A abort  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  j/k scroll  0 main pane  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Stash {
                     match repo_mode.stash_subview_mode {
                         StashSubviewMode::List => {
@@ -6765,6 +6869,85 @@ mod tests {
     }
 
     #[test]
+    fn route_repository_commits_merge_rebase_menu_key() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "m".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::MergeRebaseOptions)
+        );
+    }
+
+    #[test]
+    fn route_repository_status_patch_menu_key() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                diff_line_cursor: Some(1),
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+p".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::PatchOptions)
+        );
+    }
+
+    #[test]
     fn route_repository_status_uppercase_refresh_triggers_deep_refresh() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {
@@ -6849,6 +7032,65 @@ mod tests {
             )]);
         let mut log_app = TuiApp::new(recent_state, AppConfig::default());
         assert!(log_app.render_to_string().contains("Ran fetch"));
+    }
+
+    #[test]
+    fn render_menu_modal_shows_merge_rebase_and_patch_entries() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let mut merge_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![super_lazygit_core::Modal::new(
+                super_lazygit_core::ModalKind::Menu,
+                "Merge / rebase options",
+            )],
+            pending_menu: Some(super_lazygit_core::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: super_lazygit_core::MenuOperation::MergeRebaseOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+        let mut merge_app = TuiApp::new(merge_state.clone(), AppConfig::default());
+        let merge_render = merge_app.render_to_string();
+        assert!(merge_render.contains("Interactive rebase from selected commit"));
+
+        merge_state.modal_stack = vec![super_lazygit_core::Modal::new(
+            super_lazygit_core::ModalKind::Menu,
+            "Patch options",
+        )];
+        merge_state.pending_menu = Some(super_lazygit_core::PendingMenu {
+            repo_id: RepoId::new("/tmp/repo-1"),
+            operation: super_lazygit_core::MenuOperation::PatchOptions,
+            selected_index: 0,
+            return_focus: PaneId::RepoDetail,
+        });
+        merge_state.repo_mode = Some(RepoModeState {
+            current_repo_id: RepoId::new("/tmp/repo-1"),
+            active_subview: RepoSubview::Status,
+            diff_line_cursor: Some(1),
+            detail: Some(sample_repo_detail()),
+            ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+        });
+        let mut patch_app = TuiApp::new(merge_state, AppConfig::default());
+        let patch_render = patch_app.render_to_string();
+        assert!(patch_render.contains("Stage selected hunk"));
     }
 
     #[test]

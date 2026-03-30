@@ -54,7 +54,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `7` | Switch detail pane to `Reflog` |
 | `8` | Switch detail pane to `Worktrees` |
 | `b` | Switch detail pane to `Submodules` |
-| `m` | Switch detail pane to `Remotes` |
+| `m` in most `Repo detail` contexts | Switch detail pane to `Remotes` |
 | `9` | Switch detail pane to `Remote Branches` |
 | `t` | Switch detail pane to `Tags` |
 | `0` in `Repo detail` | Return focus to the last active main pane (`Working tree` or `Staged changes`) |
@@ -65,6 +65,8 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `Ctrl+R` | Open the recent-repositories menu |
 | `:` | Open the shell-command prompt for the current repository root |
 | `@` | Open the command-log menu for recent session messages |
+| `m` in `Commits` or `Rebase` detail | Open the merge/rebase options menu for the shipped flows in the current context |
+| `Ctrl+P` in `Status detail` | Open the patch-options menu for shipped hunk/line patch flows |
 | `f` | Open fetch confirmation |
 | `p` | Open pull confirmation |
 | `P` | Open push confirmation |
@@ -114,6 +116,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Up` | Scroll the detail pane up |
 | `Enter` or `Space` | Stage or unstage the selected hunk, depending on diff orientation |
 | `L` | Stage or unstage the selected line range, depending on diff orientation |
+| `Ctrl+P` | Open the patch-options menu for the currently selected diff |
 | `D` | Open discard confirmation for the selected file |
 | `e` | Open the selected diff file in the configured editor |
 | `a` | Open the all-branches commit graph, newest first |
@@ -191,6 +194,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `A` | Switch to the all-branches commit graph, oldest first |
 | `n` | Open create-branch-from-commit prompt |
 | `i` | Start interactive rebase from the selected commit |
+| `m` | Open the merge/rebase options menu for the selected commit or active rebase |
 | `A` | Open amend-selected-commit confirmation |
 | `F` | Open fixup-selected-commit confirmation |
 | `R` | Reword the selected commit using the configured Git editor |
@@ -235,6 +239,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `c` | Continue rebase |
 | `s` | Skip the current rebase step |
 | `A` | Abort rebase |
+| `m` | Open the merge/rebase options menu for the active rebase |
 
 ### Stash detail subview
 

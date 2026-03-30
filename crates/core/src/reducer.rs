@@ -970,6 +970,40 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::OpenMergeRebaseOptions => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if merge_rebase_menu_entries(state).is_empty() {
+                    push_warning(
+                        state,
+                        "Merge/rebase options are only available from commit history or an active rebase.",
+                    );
+                } else {
+                    open_menu(state, repo_id, MenuOperation::MergeRebaseOptions);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenPatchOptions => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if patch_menu_entries(state).is_empty() {
+                    push_warning(
+                        state,
+                        "Patch options are only available from staged or unstaged status diffs.",
+                    );
+                } else {
+                    open_menu(state, repo_id, MenuOperation::PatchOptions);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::OpenRecentRepos => {
             if let Some(repo_id) = state
                 .repo_mode
@@ -3112,9 +3146,17 @@ fn parse_remote_input(value: &str) -> Option<(String, String)> {
     Some((remote_name.to_string(), remote_url.to_string()))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MenuEntry {
+    label: String,
+    action: Action,
+}
+
 fn menu_title(operation: MenuOperation) -> &'static str {
     match operation {
         MenuOperation::StashOptions => "Stash options",
+        MenuOperation::MergeRebaseOptions => "Merge / rebase options",
+        MenuOperation::PatchOptions => "Patch options",
         MenuOperation::RecentRepos => "Recent repositories",
         MenuOperation::CommandLog => "Command log",
     }
@@ -3123,6 +3165,8 @@ fn menu_title(operation: MenuOperation) -> &'static str {
 fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
     match operation {
         MenuOperation::StashOptions => 5,
+        MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
+        MenuOperation::PatchOptions => patch_menu_entries(state).len(),
         MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
         MenuOperation::CommandLog => state.status_messages.len(),
     }
@@ -3151,13 +3195,17 @@ fn step_menu_selection(state: &mut AppState, step: isize) -> bool {
 }
 
 fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> bool {
-    let Some(menu) = state.pending_menu.as_ref() else {
+    let Some((operation, selected_index)) = state
+        .pending_menu
+        .as_ref()
+        .map(|menu| (menu.operation, menu.selected_index))
+    else {
         return false;
     };
 
-    match menu.operation {
+    match operation {
         MenuOperation::StashOptions => {
-            let mode = match menu.selected_index {
+            let mode = match selected_index {
                 0 => StashMode::Tracked,
                 1 => StashMode::KeepIndex,
                 2 => StashMode::IncludeUntracked,
@@ -3192,9 +3240,45 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
             );
             true
         }
+        MenuOperation::MergeRebaseOptions => {
+            let entries = merge_rebase_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::PatchOptions => {
+            let entries = patch_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
         MenuOperation::RecentRepos => {
             let repo_ids = recent_repo_menu_repo_ids(state);
-            let Some(repo_id) = repo_ids.get(menu.selected_index).cloned() else {
+            let Some(repo_id) = repo_ids.get(selected_index).cloned() else {
                 return false;
             };
             state.pending_menu.take();
@@ -3213,6 +3297,120 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
             true
         }
     }
+}
+
+fn merge_rebase_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let mut entries = Vec::new();
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return entries;
+    };
+
+    if let Some(detail) = repo_mode.detail.as_ref() {
+        if repo_detail_has_rebase(detail) {
+            entries.extend([
+                MenuEntry {
+                    label: "Continue active rebase".to_string(),
+                    action: Action::ContinueRebase,
+                },
+                MenuEntry {
+                    label: "Skip current rebase step".to_string(),
+                    action: Action::SkipRebase,
+                },
+                MenuEntry {
+                    label: "Abort active rebase".to_string(),
+                    action: Action::AbortRebase,
+                },
+            ]);
+        }
+
+        if repo_mode.active_subview == crate::state::RepoSubview::Commits
+            && repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::History
+        {
+            entries.extend([
+                MenuEntry {
+                    label: "Interactive rebase from selected commit".to_string(),
+                    action: Action::StartInteractiveRebase,
+                },
+                MenuEntry {
+                    label: "Amend older commit at selection".to_string(),
+                    action: Action::AmendSelectedCommit,
+                },
+                MenuEntry {
+                    label: "Fixup onto selected commit".to_string(),
+                    action: Action::FixupSelectedCommit,
+                },
+                MenuEntry {
+                    label: "Reword selected commit".to_string(),
+                    action: Action::RewordSelectedCommit,
+                },
+                MenuEntry {
+                    label: "Reword selected commit in editor".to_string(),
+                    action: Action::RewordSelectedCommitWithEditor,
+                },
+            ]);
+        }
+
+        entries.push(MenuEntry {
+            label: if detail.merge_state == MergeState::None {
+                "Open rebase / merge panel".to_string()
+            } else {
+                "Open rebase / merge status panel".to_string()
+            },
+            action: Action::SwitchRepoSubview(crate::state::RepoSubview::Rebase),
+        });
+    }
+
+    entries
+}
+
+fn patch_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let mut entries = Vec::new();
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return entries;
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return entries;
+    };
+
+    match detail.diff.presentation {
+        DiffPresentation::Unstaged => {
+            if selected_hunk_patch_job(state, PatchApplicationMode::Stage).is_some() {
+                entries.push(MenuEntry {
+                    label: "Stage selected hunk".to_string(),
+                    action: Action::StageSelectedHunk,
+                });
+            }
+            if matches!(
+                selected_line_patch_job(state, PatchApplicationMode::Stage),
+                Ok(Some(_))
+            ) {
+                entries.push(MenuEntry {
+                    label: "Stage selected line range".to_string(),
+                    action: Action::StageSelectedLines,
+                });
+            }
+        }
+        DiffPresentation::Staged => {
+            if selected_hunk_patch_job(state, PatchApplicationMode::Unstage).is_some() {
+                entries.push(MenuEntry {
+                    label: "Unstage selected hunk".to_string(),
+                    action: Action::UnstageSelectedHunk,
+                });
+            }
+            if matches!(
+                selected_line_patch_job(state, PatchApplicationMode::Unstage),
+                Ok(Some(_))
+            ) {
+                entries.push(MenuEntry {
+                    label: "Unstage selected line range".to_string(),
+                    action: Action::UnstageSelectedLines,
+                });
+            }
+        }
+        DiffPresentation::Comparison => {}
+    }
+
+    entries
 }
 
 fn recent_repo_menu_repo_ids(state: &AppState) -> Vec<crate::state::RepoId> {
@@ -7487,6 +7685,288 @@ mod tests {
                 0,
                 PaneId::RepoUnstaged
             ))
+        );
+    }
+
+    #[test]
+    fn open_merge_rebase_options_opens_menu_from_commit_history() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head123".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old456".to_string(),
+                            summary: "Older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenMergeRebaseOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                repo_id,
+                MenuOperation::MergeRebaseOptions,
+                0,
+                PaneId::RepoDetail
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_merge_rebase_options_selection_dispatches_selected_action() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Merge / rebase options",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::MergeRebaseOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head123".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old456".to_string(),
+                            summary: "Older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::StartInteractiveRebase {
+                commit: "older".to_string(),
+                summary: "old456 Older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn open_patch_options_opens_menu_from_status_diff() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                diff_line_cursor: Some(2),
+                detail: Some(RepoDetail {
+                    diff: DiffModel {
+                        selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                        presentation: DiffPresentation::Unstaged,
+                        lines: vec![
+                            DiffLine {
+                                kind: DiffLineKind::HunkHeader,
+                                content: "@@ -1 +1 @@".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-old".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+new".to_string(),
+                            },
+                        ],
+                        hunks: vec![DiffHunk {
+                            header: "@@ -1 +1 @@".to_string(),
+                            selection: SelectedHunk {
+                                old_start: 1,
+                                old_lines: 1,
+                                new_start: 1,
+                                new_lines: 1,
+                            },
+                            start_line_index: 0,
+                            end_line_index: 3,
+                        }],
+                        selected_hunk: Some(0),
+                        hunk_count: 1,
+                    },
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenPatchOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((repo_id, MenuOperation::PatchOptions, 0, PaneId::RepoDetail))
+        );
+    }
+
+    #[test]
+    fn submit_patch_options_selection_dispatches_selected_patch_action() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Patch options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::PatchOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail {
+                    diff: DiffModel {
+                        selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                        presentation: DiffPresentation::Unstaged,
+                        lines: vec![
+                            DiffLine {
+                                kind: DiffLineKind::HunkHeader,
+                                content: "@@ -1,4 +1,4 @@".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-before".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+after".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Context,
+                                content: " shared".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Removal,
+                                content: "-tail before".to_string(),
+                            },
+                            DiffLine {
+                                kind: DiffLineKind::Addition,
+                                content: "+tail after".to_string(),
+                            },
+                        ],
+                        hunks: vec![DiffHunk {
+                            header: "@@ -1,4 +1,4 @@".to_string(),
+                            selection: SelectedHunk {
+                                old_start: 1,
+                                old_lines: 4,
+                                new_start: 1,
+                                new_lines: 4,
+                            },
+                            start_line_index: 0,
+                            end_line_index: 6,
+                        }],
+                        selected_hunk: Some(0),
+                        hunk_count: 1,
+                    },
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+        let job_id = JobId::new("git:repo-1:stage-hunk");
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RunPatchSelection(crate::effect::PatchSelectionJob {
+                    job_id,
+                    repo_id,
+                    path: std::path::PathBuf::from("src/lib.rs"),
+                    mode: crate::effect::PatchApplicationMode::Stage,
+                    hunks: vec![
+                        SelectedHunk {
+                            old_start: 1,
+                            old_lines: 1,
+                            new_start: 1,
+                            new_lines: 1,
+                        },
+                        SelectedHunk {
+                            old_start: 3,
+                            old_lines: 1,
+                            new_start: 3,
+                            new_lines: 1,
+                        },
+                    ],
+                }),
+                Effect::ScheduleRender,
+            ]
         );
     }
 
