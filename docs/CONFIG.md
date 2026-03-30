@@ -86,7 +86,7 @@ Supported routed action IDs:
 - Rebase detail: `continue_rebase`, `skip_rebase`, `abort_rebase`, `scroll_repo_detail_down`, `scroll_repo_detail_up`
 - Stash detail: `select_next_stash`, `select_previous_stash`, `apply_selected_stash`, `open_create_branch_from_stash_prompt`, `open_rename_stash_prompt`, `pop_selected_stash`, `drop_selected_stash`
 - Reflog detail: `select_next_reflog`, `select_previous_reflog`, `restore_selected_reflog_entry`
-- Worktrees detail: `select_next_worktree`, `select_previous_worktree`, `create_worktree`, `remove_selected_worktree`
+- Worktrees detail: `select_next_worktree`, `select_previous_worktree`, `create_worktree`, `open_in_editor`, `remove_selected_worktree`
 - Commit box: `cancel_commit_box`, `submit_commit_box`, `backspace_commit_input`
 
 ### `diagnostics`

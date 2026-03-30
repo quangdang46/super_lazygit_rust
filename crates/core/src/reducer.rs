@@ -2430,6 +2430,9 @@ fn selected_repo_editor_path(
                 .as_ref()
                 .and_then(|detail| detail.diff.selected_path.clone())
         }
+        PaneId::RepoDetail if repo_mode.active_subview == crate::state::RepoSubview::Worktrees => {
+            selected_worktree_item(repo_mode).map(|worktree| worktree.path.clone())
+        }
         _ => None,
     }?;
 
@@ -3129,6 +3132,64 @@ mod tests {
             vec![Effect::OpenEditor {
                 cwd: repo_root.clone(),
                 target: repo_root.join("src/lib.rs"),
+            }]
+        );
+    }
+
+    #[test]
+    fn open_in_editor_from_worktree_detail_targets_selected_worktree() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let worktree_path = std::path::PathBuf::from("/tmp/repo-1-feature");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..crate::state::WorkspaceState::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(RepoDetail {
+                    worktrees: vec![
+                        crate::state::WorktreeItem {
+                            path: repo_root.clone(),
+                            branch: Some("main".to_string()),
+                        },
+                        crate::state::WorktreeItem {
+                            path: worktree_path.clone(),
+                            branch: Some("feature".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                worktree_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenInEditor));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::OpenEditor {
+                cwd: repo_root,
+                target: worktree_path,
             }]
         );
     }

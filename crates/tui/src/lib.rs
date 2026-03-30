@@ -1091,8 +1091,17 @@ impl TuiApp {
                             return Some(Action::SelectPreviousWorktree);
                         }
 
-                        if self.binding_matches_action("create_worktree", raw, normalized, &["c"]) {
+                        if self.binding_matches_action(
+                            "create_worktree",
+                            raw,
+                            normalized,
+                            &["n", "c"],
+                        ) {
                             return Some(Action::CreateWorktree);
+                        }
+
+                        if self.binding_matches_action("open_in_editor", raw, normalized, &["o"]) {
+                            return Some(Action::OpenInEditor);
                         }
 
                         if self.binding_matches_action(
@@ -2512,7 +2521,7 @@ fn repo_worktree_lines(
             "Branch: {}",
             selected_worktree.branch.as_deref().unwrap_or("(detached)")
         )),
-        Line::from("c creates. d removes the selected linked worktree."),
+        Line::from("n creates. o opens selected worktree. d removes linked worktree."),
         Line::from(""),
     ];
 
@@ -5892,10 +5901,25 @@ mod tests {
     }
 
     #[test]
-    fn repo_mode_worktree_detail_routes_selection_create_and_remove() {
+    fn repo_mode_worktree_detail_routes_selection_create_open_and_remove() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                repo_summaries: std::collections::BTreeMap::from([(
+                    RepoId::new("repo-1"),
+                    RepoSummary {
+                        repo_id: RepoId::new("repo-1"),
+                        display_name: "repo-1".to_string(),
+                        display_path: "/tmp/repo-1".to_string(),
+                        real_path: PathBuf::from("/tmp/repo-1"),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                ..Default::default()
+            },
             repo_mode: Some(RepoModeState {
                 current_repo_id: RepoId::new("repo-1"),
                 active_subview: RepoSubview::Worktrees,
@@ -5919,7 +5943,7 @@ mod tests {
 
         let mut create_app = TuiApp::new(down.state.clone(), AppConfig::default());
         let create = create_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
-            key: "c".to_string(),
+            key: "n".to_string(),
         })));
         assert_eq!(create.state.focused_pane, PaneId::Modal);
         assert_eq!(
@@ -5929,6 +5953,18 @@ mod tests {
                 .as_ref()
                 .map(|prompt| prompt.operation.clone()),
             Some(super_lazygit_core::InputPromptOperation::CreateWorktree)
+        );
+
+        let mut open_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let open = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert_eq!(
+            open.effects,
+            vec![super_lazygit_core::Effect::OpenEditor {
+                cwd: PathBuf::from("/tmp/repo-1"),
+                target: PathBuf::from("/tmp/repo-1-feature"),
+            }]
         );
 
         let mut remove_app = TuiApp::new(down.state, AppConfig::default());
@@ -6959,7 +6995,8 @@ mod tests {
         assert!(rendered.contains("Detail: Worktrees"));
         assert!(rendered.contains("Selected: /tmp/repo-1-feature"));
         assert!(rendered.contains("Branch: feature"));
-        assert!(rendered.contains("c creates. d removes the selected linked worktree."));
+        assert!(rendered.contains("n creates."));
+        assert!(rendered.contains("opens selected worktree"));
         assert!(rendered.contains("/tmp/repo-1  [main]"));
         assert!(rendered.contains("/tmp/repo-1-feature  [feature]"));
     }
