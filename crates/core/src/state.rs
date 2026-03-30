@@ -192,6 +192,7 @@ pub enum MenuOperation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StashMode {
     Tracked,
+    KeepIndex,
     IncludeUntracked,
     Staged,
     Unstaged,

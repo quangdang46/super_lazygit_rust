@@ -675,32 +675,28 @@ impl GitBackend for CliGitBackend {
                 format!("Deleted {branch_name}")
             }
             GitCommand::CreateStash { message, mode } => {
-                let mut command = Command::new("git");
-                command.arg("stash").arg("push").current_dir(&repo_path);
                 match mode {
-                    StashMode::Tracked => {}
+                    StashMode::Tracked => stash_push(&repo_path, &[], message.as_deref())?,
+                    StashMode::KeepIndex => {
+                        stash_push(&repo_path, &["--keep-index"], message.as_deref())?
+                    }
                     StashMode::IncludeUntracked => {
-                        command.arg("--include-untracked");
+                        stash_push(&repo_path, &["--include-untracked"], message.as_deref())?
                     }
-                    StashMode::Staged => {
-                        command.arg("--staged");
-                    }
-                    StashMode::Unstaged => {
-                        command.arg("--keep-index");
-                    }
-                }
-                if let Some(message) = message {
-                    command.arg("-m").arg(message);
-                }
-                let output = command.output().map_err(io_error)?;
-                if !output.status.success() {
-                    return Err(command_failure(output));
-                }
+                    StashMode::Staged => stash_push(&repo_path, &["--staged"], message.as_deref())?,
+                    StashMode::Unstaged => stash_unstaged_changes(&repo_path, message.as_deref())?,
+                };
                 match (mode, message) {
                     (StashMode::Tracked, Some(message)) => {
                         format!("Stashed tracked changes: {message}")
                     }
                     (StashMode::Tracked, None) => "Stashed tracked changes".to_string(),
+                    (StashMode::KeepIndex, Some(message)) => {
+                        format!("Stashed tracked changes and kept staged changes: {message}")
+                    }
+                    (StashMode::KeepIndex, None) => {
+                        "Stashed tracked changes and kept staged changes".to_string()
+                    }
                     (StashMode::IncludeUntracked, Some(message)) => {
                         format!("Stashed all changes including untracked: {message}")
                     }
@@ -879,6 +875,10 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
             mode: StashMode::Tracked,
             ..
         } => "create_stash",
+        GitCommand::CreateStash {
+            mode: StashMode::KeepIndex,
+            ..
+        } => "create_stash_keep_index",
         GitCommand::CreateStash {
             mode: StashMode::IncludeUntracked,
             ..
@@ -1616,6 +1616,48 @@ fn stdout_raw_string(output: Output) -> GitResult<String> {
     String::from_utf8(output.stdout).map_err(|error| GitError::OperationFailed {
         message: error.to_string(),
     })
+}
+
+fn stash_push(repo_path: &Path, extra_args: &[&str], message: Option<&str>) -> GitResult<()> {
+    let mut command = Command::new("git");
+    command.arg("stash").arg("push").current_dir(repo_path);
+    command.args(extra_args);
+    if let Some(message) = message {
+        command.arg("-m").arg(message);
+    }
+    let output = command.output().map_err(io_error)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    Ok(())
+}
+
+fn stash_unstaged_changes(repo_path: &Path, message: Option<&str>) -> GitResult<()> {
+    if has_staged_entries(repo_path)? {
+        git(
+            repo_path,
+            [
+                "commit",
+                "--no-verify",
+                "-m",
+                "[lazygit] stashing unstaged changes",
+            ],
+        )?;
+        if let Err(error) = stash_push(repo_path, &[], message) {
+            let _ = git(repo_path, ["reset", "--soft", "HEAD^"]);
+            return Err(error);
+        }
+        git(repo_path, ["reset", "--soft", "HEAD^"])?;
+        Ok(())
+    } else {
+        stash_push(repo_path, &[], message)
+    }
+}
+
+fn has_staged_entries(repo_path: &Path) -> GitResult<bool> {
+    Ok(!git_stdout(repo_path, ["diff", "--cached", "--name-only"])?
+        .trim()
+        .is_empty())
 }
 
 fn command_failure(output: Output) -> GitError {
@@ -2917,6 +2959,38 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_creates_keep_index_stash_entry() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let stashed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-stash-keep-index"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateStash {
+                    message: Some("index-safe checkpoint".to_string()),
+                    mode: StashMode::KeepIndex,
+                },
+            })
+            .expect("stash push --keep-index should succeed");
+
+        assert_eq!(stashed.repo_id, repo_id);
+        assert_eq!(
+            stashed.summary,
+            "Stashed tracked changes and kept staged changes: index-safe checkpoint"
+        );
+        assert!(repo
+            .stash_list()
+            .expect("stash list")
+            .contains("index-safe checkpoint"));
+        assert_eq!(
+            repo.status_porcelain().expect("status"),
+            "A  staged.txt\n?? untracked.txt"
+        );
+    }
+
+    #[test]
     fn cli_backend_creates_stash_including_untracked_entry() {
         let repo = staged_and_unstaged_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -2976,7 +3050,7 @@ mod tests {
 
     #[test]
     fn cli_backend_creates_unstaged_only_stash_entry() {
-        let repo = staged_and_unstaged_repo().expect("fixture repo");
+        let repo = mixed_staged_and_unstaged_file_repo().expect("fixture repo");
         let backend = CliGitBackend;
         let repo_id = RepoId::new(repo.path().display().to_string());
 
@@ -3000,10 +3074,43 @@ mod tests {
             .stash_list()
             .expect("stash list")
             .contains("worktree checkpoint"));
-        assert_eq!(
-            repo.status_porcelain().expect("status"),
-            "A  staged.txt\n?? untracked.txt"
-        );
+        assert_eq!(repo.status_porcelain().expect("status"), "M  mixed.txt");
+        let stashed_patch = git_stdout_raw(repo.path(), ["stash", "show", "-p", "stash@{0}"])
+            .expect("stash show should succeed");
+        assert!(stashed_patch.contains("-2\n+2 unstaged"));
+        assert!(!stashed_patch.contains("-1\n+1 staged"));
+    }
+
+    #[test]
+    fn cli_backend_keep_index_stash_captures_index_changes_in_entry() {
+        let repo = mixed_staged_and_unstaged_file_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let stashed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-stash-keep-index-mixed"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateStash {
+                    message: Some("keep-index mixed checkpoint".to_string()),
+                    mode: StashMode::KeepIndex,
+                },
+            })
+            .expect("stash push --keep-index should succeed");
+
+        assert_eq!(stashed.repo_id, repo_id);
+        assert_eq!(repo.status_porcelain().expect("status"), "M  mixed.txt");
+        let stashed_patch = git_stdout_raw(repo.path(), ["stash", "show", "-p", "stash@{0}"])
+            .expect("stash show should succeed");
+        assert!(stashed_patch.contains("+1 staged"));
+        assert!(stashed_patch.contains("+2 unstaged"));
+        let stashed_index_patch = git_stdout_raw(
+            repo.path(),
+            ["diff", "stash@{0}^1", "stash@{0}^2", "--", "mixed.txt"],
+        )
+        .expect("stash index diff should succeed");
+        assert!(stashed_index_patch.contains("+1 staged"));
+        assert!(!stashed_index_patch.contains("+2 unstaged"));
     }
 
     #[test]
@@ -4378,6 +4485,17 @@ mod tests {
             "multi.txt",
             "one\ntwo staged\nthree staged\nfour staged\nfive\n",
         )?;
+        Ok(repo)
+    }
+
+    fn mixed_staged_and_unstaged_file_repo() -> std::io::Result<super_lazygit_test_support::TempRepo>
+    {
+        let repo = temp_repo()?;
+        repo.write_file("mixed.txt", "1\n2\n3\n")?;
+        repo.commit_all("initial")?;
+        repo.write_file("mixed.txt", "1 staged\n2\n3\n")?;
+        repo.stage("mixed.txt")?;
+        repo.write_file("mixed.txt", "1 staged\n2 unstaged\n3\n")?;
         Ok(repo)
     }
 

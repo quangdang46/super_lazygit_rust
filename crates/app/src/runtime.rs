@@ -597,6 +597,10 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
             ..
         } => "create_stash",
         GitCommand::CreateStash {
+            mode: super_lazygit_core::StashMode::KeepIndex,
+            ..
+        } => "create_stash_keep_index",
+        GitCommand::CreateStash {
             mode: super_lazygit_core::StashMode::IncludeUntracked,
             ..
         } => "create_stash_including_untracked",

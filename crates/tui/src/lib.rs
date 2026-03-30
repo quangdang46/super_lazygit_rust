@@ -3086,6 +3086,10 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
                 "Enter an optional stash message. Leave it blank to use Git's default tracked-changes stash message."
                     .to_string()
             }
+            super_lazygit_core::StashMode::KeepIndex => {
+                "Enter an optional stash message. Leave it blank to stash tracked worktree changes and keep staged changes in place."
+                    .to_string()
+            }
             super_lazygit_core::StashMode::IncludeUntracked => {
                 "Enter an optional stash message. Leave it blank to use Git's default stash message while including untracked files."
                     .to_string()
@@ -3095,7 +3099,7 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
                     .to_string()
             }
             super_lazygit_core::StashMode::Unstaged => {
-                "Enter an optional stash message. Leave it blank to stash only tracked worktree changes and keep staged changes in place."
+                "Enter an optional stash message. Leave it blank to stash only tracked unstaged changes. If staged changes exist, they are restored after the stash is created."
                     .to_string()
             }
         },
@@ -3123,6 +3127,7 @@ fn menu_lines(menu: &super_lazygit_core::PendingMenu, theme: Theme) -> Vec<Line<
     let items: &[&str] = match menu.operation {
         super_lazygit_core::MenuOperation::StashOptions => &[
             "Stash tracked changes",
+            "Stash tracked changes and keep staged changes",
             "Stash all changes including untracked",
             "Stash staged changes",
             "Stash unstaged changes",
@@ -5248,7 +5253,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_modal_routes_navigation_and_submit_stash_prompt() {
+    fn menu_modal_routes_navigation_and_submit_keep_index_stash_prompt() {
         let state = AppState {
             focused_pane: PaneId::Modal,
             modal_stack: vec![super_lazygit_core::Modal::new(
@@ -5294,11 +5299,26 @@ mod tests {
                 .map(|prompt| (&prompt.operation, prompt.return_focus)),
             Some((
                 &super_lazygit_core::InputPromptOperation::CreateStash {
-                    mode: super_lazygit_core::StashMode::IncludeUntracked,
+                    mode: super_lazygit_core::StashMode::KeepIndex,
                 },
                 PaneId::RepoStaged,
             ))
         );
+    }
+
+    #[test]
+    fn input_prompt_copy_distinguishes_keep_index_from_unstaged_stash() {
+        let keep_index =
+            input_prompt_copy(&super_lazygit_core::InputPromptOperation::CreateStash {
+                mode: super_lazygit_core::StashMode::KeepIndex,
+            });
+        let unstaged = input_prompt_copy(&super_lazygit_core::InputPromptOperation::CreateStash {
+            mode: super_lazygit_core::StashMode::Unstaged,
+        });
+
+        assert!(keep_index.contains("keep staged changes in place"));
+        assert!(unstaged.contains("stash only tracked unstaged changes"));
+        assert!(unstaged.contains("restored after the stash is created"));
     }
 
     #[test]

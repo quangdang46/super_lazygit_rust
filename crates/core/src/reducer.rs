@@ -1484,6 +1484,7 @@ fn has_local_changes(detail: &crate::state::RepoDetail) -> bool {
 fn stash_mode_available(detail: &crate::state::RepoDetail, mode: StashMode) -> bool {
     match mode {
         StashMode::Tracked => has_stashable_changes(detail),
+        StashMode::KeepIndex => has_unstaged_tracked_changes(detail),
         StashMode::IncludeUntracked => has_local_changes(detail),
         StashMode::Staged => staged_file_count(detail) > 0,
         StashMode::Unstaged => has_unstaged_tracked_changes(detail),
@@ -1493,6 +1494,9 @@ fn stash_mode_available(detail: &crate::state::RepoDetail, mode: StashMode) -> b
 fn stash_mode_unavailable_message(mode: StashMode) -> &'static str {
     match mode {
         StashMode::Tracked => "No tracked changes are available to stash.",
+        StashMode::KeepIndex => {
+            "No unstaged tracked changes are available to stash while keeping the index."
+        }
         StashMode::IncludeUntracked => "No local changes are available to stash.",
         StashMode::Staged => "No staged changes are available to stash.",
         StashMode::Unstaged => "No unstaged tracked changes are available to stash.",
@@ -1502,6 +1506,7 @@ fn stash_mode_unavailable_message(mode: StashMode) -> &'static str {
 fn stash_prompt_title(mode: StashMode) -> &'static str {
     match mode {
         StashMode::Tracked => "Stash tracked changes",
+        StashMode::KeepIndex => "Stash tracked changes and keep staged changes",
         StashMode::IncludeUntracked => "Stash all changes including untracked",
         StashMode::Staged => "Stash staged changes",
         StashMode::Unstaged => "Stash unstaged changes",
@@ -1511,6 +1516,7 @@ fn stash_prompt_title(mode: StashMode) -> &'static str {
 fn stash_operation_summary(mode: StashMode, message: Option<&str>) -> String {
     let prefix = match mode {
         StashMode::Tracked => "Stashed tracked changes",
+        StashMode::KeepIndex => "Stashed tracked changes and kept staged changes",
         StashMode::IncludeUntracked => "Stashed all changes including untracked",
         StashMode::Staged => "Stashed staged changes",
         StashMode::Unstaged => "Stashed unstaged changes",
@@ -1922,7 +1928,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
 
 fn menu_item_count(operation: MenuOperation) -> usize {
     match operation {
-        MenuOperation::StashOptions => 4,
+        MenuOperation::StashOptions => 5,
     }
 }
 
@@ -1947,8 +1953,9 @@ fn submit_menu_selection(state: &mut AppState) -> bool {
     let mode = match menu.operation {
         MenuOperation::StashOptions => match menu.selected_index {
             0 => StashMode::Tracked,
-            1 => StashMode::IncludeUntracked,
-            2 => StashMode::Staged,
+            1 => StashMode::KeepIndex,
+            2 => StashMode::IncludeUntracked,
+            3 => StashMode::Staged,
             _ => StashMode::Unstaged,
         },
     };
@@ -2883,6 +2890,10 @@ fn job_suffix(command: &GitCommand) -> &'static str {
             mode: StashMode::Tracked,
             ..
         } => "create-stash",
+        GitCommand::CreateStash {
+            mode: StashMode::KeepIndex,
+            ..
+        } => "create-stash-keep-index",
         GitCommand::CreateStash {
             mode: StashMode::IncludeUntracked,
             ..
@@ -3890,7 +3901,7 @@ mod tests {
     }
 
     #[test]
-    fn submit_stash_options_selection_opens_include_untracked_prompt() {
+    fn submit_stash_options_selection_opens_keep_index_prompt() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
             mode: AppMode::Repository,
@@ -3900,6 +3911,98 @@ mod tests {
                 repo_id: repo_id.clone(),
                 operation: MenuOperation::StashOptions,
                 selected_index: 1,
+                return_focus: PaneId::RepoStaged,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("tracked.txt"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.return_focus,
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::CreateStash {
+                    mode: StashMode::KeepIndex,
+                },
+                PaneId::RepoStaged,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_stash_options_selection_warns_when_keep_index_scope_is_unavailable() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Stash options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id,
+                operation: MenuOperation::StashOptions,
+                selected_index: 1,
+                return_focus: PaneId::RepoStaged,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("untracked.txt"),
+                        kind: FileStatusKind::Untracked,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Untracked),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("No unstaged tracked changes are available to stash while keeping the index.")
+        );
+    }
+
+    #[test]
+    fn submit_stash_options_selection_opens_include_untracked_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Stash options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::StashOptions,
+                selected_index: 2,
                 return_focus: PaneId::RepoStaged,
             }),
             repo_mode: Some(RepoModeState {
@@ -3948,7 +4051,7 @@ mod tests {
             pending_menu: Some(crate::state::PendingMenu {
                 repo_id: repo_id.clone(),
                 operation: MenuOperation::StashOptions,
-                selected_index: 2,
+                selected_index: 3,
                 return_focus: PaneId::RepoStaged,
             }),
             repo_mode: Some(RepoModeState {
@@ -3997,7 +4100,7 @@ mod tests {
             pending_menu: Some(crate::state::PendingMenu {
                 repo_id,
                 operation: MenuOperation::StashOptions,
-                selected_index: 2,
+                selected_index: 3,
                 return_focus: PaneId::RepoStaged,
             }),
             repo_mode: Some(RepoModeState {
@@ -4040,7 +4143,7 @@ mod tests {
             pending_menu: Some(crate::state::PendingMenu {
                 repo_id: repo_id.clone(),
                 operation: MenuOperation::StashOptions,
-                selected_index: 3,
+                selected_index: 4,
                 return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState {
@@ -4089,7 +4192,7 @@ mod tests {
             pending_menu: Some(crate::state::PendingMenu {
                 repo_id,
                 operation: MenuOperation::StashOptions,
-                selected_index: 3,
+                selected_index: 4,
                 return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState {
