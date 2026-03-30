@@ -157,6 +157,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::SelectNextRemoteBranch => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_remote_branch_selection(repo_mode, 1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousRemoteBranch => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if step_remote_branch_selection(repo_mode, -1) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::SelectNextCommit => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_commit_selection(repo_mode, 1) {
@@ -177,6 +191,31 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
             }) else {
                 push_warning(state, "Select a branch before opening its commits.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                clear_repo_subview_filter_focus(repo_mode);
+                repo_mode.active_subview = crate::state::RepoSubview::Commits;
+                repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                repo_mode.commit_history_mode = CommitHistoryMode::Linear;
+                repo_mode.commit_history_ref = Some(branch_ref);
+                repo_mode.pending_commit_selection_oid = None;
+                repo_mode.diff_scroll = 0;
+                close_commit_box(repo_mode);
+                sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
+            }
+            state.focused_pane = PaneId::RepoDetail;
+            effects.push(load_repo_detail_effect(state, repo_id));
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenSelectedRemoteBranchCommits => {
+            let Some((repo_id, branch_ref)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_remote_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) else {
+                push_warning(state, "Select a remote branch before opening its commits.");
                 effects.push(Effect::ScheduleRender);
                 return;
             };
@@ -965,6 +1004,33 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunGitCommand(job));
             }
         }
+        Action::CheckoutSelectedRemoteBranch => {
+            if let Some((repo_id, remote_branch_ref, local_branch_name)) =
+                state.repo_mode.as_ref().and_then(|repo_mode| {
+                    selected_remote_branch_item(repo_mode).map(|branch| {
+                        (
+                            repo_mode.current_repo_id.clone(),
+                            branch.name.clone(),
+                            branch.branch_name.clone(),
+                        )
+                    })
+                })
+            {
+                let summary = format!("Checkout remote branch {remote_branch_ref}");
+                let job = git_job(
+                    repo_id,
+                    GitCommand::CheckoutRemoteBranch {
+                        remote_branch_ref,
+                        local_branch_name,
+                    },
+                );
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                push_warning(state, "Select a remote branch before checking it out.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::CheckoutBranch { branch_ref } => {
             if let Some(repo_mode) = &state.repo_mode {
                 let job = git_job(
@@ -986,6 +1052,61 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     state,
                     repo_id,
                     ConfirmableOperation::DeleteBranch { branch_name },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::DeleteSelectedRemoteBranch => {
+            if let Some((repo_id, remote_name, branch_name)) =
+                state.repo_mode.as_ref().and_then(|repo_mode| {
+                    selected_remote_branch_item(repo_mode).map(|branch| {
+                        (
+                            repo_mode.current_repo_id.clone(),
+                            branch.remote_name.clone(),
+                            branch.branch_name.clone(),
+                        )
+                    })
+                })
+            {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::DeleteRemoteBranch {
+                        remote_name,
+                        branch_name,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(state, "Select a remote branch before deleting it.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::CreateLocalBranchFromSelectedRemoteBranch => {
+            if let Some((repo_id, remote_branch_ref, suggested_name)) =
+                state.repo_mode.as_ref().and_then(|repo_mode| {
+                    selected_remote_branch_item(repo_mode).map(|branch| {
+                        (
+                            repo_mode.current_repo_id.clone(),
+                            branch.name.clone(),
+                            branch.branch_name.clone(),
+                        )
+                    })
+                })
+            {
+                open_input_prompt(
+                    state,
+                    repo_id,
+                    InputPromptOperation::CreateBranchFromRemote {
+                        remote_branch_ref,
+                        suggested_name,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            } else {
+                push_warning(
+                    state,
+                    "Select a remote branch before creating a local branch from it.",
                 );
                 effects.push(Effect::ScheduleRender);
             }
@@ -1632,6 +1753,9 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
         crate::state::RepoSubview::Branches => {
             reduce_action(state, Action::OpenSelectedBranchCommits, effects);
         }
+        crate::state::RepoSubview::RemoteBranches => {
+            reduce_action(state, Action::OpenSelectedRemoteBranchCommits, effects);
+        }
         crate::state::RepoSubview::Commits => {
             let action = match repo_mode.commit_subview_mode {
                 crate::state::CommitSubviewMode::History => Action::OpenSelectedCommitFiles,
@@ -1785,6 +1909,7 @@ fn close_commit_box(repo_mode: &mut RepoModeState) {
 
 fn clear_repo_subview_filter_focus(repo_mode: &mut RepoModeState) {
     repo_mode.branches_filter.focused = false;
+    repo_mode.remote_branches_filter.focused = false;
     repo_mode.commits_filter.focused = false;
     repo_mode.commit_files_filter.focused = false;
     repo_mode.stash_filter.focused = false;
@@ -2022,6 +2147,10 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::DeleteBranch { branch_name } => {
             format!("Delete branch {branch_name}")
         }
+        ConfirmableOperation::DeleteRemoteBranch {
+            remote_name,
+            branch_name,
+        } => format!("Delete remote branch {remote_name}/{branch_name}"),
         ConfirmableOperation::PopStash { stash_ref } => format!("Pop stash {stash_ref}"),
         ConfirmableOperation::DropStash { stash_ref } => format!("Drop stash {stash_ref}"),
         ConfirmableOperation::RemoveWorktree { path } => {
@@ -2099,6 +2228,16 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Delete branch",
         ),
+        ConfirmableOperation::DeleteRemoteBranch {
+            remote_name,
+            branch_name,
+        } => (
+            GitCommand::DeleteRemoteBranch {
+                remote_name: remote_name.clone(),
+                branch_name: branch_name.clone(),
+            },
+            "Delete remote branch",
+        ),
         ConfirmableOperation::PopStash { stash_ref } => (
             GitCommand::PopStash {
                 stash_ref: stash_ref.clone(),
@@ -2165,6 +2304,11 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranchFromCommit { summary, .. } => {
             format!("New branch name from {summary}")
         }
+        InputPromptOperation::CreateBranchFromRemote {
+            remote_branch_ref, ..
+        } => {
+            format!("New local branch from {remote_branch_ref}")
+        }
         InputPromptOperation::RenameBranch { current_name } => {
             format!("Rename branch {current_name}")
         }
@@ -2188,6 +2332,9 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CheckoutBranch => String::new(),
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::CreateBranchFromCommit { .. } => String::new(),
+        InputPromptOperation::CreateBranchFromRemote { suggested_name, .. } => {
+            suggested_name.clone()
+        }
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::RenameStash { current_name, .. } => current_name.clone(),
         InputPromptOperation::CreateBranchFromStash { .. } => String::new(),
@@ -2238,6 +2385,15 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 commit,
             },
             format!("Create branch {value} from {summary}"),
+        ),
+        InputPromptOperation::CreateBranchFromRemote {
+            remote_branch_ref, ..
+        } => (
+            GitCommand::CreateBranchFromRef {
+                branch_name: value.clone(),
+                start_point: remote_branch_ref.clone(),
+            },
+            format!("Create branch {value} from {remote_branch_ref}"),
         ),
         InputPromptOperation::RenameBranch { current_name } => (
             GitCommand::RenameBranch {
@@ -2449,6 +2605,20 @@ fn sync_branch_selection(repo_mode: &mut RepoModeState) {
         })
         .unwrap_or(visible_indices[0]);
     repo_mode.branches_view.selected_index = Some(head_index);
+}
+
+fn sync_remote_branch_selection(repo_mode: &mut RepoModeState) {
+    if repo_mode.detail.is_none() {
+        repo_mode.remote_branches_view.selected_index = None;
+        return;
+    }
+
+    let visible_indices = filtered_remote_branch_indices(repo_mode);
+    repo_mode.remote_branches_view.selected_index = visible_indices
+        .iter()
+        .copied()
+        .find(|index| repo_mode.remote_branches_view.selected_index == Some(*index))
+        .or_else(|| visible_indices.first().copied());
 }
 
 fn sync_commit_selection(repo_mode: &mut RepoModeState) {
@@ -2784,6 +2954,7 @@ fn selected_status_detail_request(
 fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::state::RepoSubview) {
     match subview {
         crate::state::RepoSubview::Branches => sync_branch_selection(repo_mode),
+        crate::state::RepoSubview::RemoteBranches => sync_remote_branch_selection(repo_mode),
         crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
             crate::state::CommitSubviewMode::History => sync_commit_selection(repo_mode),
             crate::state::CommitSubviewMode::Files => sync_commit_file_selection(repo_mode),
@@ -2897,6 +3068,19 @@ fn selected_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::Bran
         })
         .or_else(|| filtered_branch_indices(repo_mode).first().copied())?;
     detail.branches.get(selected_index)
+}
+
+fn selected_remote_branch_item(
+    repo_mode: &RepoModeState,
+) -> Option<&crate::state::RemoteBranchItem> {
+    let detail = repo_mode.detail.as_ref()?;
+    let visible_indices = filtered_remote_branch_indices(repo_mode);
+    let selected_index = repo_mode
+        .remote_branches_view
+        .selected_index
+        .filter(|index| visible_indices.contains(index))
+        .or_else(|| visible_indices.first().copied())?;
+    detail.remote_branches.get(selected_index)
 }
 
 fn selected_commit_entry(repo_mode: &RepoModeState) -> Option<(usize, &crate::state::CommitItem)> {
@@ -3186,6 +3370,20 @@ fn step_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     )
 }
 
+fn step_remote_branch_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    if repo_mode.detail.is_none() {
+        repo_mode.remote_branches_view.selected_index = None;
+        return false;
+    }
+
+    let visible_indices = filtered_remote_branch_indices(repo_mode);
+    step_filtered_selection(
+        &mut repo_mode.remote_branches_view.selected_index,
+        &visible_indices,
+        step,
+    )
+}
+
 fn step_stash_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     if repo_mode.detail.is_none() {
         repo_mode.stash_view.selected_index = None;
@@ -3262,6 +3460,23 @@ fn filtered_branch_indices(repo_mode: &RepoModeState) -> Vec<usize> {
         .enumerate()
         .filter_map(|(index, branch)| {
             crate::state::branch_matches_filter(branch, &query).then_some(index)
+        })
+        .collect()
+}
+
+fn filtered_remote_branch_indices(repo_mode: &RepoModeState) -> Vec<usize> {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+    let Some(query) = repo_mode.remote_branches_filter.active_query() else {
+        return (0..detail.remote_branches.len()).collect();
+    };
+    detail
+        .remote_branches
+        .iter()
+        .enumerate()
+        .filter_map(|(index, branch)| {
+            crate::state::remote_branch_matches_filter(branch, &query).then_some(index)
         })
         .collect()
 }
@@ -3633,13 +3848,16 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::SkipRebase => "skip-rebase",
         GitCommand::CreateBranch { .. } => "create-branch",
         GitCommand::CreateBranchFromCommit { .. } => "create-branch-from-commit",
+        GitCommand::CreateBranchFromRef { .. } => "create-branch-from-ref",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
+        GitCommand::CheckoutRemoteBranch { .. } => "checkout-remote-branch",
         GitCommand::CheckoutCommit { .. } => "checkout-commit",
         GitCommand::CheckoutCommitFile { .. } => "checkout-commit-file",
         GitCommand::RenameBranch { .. } => "rename-branch",
         GitCommand::RenameStash { .. } => "rename-stash",
         GitCommand::CreateBranchFromStash { .. } => "create-branch-from-stash",
         GitCommand::DeleteBranch { .. } => "delete-branch",
+        GitCommand::DeleteRemoteBranch { .. } => "delete-remote-branch",
         GitCommand::CreateStash {
             mode: StashMode::Tracked,
             ..
@@ -4572,6 +4790,132 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("feature".to_string()),
+                    commit_history_mode: CommitHistoryMode::Linear,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn delete_selected_remote_branch_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(RepoDetail {
+                    remote_branches: vec![
+                        crate::state::RemoteBranchItem {
+                            name: "origin/main".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "main".to_string(),
+                        },
+                        crate::state::RemoteBranchItem {
+                            name: "origin/feature".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "feature".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                remote_branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DeleteSelectedRemoteBranch));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::DeleteRemoteBranch {
+                    remote_name: "origin".to_string(),
+                    branch_name: "feature".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn open_selected_remote_branch_commits_switches_to_history_and_loads_branch_ref() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(RepoDetail {
+                    remote_branches: vec![
+                        crate::state::RemoteBranchItem {
+                            name: "origin/main".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "main".to_string(),
+                        },
+                        crate::state::RemoteBranchItem {
+                            name: "origin/feature".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "feature".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                remote_branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::OpenSelectedRemoteBranchCommits),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_subview_mode),
+            Some(crate::state::CommitSubviewMode::History)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            Some("origin/feature")
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: Some("origin/feature".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
                 },
                 Effect::ScheduleRender,
@@ -5997,6 +6341,56 @@ mod tests {
     }
 
     #[test]
+    fn submit_create_branch_from_remote_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "New local branch from origin/feature",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateBranchFromRemote {
+                    remote_branch_ref: "origin/feature".to_string(),
+                    suggested_name: "feature".to_string(),
+                },
+                value: "feature-local".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-branch-from-ref");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateBranchFromRef {
+                    branch_name: "feature-local".to_string(),
+                    start_point: "origin/feature".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
     fn submit_stash_rename_prompt_queues_git_job_and_allows_empty_messages() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -7090,6 +7484,110 @@ mod tests {
             Some(1)
         );
         assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+    }
+
+    #[test]
+    fn switch_repo_subview_remote_branches_selects_first_visible_match() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(RepoDetail {
+                    remote_branches: vec![
+                        crate::state::RemoteBranchItem {
+                            name: "origin/main".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "main".to_string(),
+                        },
+                        crate::state::RemoteBranchItem {
+                            name: "origin/feature-contract".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "feature-contract".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                remote_branches_filter: crate::state::RepoSubviewFilterState {
+                    query: "feature".to_string(),
+                    focused: false,
+                },
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SwitchRepoSubview(RepoSubview::RemoteBranches)),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.remote_branches_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+    }
+
+    #[test]
+    fn create_local_branch_from_selected_remote_branch_opens_prompt_with_suggested_name() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(RepoDetail {
+                    remote_branches: vec![
+                        crate::state::RemoteBranchItem {
+                            name: "origin/main".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "main".to_string(),
+                        },
+                        crate::state::RemoteBranchItem {
+                            name: "origin/feature-contract".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "feature-contract".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                remote_branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::CreateLocalBranchFromSelectedRemoteBranch),
+        );
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| {
+                (
+                    prompt.repo_id.clone(),
+                    prompt.operation.clone(),
+                    prompt.value.clone(),
+                )
+            }),
+            Some((
+                repo_id,
+                InputPromptOperation::CreateBranchFromRemote {
+                    remote_branch_ref: "origin/feature-contract".to_string(),
+                    suggested_name: "feature-contract".to_string(),
+                },
+                "feature-contract".to_string(),
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]

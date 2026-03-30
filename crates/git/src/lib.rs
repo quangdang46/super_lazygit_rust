@@ -13,9 +13,9 @@ use super_lazygit_core::{
     BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget, Diagnostics,
     DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus,
     FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode,
-    RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId,
-    RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, Timestamp, WatcherFreshness,
-    WorktreeItem,
+    RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteSummary,
+    RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, Timestamp,
+    WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -514,6 +514,7 @@ impl GitBackend for CliGitBackend {
             file_tree: status.file_tree,
             diff,
             branches: read_branches(&repo_path),
+            remote_branches: read_remote_branches(&repo_path),
             commits: commit_history.commits,
             commit_graph_lines: commit_history.graph_lines,
             rebase_state: read_rebase_state(&repo_path),
@@ -670,6 +671,16 @@ impl GitBackend for CliGitBackend {
                 )?;
                 format!("Created and checked out {branch_name} from {commit}")
             }
+            GitCommand::CreateBranchFromRef {
+                branch_name,
+                start_point,
+            } => {
+                git(
+                    &repo_path,
+                    ["checkout", "-b", branch_name.as_str(), start_point.as_str()],
+                )?;
+                format!("Created and checked out {branch_name} from {start_point}")
+            }
             GitCommand::CreateBranchFromStash {
                 stash_ref,
                 branch_name,
@@ -683,6 +694,29 @@ impl GitBackend for CliGitBackend {
             GitCommand::CheckoutBranch { branch_ref } => {
                 git(&repo_path, ["checkout", branch_ref.as_str()])?;
                 format!("Checked out {branch_ref}")
+            }
+            GitCommand::CheckoutRemoteBranch {
+                remote_branch_ref,
+                local_branch_name,
+            } => {
+                if local_branch_exists(&repo_path, local_branch_name)? {
+                    git(&repo_path, ["checkout", local_branch_name.as_str()])?;
+                    format!("Checked out {local_branch_name}")
+                } else {
+                    git(
+                        &repo_path,
+                        [
+                            "checkout",
+                            "--track",
+                            "-b",
+                            local_branch_name.as_str(),
+                            remote_branch_ref.as_str(),
+                        ],
+                    )?;
+                    format!(
+                        "Created and checked out {local_branch_name} tracking {remote_branch_ref}"
+                    )
+                }
             }
             GitCommand::CheckoutCommit { commit } => {
                 git(&repo_path, ["checkout", commit.as_str()])?;
@@ -717,6 +751,21 @@ impl GitBackend for CliGitBackend {
             GitCommand::DeleteBranch { branch_name } => {
                 git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
                 format!("Deleted {branch_name}")
+            }
+            GitCommand::DeleteRemoteBranch {
+                remote_name,
+                branch_name,
+            } => {
+                git(
+                    &repo_path,
+                    [
+                        "push",
+                        remote_name.as_str(),
+                        "--delete",
+                        branch_name.as_str(),
+                    ],
+                )?;
+                format!("Deleted remote branch {remote_name}/{branch_name}")
             }
             GitCommand::CreateStash { message, mode } => {
                 match mode {
@@ -917,13 +966,16 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
+        GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
+        GitCommand::CheckoutRemoteBranch { .. } => "checkout_remote_branch",
         GitCommand::CheckoutCommit { .. } => "checkout_commit",
         GitCommand::CheckoutCommitFile { .. } => "checkout_commit_file",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::DeleteRemoteBranch { .. } => "delete_remote_branch",
         GitCommand::CreateStash {
             mode: StashMode::Tracked,
             ..
@@ -2126,6 +2178,49 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
     .unwrap_or_default()
 }
 
+fn read_remote_branches(repo_path: &Path) -> Vec<RemoteBranchItem> {
+    git_stdout(
+        repo_path,
+        ["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .filter_map(|line| {
+                let name = line.trim();
+                if name.is_empty() || name.ends_with("/HEAD") {
+                    return None;
+                }
+                let (remote_name, branch_name) = name.split_once('/')?;
+                if branch_name.is_empty() {
+                    return None;
+                }
+                Some(RemoteBranchItem {
+                    name: name.to_string(),
+                    remote_name: remote_name.to_string(),
+                    branch_name: branch_name.to_string(),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn local_branch_exists(repo_path: &Path, branch_name: &str) -> GitResult<bool> {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("show-ref")
+        .arg("--verify")
+        .arg("--quiet")
+        .arg(format!("refs/heads/{branch_name}"))
+        .status()
+        .map_err(|error| GitError::OperationFailed {
+            message: format!("failed to inspect local branch {branch_name}: {error}"),
+        })?;
+    Ok(status.success())
+}
+
 #[derive(Default)]
 struct CommitHistoryResult {
     commits: Vec<CommitItem>,
@@ -2511,7 +2606,7 @@ mod tests {
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
         rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, temp_repo,
-        upstream_diverged_repo, worktree_repo,
+        upstream_diverged_repo, worktree_repo, TempRepo,
     };
 
     #[derive(Debug, Clone, Copy)]
@@ -4407,6 +4502,145 @@ mod tests {
         )
         .expect("branch output");
         assert!(!branch_list.contains("topic"));
+    }
+
+    #[test]
+    fn cli_backend_reads_remote_branches_and_omits_symbolic_head() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("push main");
+        seed.checkout_new_branch("feature")
+            .expect("create feature branch");
+        seed.write_file("feature.txt", "remote feature\n")
+            .expect("write feature file");
+        seed.commit_all("remote feature").expect("feature commit");
+        seed.push("origin", "HEAD:feature").expect("push feature");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+            })
+            .expect("detail succeeds");
+
+        let remote_names = detail
+            .remote_branches
+            .iter()
+            .map(|branch| branch.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(remote_names, vec!["origin/feature", "origin/main"]);
+        assert!(!remote_names.iter().any(|name| *name == "origin/HEAD"));
+    }
+
+    #[test]
+    fn cli_backend_runs_remote_branch_lifecycle_commands() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("push main");
+        seed.checkout_new_branch("feature")
+            .expect("create feature branch");
+        seed.write_file("feature.txt", "remote feature\n")
+            .expect("write feature file");
+        seed.commit_all("remote feature").expect("feature commit");
+        seed.push("origin", "HEAD:feature").expect("push feature");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let created = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-branch-from-ref"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateBranchFromRef {
+                    branch_name: "feature-copy".to_string(),
+                    start_point: "origin/feature".to_string(),
+                },
+            })
+            .expect("create branch from remote should succeed");
+        assert_eq!(
+            created.summary,
+            "Created and checked out feature-copy from origin/feature"
+        );
+        assert_eq!(
+            repo.current_branch().expect("current branch"),
+            "feature-copy"
+        );
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-checkout-main"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CheckoutBranch {
+                    branch_ref: "main".to_string(),
+                },
+            })
+            .expect("checkout main should succeed");
+
+        let checkout = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-checkout-remote-branch"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CheckoutRemoteBranch {
+                    remote_branch_ref: "origin/feature".to_string(),
+                    local_branch_name: "feature".to_string(),
+                },
+            })
+            .expect("remote checkout should succeed");
+        assert_eq!(
+            checkout.summary,
+            "Created and checked out feature tracking origin/feature"
+        );
+        assert_eq!(repo.current_branch().expect("current branch"), "feature");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+                    .expect("upstream ref"),
+            )
+            .expect("upstream text"),
+            "origin/feature"
+        );
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-checkout-main-again"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CheckoutBranch {
+                    branch_ref: "main".to_string(),
+                },
+            })
+            .expect("checkout main before delete should succeed");
+
+        let deleted = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-delete-remote-branch"),
+                repo_id,
+                command: GitCommand::DeleteRemoteBranch {
+                    remote_name: "origin".to_string(),
+                    branch_name: "feature".to_string(),
+                },
+            })
+            .expect("remote delete should succeed");
+        assert_eq!(deleted.summary, "Deleted remote branch origin/feature");
+        remote
+            .git_expect_failure(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
+            .expect("remote branch should be deleted");
     }
 
     #[test]

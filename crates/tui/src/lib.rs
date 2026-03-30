@@ -625,6 +625,7 @@ impl TuiApp {
                     repo_mode.active_subview,
                     RepoSubview::Status
                         | RepoSubview::Branches
+                        | RepoSubview::RemoteBranches
                         | RepoSubview::Commits
                         | RepoSubview::Compare
                         | RepoSubview::Rebase
@@ -750,6 +751,72 @@ impl TuiApp {
                                     },
                                 });
                             }
+                        }
+                    }
+                    RepoSubview::RemoteBranches => {
+                        if self.binding_matches_action(
+                            "select_next_remote_branch",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextRemoteBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_remote_branch",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousRemoteBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_selected_remote_branch_commits",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return Some(Action::OpenSelectedRemoteBranchCommits);
+                        }
+
+                        if self.binding_matches_action(
+                            "checkout_selected_remote_branch",
+                            raw,
+                            normalized,
+                            &["space"],
+                        ) {
+                            return Some(Action::CheckoutSelectedRemoteBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_create_local_branch_from_remote_prompt",
+                            raw,
+                            normalized,
+                            &["n"],
+                        ) {
+                            if let Some(branch) = selected_remote_branch(
+                                repo_mode.detail.as_ref(),
+                                repo_mode.remote_branches_view.selected_index,
+                            ) {
+                                return Some(Action::OpenInputPrompt {
+                                    operation:
+                                        super_lazygit_core::InputPromptOperation::CreateBranchFromRemote {
+                                            remote_branch_ref: branch.name.clone(),
+                                            suggested_name: branch.branch_name.clone(),
+                                        },
+                                });
+                            }
+                        }
+
+                        if self.binding_matches_action(
+                            "delete_selected_remote_branch",
+                            raw,
+                            normalized,
+                            &["d"],
+                        ) {
+                            return Some(Action::DeleteSelectedRemoteBranch);
                         }
                     }
                     RepoSubview::Status => {
@@ -1435,6 +1502,15 @@ impl TuiApp {
             return Some(Action::SwitchRepoSubview(RepoSubview::Branches));
         }
 
+        if self.binding_matches_action(
+            "switch_repo_subview_remote_branches",
+            raw,
+            normalized,
+            &["9"],
+        ) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::RemoteBranches));
+        }
+
         if self.binding_matches_action("switch_repo_subview_commits", raw, normalized, &["3"]) {
             return Some(Action::SwitchRepoSubview(RepoSubview::Commits));
         }
@@ -1810,6 +1886,19 @@ impl TuiApp {
                     repo_mode.comparison_base.as_ref(),
                     repo_mode.comparison_target.as_ref(),
                     repo_mode.comparison_source,
+                    self.state.focused_pane == PaneId::RepoDetail,
+                    theme,
+                ),
+                RepoSubview::RemoteBranches => repo_remote_branch_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.remote_branches_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::RemoteBranches)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::RemoteBranches)
+                        .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
@@ -2639,10 +2728,113 @@ fn repo_branch_lines(
     lines
 }
 
+fn repo_remote_branch_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Remote Branches",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    let visible_indices = visible_remote_branch_indices(detail, filter_query);
+    if visible_indices.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Remote Branches",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            repo_filter_summary_line(
+                filter_query,
+                filter_focused,
+                0,
+                detail.remote_branches.len(),
+            )
+            .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.remote_branches.is_empty() {
+                "No remote branches available.".to_string()
+            } else {
+                format!("No remote branches match /{}.", filter_query)
+            }),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
+    let selected_branch = &detail.remote_branches[selected_index];
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "Remote Branches",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("Selected: {}", selected_branch.name)),
+        Line::from(format!("Remote: {}", selected_branch.remote_name)),
+        Line::from(format!("Local branch: {}", selected_branch.branch_name)),
+    ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.remote_branches.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
+        Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
+        Line::from("Other: n create local branch. d delete remote branch."),
+        Line::from(""),
+    ]);
+
+    for index in visible_indices {
+        let branch = &detail.remote_branches[index];
+        let style = if index == selected_index {
+            let mut style = Style::default()
+                .fg(theme.foreground)
+                .add_modifier(Modifier::BOLD);
+            if is_focused {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            style
+        } else {
+            Style::default().fg(theme.foreground)
+        };
+        lines.push(Line::from(Span::styled(
+            remote_branch_row_label(branch),
+            style,
+        )));
+    }
+
+    lines
+}
+
 fn branch_row_label(branch: &super_lazygit_core::BranchItem) -> String {
     let head = if branch.is_head { "*" } else { " " };
     let upstream = branch.upstream.as_deref().unwrap_or("-");
     format!("{head} {:<20} upstream={upstream}", branch.name)
+}
+
+fn remote_branch_row_label(branch: &super_lazygit_core::RemoteBranchItem) -> String {
+    format!(
+        "  {:<28} remote={} local={}",
+        branch.name, branch.remote_name, branch.branch_name
+    )
 }
 
 fn branch_row_style(
@@ -2679,6 +2871,17 @@ fn selected_branch(
         .or_else(|| detail.branches.iter().position(|branch| branch.is_head))
         .unwrap_or(0);
     detail.branches.get(selected_index)
+}
+
+fn selected_remote_branch(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+) -> Option<&super_lazygit_core::RemoteBranchItem> {
+    let detail = detail?;
+    let selected_index = selected_index
+        .filter(|index| *index < detail.remote_branches.len())
+        .unwrap_or(0);
+    detail.remote_branches.get(selected_index)
 }
 
 fn selected_stash(
@@ -3232,6 +3435,21 @@ fn visible_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize>
         .enumerate()
         .filter_map(|(index, branch)| {
             super_lazygit_core::branch_matches_filter(branch, &normalized).then_some(index)
+        })
+        .collect()
+}
+
+fn visible_remote_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.remote_branches.len()).collect();
+    }
+    detail
+        .remote_branches
+        .iter()
+        .enumerate()
+        .filter_map(|(index, branch)| {
+            super_lazygit_core::remote_branch_matches_filter(branch, &normalized).then_some(index)
         })
         .collect()
 }
@@ -3847,6 +4065,12 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Delete local branch {branch_name}? Git will refuse if it is not safely merged."
             )
         }
+        super_lazygit_core::ConfirmableOperation::DeleteRemoteBranch {
+            remote_name,
+            branch_name,
+        } => format!(
+            "Delete remote branch {remote_name}/{branch_name}? This runs git push {remote_name} --delete {branch_name}."
+        ),
         super_lazygit_core::ConfirmableOperation::PopStash { stash_ref } => {
             format!("Pop {stash_ref}? This applies it and removes it from the stash list.")
         }
@@ -3888,6 +4112,12 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             summary, ..
         } => format!(
             "Enter the new branch name. The branch will be created from {summary} and checked out."
+        ),
+        super_lazygit_core::InputPromptOperation::CreateBranchFromRemote {
+            remote_branch_ref,
+            ..
+        } => format!(
+            "Enter the new local branch name. The branch will be created from {remote_branch_ref} and checked out."
         ),
         super_lazygit_core::InputPromptOperation::RenameBranch { current_name } => {
             format!("Enter the new name for {current_name}.")
@@ -4286,6 +4516,7 @@ fn repo_subview_label(subview: RepoSubview) -> &'static str {
     match subview {
         RepoSubview::Status => "Status",
         RepoSubview::Branches => "Branches",
+        RepoSubview::RemoteBranches => "Remote Branches",
         RepoSubview::Commits => "Commits",
         RepoSubview::Compare => "Compare",
         RepoSubview::Rebase => "Rebase",
@@ -4299,6 +4530,7 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
     let all = [
         (RepoSubview::Status, "1 Status"),
         (RepoSubview::Branches, "2 Branches"),
+        (RepoSubview::RemoteBranches, "9 Remote"),
         (RepoSubview::Commits, "3 Commits"),
         (RepoSubview::Compare, "4 Compare"),
         (RepoSubview::Rebase, "5 Rebase"),
@@ -4716,6 +4948,18 @@ mod tests {
                     name: "feature".to_string(),
                     is_head: false,
                     upstream: None,
+                },
+            ],
+            remote_branches: vec![
+                super_lazygit_core::RemoteBranchItem {
+                    name: "origin/main".to_string(),
+                    remote_name: "origin".to_string(),
+                    branch_name: "main".to_string(),
+                },
+                super_lazygit_core::RemoteBranchItem {
+                    name: "origin/feature".to_string(),
+                    remote_name: "origin".to_string(),
+                    branch_name: "feature".to_string(),
                 },
             ],
             commits: vec![
@@ -5591,6 +5835,24 @@ mod tests {
             result.state.repo_mode.expect("repo mode").active_subview,
             RepoSubview::Branches
         );
+
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "9".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result.state.repo_mode.expect("repo mode").active_subview,
+            RepoSubview::RemoteBranches
+        );
     }
 
     #[test]
@@ -6346,6 +6608,107 @@ mod tests {
                 .as_ref()
                 .map(|repo_mode| repo_mode.active_subview),
             Some(RepoSubview::Worktrees)
+        );
+    }
+
+    #[test]
+    fn repo_mode_remote_branch_detail_routes_selection_and_actions() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.remote_branches_view.selected_index),
+            Some(1)
+        );
+
+        let mut open_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let opened = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            opened
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            opened
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            Some("origin/feature")
+        );
+
+        let mut checkout_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let checkout = checkout_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "space".to_string(),
+        })));
+        assert!(checkout.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::CheckoutRemoteBranch {
+                    remote_branch_ref,
+                    local_branch_name,
+                },
+                ..
+            }) if remote_branch_ref == "origin/feature" && local_branch_name == "feature"
+        )));
+
+        let mut create_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let create = create_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(create.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            create
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CreateBranchFromRemote {
+                    remote_branch_ref: "origin/feature".to_string(),
+                    suggested_name: "feature".to_string(),
+                },
+                "feature"
+            ))
+        );
+
+        let mut delete_app = TuiApp::new(down.state, AppConfig::default());
+        let delete = delete_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "d".to_string(),
+        })));
+        assert_eq!(delete.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            delete
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::DeleteRemoteBranch {
+                    remote_name: "origin".to_string(),
+                    branch_name: "feature".to_string(),
+                }
+            )
         );
     }
 
@@ -8312,6 +8675,60 @@ mod tests {
     }
 
     #[test]
+    fn render_repo_shell_shows_remote_branch_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(sample_repo_detail()),
+                remote_branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                remote_branches_filter: super_lazygit_core::RepoSubviewFilterState {
+                    query: "fea".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Remote Branches"));
+        assert!(rendered.contains("Selected: origin/feature"));
+        assert!(rendered.contains("Remote: origin"));
+        assert!(rendered.contains("Local branch: feature"));
+        assert!(rendered.contains("Filter /fea_  Matches: 1/2  (focused)"));
+        assert!(rendered.contains("Context: Enter commits. Space checkout."));
+        assert!(rendered.contains("n create local branch"));
+        assert!(rendered.contains("d delete remote branch"));
+    }
+
+    #[test]
     fn render_repo_shell_shows_stash_management_details() {
         let mut state = AppState {
             mode: AppMode::Repository,
@@ -8433,6 +8850,32 @@ mod tests {
         assert!(copy.contains("Pop stash@{1}?"));
         assert!(copy.contains("applies it"));
         assert!(copy.contains("removes it from the stash list"));
+    }
+
+    #[test]
+    fn delete_remote_branch_confirmation_copy_mentions_push_delete() {
+        let copy = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::DeleteRemoteBranch {
+                remote_name: "origin".to_string(),
+                branch_name: "feature".to_string(),
+            },
+        );
+
+        assert!(copy.contains("Delete remote branch origin/feature?"));
+        assert!(copy.contains("git push origin --delete feature"));
+    }
+
+    #[test]
+    fn create_branch_from_remote_prompt_copy_mentions_selected_ref() {
+        let copy = input_prompt_copy(
+            &super_lazygit_core::InputPromptOperation::CreateBranchFromRemote {
+                remote_branch_ref: "origin/feature".to_string(),
+                suggested_name: "feature".to_string(),
+            },
+        );
+
+        assert!(copy.contains("origin/feature"));
+        assert!(copy.contains("created from origin/feature and checked out"));
     }
 
     #[test]

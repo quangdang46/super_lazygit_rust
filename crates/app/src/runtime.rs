@@ -593,13 +593,16 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
+        GitCommand::CheckoutRemoteBranch { .. } => "checkout_remote_branch",
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
+        GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::CheckoutCommit { .. } => "checkout_commit",
         GitCommand::CheckoutCommitFile { .. } => "checkout_commit_file",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::DeleteRemoteBranch { .. } => "delete_remote_branch",
         GitCommand::CreateStash {
             mode: super_lazygit_core::StashMode::Tracked,
             ..

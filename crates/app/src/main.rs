@@ -797,6 +797,106 @@ mod tests {
     }
 
     #[test]
+    fn e2e_keyboard_harness_runs_remote_branch_commit_and_checkout_cycle() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("seed push main");
+        seed.checkout_new_branch("feature-remote")
+            .expect("create feature branch");
+        seed.write_file("feature.txt", "remote branch content\n")
+            .expect("write remote feature file");
+        seed.commit_all("remote feature commit")
+            .expect("commit remote feature branch");
+        seed.push("origin", "HEAD:feature-remote")
+            .expect("push feature branch");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        repo.git(["branch", "--set-upstream-to=origin/main", "main"])
+            .expect("set upstream");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+
+        harness.press("open remote branches detail", "9");
+        harness.assert_latest_contains("Detail: Remote Branches");
+        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
+
+        harness.press("focus remote branch filter", "/");
+        harness.paste("filter remote branches", "feature");
+        harness.assert_latest_contains("Filter /feature_");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_branch = repo_mode
+                        .remote_branches_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.remote_branches.get(index))
+                        })
+                        .map(|branch| branch.name.as_str());
+                    repo_mode.remote_branches_filter.focused
+                        && repo_mode.remote_branches_filter.query == "feature"
+                        && selected_branch == Some("origin/feature-remote")
+                })
+            },
+            "filtering remote branches should focus the contextual query and reselect the matching row",
+        );
+
+        harness.press("blur remote branch filter", "enter");
+        harness.press("open selected remote branch commits", "enter");
+        harness.assert_latest_contains("Detail: Commits");
+        harness.assert_latest_contains("remote feature commit");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    repo_mode.active_subview == RepoSubview::Commits
+                        && repo_mode.commit_history_ref.as_deref() == Some("origin/feature-remote")
+                })
+            },
+            "enter from remote branches should drill into the selected remote branch history",
+        );
+
+        harness.press("return to remote branches detail", "9");
+        harness.press("checkout selected remote branch", "space");
+        assert_eq!(
+            repo.current_branch()
+                .expect("current branch after checkout"),
+            "feature-remote",
+            "space from remote branches should create and check out the tracking branch\n{}",
+            harness.timeline()
+        );
+        assert_eq!(
+            command_stdout(
+                &repo,
+                ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            )
+            .expect("tracking upstream"),
+            "origin/feature-remote",
+            "expected the checked out local branch to track the selected remote ref\n{}",
+            harness.timeline()
+        );
+    }
+
+    #[test]
     fn e2e_keyboard_harness_runs_commit_history_file_and_detached_checkout_cycle() {
         let repo = TempRepo::new().expect("repo fixture");
         repo.write_file("src/lib.rs", "pub fn version() -> u8 {\n    1\n}\n")

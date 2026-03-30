@@ -112,8 +112,16 @@ pub enum GitCommand {
         branch_name: String,
         commit: String,
     },
+    CreateBranchFromRef {
+        branch_name: String,
+        start_point: String,
+    },
     CheckoutBranch {
         branch_ref: String,
+    },
+    CheckoutRemoteBranch {
+        remote_branch_ref: String,
+        local_branch_name: String,
     },
     CheckoutCommit {
         commit: String,
@@ -135,6 +143,10 @@ pub enum GitCommand {
         branch_name: String,
     },
     DeleteBranch {
+        branch_name: String,
+    },
+    DeleteRemoteBranch {
+        remote_name: String,
         branch_name: String,
     },
     CreateStash {
