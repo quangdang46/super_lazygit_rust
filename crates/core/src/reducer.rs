@@ -1156,6 +1156,22 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::NextScreenMode => {
+            state.settings.screen_mode = state.settings.screen_mode.next();
+            state.status_messages.push_back(StatusMessage::info(
+                0,
+                format!("Screen mode: {}", state.settings.screen_mode.label()),
+            ));
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::PreviousScreenMode => {
+            state.settings.screen_mode = state.settings.screen_mode.previous();
+            state.status_messages.push_back(StatusMessage::info(
+                0,
+                format!("Screen mode: {}", state.settings.screen_mode.label()),
+            ));
+            effects.push(Effect::ScheduleRender);
+        }
         Action::OpenInputPrompt { operation } => {
             if let Some(repo_id) = state
                 .repo_mode
@@ -8520,6 +8536,47 @@ mod tests {
                 .as_ref()
                 .map(|menu| menu.operation),
             Some(MenuOperation::CommandLog)
+        );
+    }
+
+    #[test]
+    fn screen_mode_actions_cycle_settings_and_status_text() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..AppState::default()
+        };
+
+        let half = reduce(state, Event::Action(Action::NextScreenMode));
+        assert_eq!(
+            half.state.settings.screen_mode,
+            crate::state::ScreenMode::HalfScreen
+        );
+        assert_eq!(
+            half.state
+                .status_messages
+                .back()
+                .map(|message| message.text.as_str()),
+            Some("Screen mode: half")
+        );
+        assert_eq!(half.effects, vec![Effect::ScheduleRender]);
+
+        let fullscreen = reduce(half.state, Event::Action(Action::NextScreenMode));
+        assert_eq!(
+            fullscreen.state.settings.screen_mode,
+            crate::state::ScreenMode::FullScreen
+        );
+
+        let normal = reduce(fullscreen.state, Event::Action(Action::NextScreenMode));
+        assert_eq!(
+            normal.state.settings.screen_mode,
+            crate::state::ScreenMode::Normal
+        );
+
+        let previous = reduce(normal.state, Event::Action(Action::PreviousScreenMode));
+        assert_eq!(
+            previous.state.settings.screen_mode,
+            crate::state::ScreenMode::FullScreen
         );
     }
 

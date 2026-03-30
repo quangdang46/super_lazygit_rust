@@ -13,7 +13,7 @@ use super_lazygit_core::{
     reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitHistoryMode,
     CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event,
     InputEvent, InputPromptOperation, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId,
-    RepoModeState, RepoSubview, RepoSummary, StashSubviewMode,
+    RepoModeState, RepoSubview, RepoSummary, ScreenMode, StashSubviewMode,
 };
 
 #[derive(Debug)]
@@ -109,11 +109,7 @@ impl TuiApp {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(3),
-                Constraint::Length(if self.state.settings.show_help_footer {
-                    2
-                } else {
-                    1
-                }),
+                Constraint::Length(status_bar_height(&self.state)),
             ])
             .split(area);
 
@@ -509,6 +505,14 @@ impl TuiApp {
 
         if self.binding_matches_action("open_command_log", raw, normalized, &["@"]) {
             return Some(Action::OpenCommandLog);
+        }
+
+        if self.binding_matches_action("next_screen_mode", raw, normalized, &["+"]) {
+            return Some(Action::NextScreenMode);
+        }
+
+        if self.binding_matches_action("previous_screen_mode", raw, normalized, &["_"]) {
+            return Some(Action::PreviousScreenMode);
         }
 
         if self.binding_matches_action("open_shell_command_prompt", raw, normalized, &[":"]) {
@@ -2099,12 +2103,50 @@ impl TuiApp {
             .constraints([Constraint::Length(3), Constraint::Min(3)])
             .split(area);
         self.render_repo_header(layout[0], buffer, theme);
+        match self.state.settings.screen_mode {
+            ScreenMode::Normal => self.render_repo_panes(layout[1], buffer, theme, 42),
+            ScreenMode::HalfScreen => self.render_repo_panes(layout[1], buffer, theme, 32),
+            ScreenMode::FullScreen => {
+                self.render_repo_fullscreen(layout[1], buffer, theme);
+            }
+        }
+    }
 
-        let panes = split_repo_columns(layout[1]);
+    fn render_repo_panes(
+        &self,
+        area: Rect,
+        buffer: &mut Buffer,
+        theme: Theme,
+        side_panel_width: u16,
+    ) {
+        let panes = split_repo_columns(area, side_panel_width);
         let left = split_repo_left_column(panes[0]);
         self.render_repo_unstaged(left[0], buffer, theme);
         self.render_repo_staged(left[1], buffer, theme);
         self.render_repo_detail(panes[1], buffer, theme);
+    }
+
+    fn render_repo_fullscreen(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
+        let pane = self.fullscreen_repo_pane();
+        match pane {
+            PaneId::RepoUnstaged => self.render_repo_unstaged(area, buffer, theme),
+            PaneId::RepoStaged => self.render_repo_staged(area, buffer, theme),
+            _ => self.render_repo_detail(area, buffer, theme),
+        }
+    }
+
+    fn fullscreen_repo_pane(&self) -> PaneId {
+        match self.state.focused_pane {
+            PaneId::RepoUnstaged | PaneId::RepoStaged | PaneId::RepoDetail => {
+                self.state.focused_pane
+            }
+            _ => self
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.main_focus)
+                .unwrap_or(PaneId::RepoDetail),
+        }
     }
 
     fn render_repo_header(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
@@ -2118,12 +2160,13 @@ impl TuiApp {
             .unwrap_or(repo_mode.current_repo_id.0.as_str());
         let lines = vec![
             Line::from(format!(
-                "Repo: {}  Branch: {}  Watch: {}",
+                "Repo: {}  Branch: {}  Watch: {}  Screen: {}",
                 title,
                 self.selected_summary()
                     .and_then(|summary| summary.branch.as_deref())
                     .unwrap_or("detached"),
-                watcher_health_label(&self.state.workspace.watcher_health)
+                watcher_health_label(&self.state.workspace.watcher_health),
+                self.state.settings.screen_mode.label()
             )),
             Line::from(repo_subview_tabs(repo_mode.active_subview)),
         ];
@@ -2474,6 +2517,9 @@ impl TuiApp {
 
         if self.state.settings.show_help_footer {
             lines.push(Line::from(help_text(&self.state)));
+            if matches!(self.state.mode, AppMode::Repository) && self.state.modal_stack.is_empty() {
+                lines.push(Line::from(repo_screen_status_line(&self.state)));
+            }
         }
 
         Paragraph::new(lines)
@@ -2599,10 +2645,13 @@ fn split_two_columns(area: Rect) -> std::rc::Rc<[Rect]> {
         .split(area)
 }
 
-fn split_repo_columns(area: Rect) -> std::rc::Rc<[Rect]> {
+fn split_repo_columns(area: Rect, side_panel_width: u16) -> std::rc::Rc<[Rect]> {
     Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .constraints([
+            Constraint::Percentage(side_panel_width),
+            Constraint::Percentage(100_u16.saturating_sub(side_panel_width)),
+        ])
         .split(area)
 }
 
@@ -5223,6 +5272,18 @@ fn mode_label(mode: AppMode) -> &'static str {
     }
 }
 
+fn status_bar_height(state: &AppState) -> u16 {
+    if !state.settings.show_help_footer {
+        return 1;
+    }
+
+    if matches!(state.mode, AppMode::Repository) && state.modal_stack.is_empty() {
+        3
+    } else {
+        2
+    }
+}
+
 fn status_text(state: &AppState) -> String {
     state
         .status_messages
@@ -5256,6 +5317,13 @@ fn help_text(state: &AppState) -> String {
         }
         AppMode::Repository => repo_help_text(state),
     }
+}
+
+fn repo_screen_status_line(state: &AppState) -> String {
+    format!(
+        "Screen mode {}  + next screen  _ previous screen  Ctrl+Z suspend terminal",
+        state.settings.screen_mode.label()
+    )
 }
 
 fn recent_repo_menu_lines(state: &AppState) -> Vec<String> {
@@ -7085,6 +7153,56 @@ mod tests {
                 .as_ref()
                 .map(|prompt| prompt.operation.clone()),
             Some(super_lazygit_core::InputPromptOperation::ShellCommand)
+        );
+    }
+
+    #[test]
+    fn route_repository_screen_mode_keys_cycle_modes() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let half = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "+".to_string(),
+        })));
+        assert_eq!(
+            half.state.settings.screen_mode,
+            super_lazygit_core::ScreenMode::HalfScreen
+        );
+
+        let fullscreen = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "+".to_string(),
+        })));
+        assert_eq!(
+            fullscreen.state.settings.screen_mode,
+            super_lazygit_core::ScreenMode::FullScreen
+        );
+
+        let previous = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "_".to_string(),
+        })));
+        assert_eq!(
+            previous.state.settings.screen_mode,
+            super_lazygit_core::ScreenMode::HalfScreen
         );
     }
 
@@ -10699,6 +10817,51 @@ mod tests {
         assert!(rendered.contains("+new line"));
         assert!(rendered.contains("Repository shell"));
         assert!(rendered.contains("Watch: unknown"));
+        assert!(rendered.contains("Screen: normal"));
+    }
+
+    #[test]
+    fn render_repo_shell_hides_side_panes_in_fullscreen_mode() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                screen_mode: super_lazygit_core::ScreenMode::FullScreen,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(80, 20);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Screen: fullscreen"));
+        assert!(rendered.contains("Detail: Status"));
+        assert!(!rendered.contains("Working tree"));
+        assert!(!rendered.contains("Staged changes"));
     }
 
     #[test]
@@ -10736,7 +10899,7 @@ mod tests {
             },
         );
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(160, 18);
+        app.resize(160, 20);
 
         let rendered = app.render_to_string();
 

@@ -49,6 +49,11 @@ pub fn run(runtime: &mut AppRuntime) -> Result<()> {
                         break;
                     }
 
+                    if should_suspend(key) {
+                        suspend_app_process()?;
+                        continue;
+                    }
+
                     if let Some(keypress) = keypress_from_event(key) {
                         runtime.run([Event::Input(InputEvent::KeyPressed(keypress))]);
                     }
@@ -139,6 +144,18 @@ pub fn run_external_command_named(command: &mut Command, label: &str) -> io::Res
     status.and_then(|status| require_success(status, label))
 }
 
+#[cfg(unix)]
+pub fn suspend_app_process() -> io::Result<()> {
+    let mut command = Command::new("sh");
+    command.args(["-lc", "kill -TSTP $PPID"]);
+    run_external_command_named(&mut command, "suspend")
+}
+
+#[cfg(not(unix))]
+pub fn suspend_app_process() -> io::Result<()> {
+    Ok(())
+}
+
 fn suspend_terminal() -> io::Result<()> {
     disable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -163,6 +180,10 @@ fn require_success(status: ExitStatus, label: &str) -> io::Result<()> {
 
 fn should_exit(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'd'))
+}
+
+fn should_suspend(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('z'))
 }
 
 fn keypress_from_event(key: KeyEvent) -> Option<KeyPress> {
@@ -307,6 +328,22 @@ mod tests {
         assert!(!should_exit(KeyEvent {
             code: KeyCode::Char('q'),
             modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+    }
+
+    #[test]
+    fn ctrl_z_requests_terminal_suspend() {
+        assert!(should_suspend(KeyEvent {
+            code: KeyCode::Char('z'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }));
+        assert!(!should_suspend(KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         }));

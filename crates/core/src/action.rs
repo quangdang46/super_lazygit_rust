@@ -102,6 +102,8 @@ pub enum Action {
     OpenPatchOptions,
     OpenRecentRepos,
     OpenCommandLog,
+    NextScreenMode,
+    PreviousScreenMode,
     OpenInputPrompt {
         operation: InputPromptOperation,
     },

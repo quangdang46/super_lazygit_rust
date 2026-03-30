@@ -65,6 +65,9 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `Ctrl+R` | Open the recent-repositories menu |
 | `:` | Open the shell-command prompt for the current repository root |
 | `@` | Open the command-log menu for recent session messages |
+| `+` | Cycle to the next repo screen mode: `normal -> larger main pane -> fullscreen focused pane` |
+| `_` | Cycle to the previous repo screen mode |
+| `Ctrl+Z` | Suspend the TUI and resume it with your shell's `fg` |
 | `Ctrl+S` in filterable `Repo detail` subviews | Open the filter-options menu for the active detail panel |
 | `W` / `Ctrl+E` in `Status`, `Branches`, `Commits`, or `Compare` detail | Open the diffing-options menu for the current diff/comparison context |
 | `Ctrl+W` in `Status`, `Commits`, or `Compare` detail | Toggle whitespace visibility in the current diff |

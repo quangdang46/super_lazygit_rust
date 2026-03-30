@@ -39,6 +39,43 @@ pub enum PaneId {
     Modal,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScreenMode {
+    #[default]
+    Normal,
+    HalfScreen,
+    FullScreen,
+}
+
+impl ScreenMode {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Normal => Self::HalfScreen,
+            Self::HalfScreen => Self::FullScreen,
+            Self::FullScreen => Self::Normal,
+        }
+    }
+
+    #[must_use]
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Normal => Self::FullScreen,
+            Self::HalfScreen => Self::Normal,
+            Self::FullScreen => Self::HalfScreen,
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::HalfScreen => "half",
+            Self::FullScreen => "fullscreen",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Modal {
     pub kind: ModalKind,
@@ -307,6 +344,7 @@ pub struct SettingsSnapshot {
     pub keymap_name: String,
     pub confirm_destructive: bool,
     pub show_help_footer: bool,
+    pub screen_mode: ScreenMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
