@@ -11,6 +11,7 @@ pub struct AppState {
     pub modal_stack: Vec<Modal>,
     pub pending_confirmation: Option<PendingConfirmation>,
     pub pending_input_prompt: Option<PendingInputPrompt>,
+    pub pending_menu: Option<PendingMenu>,
     pub status_messages: VecDeque<StatusMessage>,
     pub notifications: VecDeque<Notification>,
     pub background_jobs: BTreeMap<JobId, BackgroundJob>,
@@ -58,6 +59,7 @@ impl Modal {
 pub enum ModalKind {
     Help,
     Confirm,
+    Menu,
     CommandPalette,
     InputPrompt,
 }
@@ -163,13 +165,28 @@ pub enum InputPromptOperation {
     SetBranchUpstream {
         branch_name: String,
     },
-    CreateStash,
+    CreateStash {
+        include_untracked: bool,
+    },
     CreateWorktree,
     RewordCommit {
         commit: String,
         summary: String,
         initial_message: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingMenu {
+    pub repo_id: RepoId,
+    pub operation: MenuOperation,
+    pub selected_index: usize,
+    pub return_focus: PaneId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MenuOperation {
+    StashOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

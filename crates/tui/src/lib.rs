@@ -297,6 +297,39 @@ impl TuiApp {
                         None
                     }
                 }
+                Some(super_lazygit_core::ModalKind::Menu) => {
+                    if self.binding_matches_action(
+                        "close_top_modal",
+                        raw,
+                        &normalized,
+                        &["esc", "q"],
+                    ) {
+                        Some(Action::CloseTopModal)
+                    } else if self.binding_matches_action(
+                        "submit_menu_selection",
+                        raw,
+                        &normalized,
+                        &["enter"],
+                    ) {
+                        Some(Action::SubmitMenuSelection)
+                    } else if self.binding_matches_action(
+                        "select_next_menu_item",
+                        raw,
+                        &normalized,
+                        &["j", "down"],
+                    ) {
+                        Some(Action::SelectNextMenuItem)
+                    } else if self.binding_matches_action(
+                        "select_previous_menu_item",
+                        raw,
+                        &normalized,
+                        &["k", "up"],
+                    ) {
+                        Some(Action::SelectPreviousMenuItem)
+                    } else {
+                        None
+                    }
+                }
                 _ => {
                     if self.binding_matches_action(
                         "close_top_modal",
@@ -469,6 +502,10 @@ impl TuiApp {
 
                 if self.binding_matches_action("open_in_editor", raw, normalized, &["e"]) {
                     return Some(Action::OpenInEditor);
+                }
+
+                if self.binding_matches_action("open_stash_options", raw, normalized, &["S"]) {
+                    return Some(Action::OpenStashOptions);
                 }
 
                 if self.binding_matches_action("stash_all_changes", raw, normalized, &["s"]) {
@@ -1549,6 +1586,17 @@ impl TuiApp {
                     lines.push(Line::from(""));
                     lines.push(Line::from(format!("> {}_", prompt.value)));
                     lines.push(Line::from("Enter submits. Esc cancels. Backspace deletes."));
+                }
+            }
+            super_lazygit_core::ModalKind::Menu => {
+                lines.push(Line::from(""));
+                if let Some(menu) = self.state.pending_menu.as_ref() {
+                    lines.push(Line::from(format!("Repo: {}", menu.repo_id.0)));
+                    lines.push(Line::from(menu_copy(menu.operation)));
+                    lines.push(Line::from(""));
+                    lines.extend(menu_lines(menu, theme));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from("j/k moves. Enter selects. Esc cancels."));
                 }
             }
             _ => {
@@ -3033,9 +3081,14 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         super_lazygit_core::InputPromptOperation::SetBranchUpstream { branch_name } => {
             format!("Enter the upstream ref for {branch_name}, for example origin/main.")
         }
-        super_lazygit_core::InputPromptOperation::CreateStash => {
-            "Enter an optional stash message. Leave it blank to use Git's default tracked-changes stash message."
-                .to_string()
+        super_lazygit_core::InputPromptOperation::CreateStash { include_untracked } => {
+            if *include_untracked {
+                "Enter an optional stash message. Leave it blank to use Git's default stash message while including untracked files."
+                    .to_string()
+            } else {
+                "Enter an optional stash message. Leave it blank to use Git's default tracked-changes stash message."
+                    .to_string()
+            }
         }
         super_lazygit_core::InputPromptOperation::CreateWorktree => {
             "Enter worktree details as: <path> <branch>. Example: ../repo-feature feature."
@@ -3047,6 +3100,43 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             )
         }
     }
+}
+
+fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
+    match operation {
+        super_lazygit_core::MenuOperation::StashOptions => {
+            "Choose whether to stash tracked changes only or include untracked files too."
+        }
+    }
+}
+
+fn menu_lines(menu: &super_lazygit_core::PendingMenu, theme: Theme) -> Vec<Line<'static>> {
+    let items: &[&str] = match menu.operation {
+        super_lazygit_core::MenuOperation::StashOptions => &[
+            "Stash tracked changes",
+            "Stash all changes including untracked",
+        ],
+    };
+
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let prefix = if index == menu.selected_index {
+                "> "
+            } else {
+                "  "
+            };
+            let style = if index == menu.selected_index {
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.foreground)
+            };
+            Line::from(Span::styled(format!("{prefix}{label}"), style))
+        })
+        .collect()
 }
 
 fn mode_label(mode: AppMode) -> &'static str {
@@ -3491,10 +3581,10 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  D discard file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  s stash tracked  S stash options  D discard file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  D discard file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  s stash tracked  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
@@ -5033,6 +5123,45 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_routes_uppercase_stash_to_options_menu() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(RepoModeState {
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "S".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .modal_stack
+                .last()
+                .map(|modal| (&modal.kind, modal.title.as_str())),
+            Some((&ModalKind::Menu, "Stash options"))
+        );
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus
+            )),
+            Some((
+                super_lazygit_core::MenuOperation::StashOptions,
+                0,
+                PaneId::RepoStaged
+            ))
+        );
+    }
+
+    #[test]
     fn confirm_modal_routes_enter_to_transport_job() {
         let state = AppState {
             focused_pane: PaneId::Modal,
@@ -5105,6 +5234,60 @@ mod tests {
                 ..
             }) if branch_name == "feature/"
         )));
+    }
+
+    #[test]
+    fn menu_modal_routes_navigation_and_submit_stash_prompt() {
+        let state = AppState {
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![super_lazygit_core::Modal::new(
+                ModalKind::Menu,
+                "Stash options",
+            )],
+            pending_menu: Some(super_lazygit_core::PendingMenu {
+                repo_id: RepoId::new("repo-1"),
+                operation: super_lazygit_core::MenuOperation::StashOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoStaged,
+            }),
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let moved = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            moved
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.selected_index),
+            Some(1)
+        );
+
+        let submitted = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            submitted
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.return_focus)),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CreateStash {
+                    include_untracked: true,
+                },
+                PaneId::RepoStaged,
+            ))
+        );
     }
 
     #[test]
@@ -5580,8 +5763,27 @@ mod tests {
                 .as_ref()
                 .map(|prompt| (&prompt.operation, prompt.return_focus)),
             Some((
-                &super_lazygit_core::InputPromptOperation::CreateStash,
+                &super_lazygit_core::InputPromptOperation::CreateStash {
+                    include_untracked: false,
+                },
                 PaneId::RepoStaged
+            ))
+        );
+
+        let mut staged_stash_options_app = TuiApp::new(state.clone(), AppConfig::default());
+        let staged_stash_options =
+            staged_stash_options_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "S".to_string(),
+            })));
+        assert_eq!(
+            staged_stash_options
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| (menu.operation, menu.return_focus)),
+            Some((
+                super_lazygit_core::MenuOperation::StashOptions,
+                PaneId::RepoStaged,
             ))
         );
 
@@ -5599,7 +5801,9 @@ mod tests {
                 .as_ref()
                 .map(|prompt| (&prompt.operation, prompt.return_focus)),
             Some((
-                &super_lazygit_core::InputPromptOperation::CreateStash,
+                &super_lazygit_core::InputPromptOperation::CreateStash {
+                    include_untracked: false,
+                },
                 PaneId::RepoUnstaged
             ))
         );

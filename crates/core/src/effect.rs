@@ -115,6 +115,7 @@ pub enum GitCommand {
     },
     CreateStash {
         message: Option<String>,
+        include_untracked: bool,
     },
     ApplyStash {
         stash_ref: String,
