@@ -108,6 +108,10 @@ pub enum GitCommand {
     CreateBranch {
         branch_name: String,
     },
+    AddRemote {
+        remote_name: String,
+        remote_url: String,
+    },
     CreateTag {
         tag_name: String,
     },
@@ -140,6 +144,11 @@ pub enum GitCommand {
         branch_name: String,
         new_name: String,
     },
+    EditRemote {
+        current_name: String,
+        new_name: String,
+        remote_url: String,
+    },
     RenameStash {
         stash_ref: String,
         message: String,
@@ -150,6 +159,9 @@ pub enum GitCommand {
     },
     DeleteBranch {
         branch_name: String,
+    },
+    RemoveRemote {
+        remote_name: String,
     },
     DeleteRemoteBranch {
         remote_name: String,
@@ -185,6 +197,9 @@ pub enum GitCommand {
     SetBranchUpstream {
         branch_name: String,
         upstream_ref: String,
+    },
+    FetchRemote {
+        remote_name: String,
     },
     FetchSelectedRepo,
     PullCurrentBranch,

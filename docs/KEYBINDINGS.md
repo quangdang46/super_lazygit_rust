@@ -53,10 +53,11 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `6` | Switch detail pane to `Stash` |
 | `7` | Switch detail pane to `Reflog` |
 | `8` | Switch detail pane to `Worktrees` |
+| `m` | Switch detail pane to `Remotes` |
 | `9` | Switch detail pane to `Remote Branches` |
 | `t` | Switch detail pane to `Tags` |
 | `0` in `Repo detail` | Return focus to the last active main pane (`Working tree` or `Staged changes`) |
-| `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remote Branches`, `Tags`, `Commits`, `Stash`, `Reflog`, or `Worktrees`) |
+| `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remotes`, `Remote Branches`, `Tags`, `Commits`, `Stash`, `Reflog`, or `Worktrees`) |
 | `w` in `Repo detail` | Switch the current detail subview to `Worktrees` |
 | `r` | Refresh the selected repository |
 | `f` | Open fetch confirmation |
@@ -129,6 +130,19 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `u` | Open set-upstream prompt |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
+| `w` | Switch to the worktrees subview |
+
+### Remotes detail subview
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next remote |
+| `k` / `Up` | Select the previous remote |
+| `Enter` | Open the selected remote's branch list in `Remote Branches` |
+| `n` | Open the add-remote prompt (`<name> <url>`) |
+| `e` | Open the edit-remote prompt for the selected remote |
+| `d` | Open remove-remote confirmation |
+| `f` | Open fetch-remote confirmation for the selected remote |
 | `w` | Switch to the worktrees subview |
 
 ### Remote branches detail subview

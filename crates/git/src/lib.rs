@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
@@ -13,9 +13,9 @@ use super_lazygit_core::{
     BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget, Diagnostics,
     DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus,
     FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode,
-    RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteSummary,
-    RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, TagItem,
-    Timestamp, WatcherFreshness, WorktreeItem,
+    RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteItem,
+    RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode,
+    TagItem, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -510,11 +510,14 @@ impl GitBackend for CliGitBackend {
             request.commit_ref.as_deref(),
             request.commit_history_mode,
         );
+        let remote_branches = read_remote_branches(&repo_path);
+        let remotes = read_remotes(&repo_path, &remote_branches);
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
             branches: read_branches(&repo_path),
-            remote_branches: read_remote_branches(&repo_path),
+            remotes,
+            remote_branches,
             tags: read_tags(&repo_path),
             commits: commit_history.commits,
             commit_graph_lines: commit_history.graph_lines,
@@ -662,6 +665,16 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["checkout", "-b", branch_name.as_str()])?;
                 format!("Created and checked out {branch_name}")
             }
+            GitCommand::AddRemote {
+                remote_name,
+                remote_url,
+            } => {
+                git(
+                    &repo_path,
+                    ["remote", "add", remote_name.as_str(), remote_url.as_str()],
+                )?;
+                format!("Added remote {remote_name}")
+            }
             GitCommand::CreateTag { tag_name } => {
                 git(&repo_path, ["tag", tag_name.as_str()])?;
                 format!("Created tag {tag_name}")
@@ -753,6 +766,26 @@ impl GitBackend for CliGitBackend {
                 }
                 format!("Renamed {branch_name} to {new_name}")
             }
+            GitCommand::EditRemote {
+                current_name,
+                new_name,
+                remote_url,
+            } => {
+                let target_name = if current_name != new_name {
+                    git(
+                        &repo_path,
+                        ["remote", "rename", current_name.as_str(), new_name.as_str()],
+                    )?;
+                    new_name.as_str()
+                } else {
+                    current_name.as_str()
+                };
+                git(
+                    &repo_path,
+                    ["remote", "set-url", target_name, remote_url.as_str()],
+                )?;
+                format!("Updated remote {current_name}")
+            }
             GitCommand::RenameStash { stash_ref, message } => {
                 rename_stash(&repo_path, stash_ref, message)?;
                 format!("Renamed {stash_ref}")
@@ -760,6 +793,10 @@ impl GitBackend for CliGitBackend {
             GitCommand::DeleteBranch { branch_name } => {
                 git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
                 format!("Deleted {branch_name}")
+            }
+            GitCommand::RemoveRemote { remote_name } => {
+                git(&repo_path, ["remote", "remove", remote_name.as_str()])?;
+                format!("Removed remote {remote_name}")
             }
             GitCommand::DeleteRemoteBranch {
                 remote_name,
@@ -877,6 +914,10 @@ impl GitBackend for CliGitBackend {
                 )?;
                 format!("Set upstream for {branch_name} to {upstream_ref}")
             }
+            GitCommand::FetchRemote { remote_name } => {
+                git(&repo_path, ["fetch", remote_name.as_str()])?;
+                format!("Fetched {remote_name}")
+            }
             GitCommand::FetchSelectedRepo => {
                 run_fetch(&repo_path)?;
                 "Fetched remote updates".to_string()
@@ -986,6 +1027,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CreateBranch { .. } => "create_branch",
+        GitCommand::AddRemote { .. } => "add_remote",
         GitCommand::CreateTag { .. } => "create_tag",
         GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
         GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
@@ -996,8 +1038,10 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CheckoutCommit { .. } => "checkout_commit",
         GitCommand::CheckoutCommitFile { .. } => "checkout_commit_file",
         GitCommand::RenameBranch { .. } => "rename_branch",
+        GitCommand::EditRemote { .. } => "edit_remote",
         GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::DeleteBranch { .. } => "delete_branch",
+        GitCommand::RemoveRemote { .. } => "remove_remote",
         GitCommand::DeleteRemoteBranch { .. } => "delete_remote_branch",
         GitCommand::DeleteTag { .. } => "delete_tag",
         GitCommand::PushTag { .. } => "push_tag",
@@ -1027,6 +1071,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CreateWorktree { .. } => "create_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
+        GitCommand::FetchRemote { .. } => "fetch_remote",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",
@@ -2201,6 +2246,55 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
             .collect()
     })
     .unwrap_or_default()
+}
+
+fn read_remotes(repo_path: &Path, remote_branches: &[RemoteBranchItem]) -> Vec<RemoteItem> {
+    git_stdout(repo_path, ["remote", "-v"])
+        .map(|output| {
+            let mut remotes = BTreeMap::<String, RemoteItem>::new();
+            for line in output.lines() {
+                let mut parts = line.split_whitespace();
+                let Some(name) = parts.next() else {
+                    continue;
+                };
+                let Some(url) = parts.next() else {
+                    continue;
+                };
+                let Some(direction) = parts.next() else {
+                    continue;
+                };
+
+                let remote = remotes
+                    .entry(name.to_string())
+                    .or_insert_with(|| RemoteItem {
+                        name: name.to_string(),
+                        fetch_url: String::new(),
+                        push_url: String::new(),
+                        branch_count: 0,
+                    });
+                match direction.trim_matches(|ch| ch == '(' || ch == ')') {
+                    "fetch" => remote.fetch_url = url.to_string(),
+                    "push" => remote.push_url = url.to_string(),
+                    _ => {}
+                }
+            }
+
+            for remote in remotes.values_mut() {
+                if remote.fetch_url.is_empty() {
+                    remote.fetch_url = remote.push_url.clone();
+                }
+                if remote.push_url.is_empty() {
+                    remote.push_url = remote.fetch_url.clone();
+                }
+                remote.branch_count = remote_branches
+                    .iter()
+                    .filter(|branch| branch.remote_name == remote.name)
+                    .count();
+            }
+
+            remotes.into_values().collect()
+        })
+        .unwrap_or_default()
 }
 
 fn read_remote_branches(repo_path: &Path) -> Vec<RemoteBranchItem> {
@@ -4765,6 +4859,181 @@ mod tests {
         remote
             .git_expect_failure(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
             .expect("remote branch should be deleted");
+    }
+
+    #[test]
+    fn cli_backend_reads_remotes_with_metadata_and_branch_counts() {
+        let origin = TempRepo::bare().expect("origin fixture");
+        let mirror = TempRepo::bare().expect("mirror fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", origin.path())
+            .expect("attach origin");
+        seed.push("origin", "HEAD:main").expect("push main");
+        seed.checkout_new_branch("feature")
+            .expect("create feature branch");
+        seed.write_file("feature.txt", "remote feature\n")
+            .expect("write feature file");
+        seed.commit_all("remote feature").expect("feature commit");
+        seed.push("origin", "HEAD:feature").expect("push feature");
+
+        let repo = TempRepo::clone_from(origin.path()).expect("clone fixture");
+        repo.add_remote("mirror", mirror.path())
+            .expect("attach mirror");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+            })
+            .expect("detail succeeds");
+
+        let origin_remote = detail
+            .remotes
+            .iter()
+            .find(|remote| remote.name == "origin")
+            .expect("origin remote present");
+        assert_eq!(origin_remote.branch_count, 2);
+        assert_eq!(
+            origin_remote.fetch_url,
+            stdout_string(
+                repo.git_capture(["remote", "get-url", "origin"])
+                    .expect("origin fetch url")
+            )
+            .expect("origin fetch output")
+        );
+        assert_eq!(
+            origin_remote.push_url,
+            stdout_string(
+                repo.git_capture(["remote", "get-url", "--push", "origin"])
+                    .expect("origin push url")
+            )
+            .expect("origin push output")
+        );
+
+        let mirror_remote = detail
+            .remotes
+            .iter()
+            .find(|remote| remote.name == "mirror")
+            .expect("mirror remote present");
+        assert_eq!(mirror_remote.branch_count, 0);
+        assert_eq!(
+            mirror_remote.fetch_url,
+            stdout_string(
+                repo.git_capture(["remote", "get-url", "mirror"])
+                    .expect("mirror fetch url")
+            )
+            .expect("mirror fetch output")
+        );
+    }
+
+    #[test]
+    fn cli_backend_runs_remote_management_commands() {
+        let origin = TempRepo::bare().expect("origin fixture");
+        let mirror = TempRepo::bare().expect("mirror fixture");
+        let replacement = TempRepo::bare().expect("replacement fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", origin.path())
+            .expect("attach origin");
+        seed.push("origin", "HEAD:main").expect("push main");
+
+        let repo = TempRepo::clone_from(origin.path()).expect("clone fixture");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let added = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-add-remote"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::AddRemote {
+                    remote_name: "mirror".to_string(),
+                    remote_url: mirror.path().display().to_string(),
+                },
+            })
+            .expect("add remote should succeed");
+        assert_eq!(added.summary, "Added remote mirror");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["remote", "get-url", "mirror"])
+                    .expect("mirror fetch url")
+            )
+            .expect("mirror fetch output"),
+            mirror.path().display().to_string()
+        );
+
+        let edited = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-edit-remote"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::EditRemote {
+                    current_name: "mirror".to_string(),
+                    new_name: "upstream".to_string(),
+                    remote_url: replacement.path().display().to_string(),
+                },
+            })
+            .expect("edit remote should succeed");
+        assert_eq!(edited.summary, "Updated remote mirror");
+        repo.git_expect_failure(["remote", "get-url", "mirror"])
+            .expect("old remote name should be gone");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["remote", "get-url", "upstream"])
+                    .expect("upstream fetch url")
+            )
+            .expect("upstream fetch output"),
+            replacement.path().display().to_string()
+        );
+
+        let before_fetch = stdout_string(
+            repo.git_capture(["rev-parse", "refs/remotes/origin/main"])
+                .expect("origin remote ref before fetch"),
+        )
+        .expect("origin remote ref output before fetch");
+        seed.write_file("tracked.txt", "base\nupdated\n")
+            .expect("write updated tracked file");
+        seed.commit_all("second").expect("second commit");
+        let latest_origin_main = seed.rev_parse("HEAD").expect("latest origin main");
+        seed.push("origin", "HEAD:main").expect("push updated main");
+
+        let fetched = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-fetch-remote"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::FetchRemote {
+                    remote_name: "origin".to_string(),
+                },
+            })
+            .expect("fetch remote should succeed");
+        assert_eq!(fetched.summary, "Fetched origin");
+        let after_fetch = stdout_string(
+            repo.git_capture(["rev-parse", "refs/remotes/origin/main"])
+                .expect("origin remote ref after fetch"),
+        )
+        .expect("origin remote ref output after fetch");
+        assert_ne!(before_fetch, after_fetch);
+        assert_eq!(after_fetch, latest_origin_main);
+
+        let removed = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-remove-remote"),
+                repo_id,
+                command: GitCommand::RemoveRemote {
+                    remote_name: "upstream".to_string(),
+                },
+            })
+            .expect("remove remote should succeed");
+        assert_eq!(removed.summary, "Removed remote upstream");
+        repo.git_expect_failure(["remote", "get-url", "upstream"])
+            .expect("upstream remote should be deleted");
     }
 
     #[test]

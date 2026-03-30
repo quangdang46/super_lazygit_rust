@@ -27,6 +27,7 @@ That means:
 - Commit history detail view with compare-target context
 - Status-origin all-branches commit graph view with forward and reverse ordering
 - Branch detail view with checkout, create, rename, delete, and upstream-setting actions
+- Remotes detail view with filtering, remote-branches drill-down, and add/edit/remove/fetch actions
 - Remote-branch detail view with filtering, commit-history drill-down, tracking checkout, local-branch creation, and remote deletion
 - Tags detail view with filtering, commit-history drill-down, detached checkout, create/delete/push flows, and reset-on-tag actions
 - Compare, rebase, stash, reflog, and worktree detail subviews

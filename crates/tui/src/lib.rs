@@ -639,6 +639,7 @@ impl TuiApp {
                     repo_mode.active_subview,
                     RepoSubview::Status
                         | RepoSubview::Branches
+                        | RepoSubview::Remotes
                         | RepoSubview::RemoteBranches
                         | RepoSubview::Tags
                         | RepoSubview::Commits
@@ -766,6 +767,83 @@ impl TuiApp {
                                     },
                                 });
                             }
+                        }
+                    }
+                    RepoSubview::Remotes => {
+                        if self.binding_matches_action(
+                            "select_next_remote",
+                            raw,
+                            normalized,
+                            &["j", "down"],
+                        ) {
+                            return Some(Action::SelectNextRemote);
+                        }
+
+                        if self.binding_matches_action(
+                            "select_previous_remote",
+                            raw,
+                            normalized,
+                            &["k", "up"],
+                        ) {
+                            return Some(Action::SelectPreviousRemote);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_selected_remote_branches",
+                            raw,
+                            normalized,
+                            &["enter"],
+                        ) {
+                            return Some(Action::OpenSelectedRemoteBranches);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_create_remote_prompt",
+                            raw,
+                            normalized,
+                            &["n"],
+                        ) {
+                            return Some(Action::OpenInputPrompt {
+                                operation: super_lazygit_core::InputPromptOperation::CreateRemote,
+                            });
+                        }
+
+                        if self.binding_matches_action(
+                            "open_edit_remote_prompt",
+                            raw,
+                            normalized,
+                            &["e"],
+                        ) {
+                            if let Some(remote) = selected_remote(
+                                repo_mode.detail.as_ref(),
+                                repo_mode.remotes_view.selected_index,
+                            ) {
+                                return Some(Action::OpenInputPrompt {
+                                    operation:
+                                        super_lazygit_core::InputPromptOperation::EditRemote {
+                                            current_name: remote.name.clone(),
+                                            current_url: remote.fetch_url.clone(),
+                                        },
+                                });
+                            }
+                        }
+
+                        if self.binding_matches_action(
+                            "remove_selected_remote",
+                            raw,
+                            normalized,
+                            &["d"],
+                        ) {
+                            return Some(Action::DeleteSelectedRemote);
+                        }
+
+                        if self.binding_matches_action(
+                            "fetch_selected_remote",
+                            raw,
+                            normalized,
+                            &["f"],
+                        ) {
+                            return Some(Action::FetchSelectedRemote);
                         }
                     }
                     RepoSubview::RemoteBranches => {
@@ -1646,6 +1724,10 @@ impl TuiApp {
             return Some(Action::SwitchRepoSubview(RepoSubview::Branches));
         }
 
+        if self.binding_matches_action("switch_repo_subview_remotes", raw, normalized, &["m"]) {
+            return Some(Action::SwitchRepoSubview(RepoSubview::Remotes));
+        }
+
         if self.binding_matches_action(
             "switch_repo_subview_remote_branches",
             raw,
@@ -2034,6 +2116,19 @@ impl TuiApp {
                     repo_mode.comparison_base.as_ref(),
                     repo_mode.comparison_target.as_ref(),
                     repo_mode.comparison_source,
+                    self.state.focused_pane == PaneId::RepoDetail,
+                    theme,
+                ),
+                RepoSubview::Remotes => repo_remote_lines(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.remotes_view.selected_index,
+                    repo_mode
+                        .subview_filter(RepoSubview::Remotes)
+                        .map(|filter| filter.query.as_str())
+                        .unwrap_or(""),
+                    repo_mode
+                        .subview_filter(RepoSubview::Remotes)
+                        .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
@@ -2987,6 +3082,98 @@ fn repo_remote_branch_lines(
     lines
 }
 
+fn repo_remote_lines(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+    filter_query: &str,
+    filter_focused: bool,
+    is_focused: bool,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let Some(detail) = detail else {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Remotes",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("Repository detail is still loading."),
+        ];
+    };
+
+    let visible_indices = visible_remote_indices(detail, filter_query);
+    if visible_indices.is_empty() {
+        return vec![
+            Line::from(vec![Span::styled(
+                "Remotes",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            repo_filter_summary_line(filter_query, filter_focused, 0, detail.remotes.len())
+                .unwrap_or_else(|| Line::from("")),
+            Line::from(if detail.remotes.is_empty() {
+                "No remotes are configured.".to_string()
+            } else {
+                format!("No remotes match /{}.", filter_query)
+            }),
+        ];
+    }
+
+    let selected_index = selected_index
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices[0]);
+    let selected_remote = &detail.remotes[selected_index];
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            "Remotes",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("Selected: {}", selected_remote.name)),
+        Line::from(format!("Fetch: {}", selected_remote.fetch_url)),
+        Line::from(format!("Push: {}", selected_remote.push_url)),
+        Line::from(format!("Branches: {}", selected_remote.branch_count)),
+    ];
+    if let Some(filter_line) = repo_filter_summary_line(
+        filter_query,
+        filter_focused,
+        visible_indices.len(),
+        detail.remotes.len(),
+    ) {
+        lines.push(filter_line);
+    }
+    lines.extend([
+        Line::from("Context: Enter branches. f fetch. 0 main. / filter. w worktrees."),
+        Line::from("Other: n new remote. e edit remote. d remove remote."),
+        Line::from(""),
+    ]);
+
+    for index in visible_indices {
+        let remote = &detail.remotes[index];
+        let style = if index == selected_index {
+            let mut style = Style::default()
+                .fg(theme.foreground)
+                .add_modifier(Modifier::BOLD);
+            if is_focused {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            style
+        } else {
+            Style::default().fg(theme.foreground)
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{}  [{} branches]", remote.name, remote.branch_count),
+            style,
+        )));
+    }
+
+    lines
+}
+
 fn repo_tag_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
@@ -3139,6 +3326,17 @@ fn selected_branch(
         .or_else(|| detail.branches.iter().position(|branch| branch.is_head))
         .unwrap_or(0);
     detail.branches.get(selected_index)
+}
+
+fn selected_remote(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+) -> Option<&super_lazygit_core::RemoteItem> {
+    let detail = detail?;
+    let selected_index = selected_index
+        .filter(|index| *index < detail.remotes.len())
+        .unwrap_or(0);
+    detail.remotes.get(selected_index)
 }
 
 fn selected_remote_branch(
@@ -3804,6 +4002,21 @@ fn visible_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize>
         .collect()
 }
 
+fn visible_remote_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+    let normalized = super_lazygit_core::normalize_search_text(filter_query);
+    if normalized.is_empty() {
+        return (0..detail.remotes.len()).collect();
+    }
+    detail
+        .remotes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, remote)| {
+            super_lazygit_core::remote_matches_filter(remote, &normalized).then_some(index)
+        })
+        .collect()
+}
+
 fn visible_remote_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
     let normalized = super_lazygit_core::normalize_search_text(filter_query);
     if normalized.is_empty() {
@@ -4378,6 +4591,9 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         super_lazygit_core::ConfirmableOperation::Fetch => {
             "Fetch remote updates for the current repository?".to_string()
         }
+        super_lazygit_core::ConfirmableOperation::FetchRemote { remote_name } => {
+            format!("Fetch updates from remote {remote_name}?")
+        }
         super_lazygit_core::ConfirmableOperation::Pull => {
             "Pull remote changes into the current branch?".to_string()
         }
@@ -4445,6 +4661,9 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Delete local branch {branch_name}? Git will refuse if it is not safely merged."
             )
         }
+        super_lazygit_core::ConfirmableOperation::RemoveRemote { remote_name } => {
+            format!("Remove remote {remote_name}? This deletes the configured remote entry.")
+        }
         super_lazygit_core::ConfirmableOperation::DeleteRemoteBranch {
             remote_name,
             branch_name,
@@ -4497,6 +4716,10 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             "Enter the new branch name. The branch will be created from HEAD and checked out."
                 .to_string()
         }
+        super_lazygit_core::InputPromptOperation::CreateRemote => {
+            "Enter remote details as: <name> <url>. Example: upstream git@github.com:owner/repo.git."
+                .to_string()
+        }
         super_lazygit_core::InputPromptOperation::CreateTag => {
             "Enter the new tag name. The tag will be created at the current HEAD.".to_string()
         }
@@ -4513,6 +4736,11 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         ),
         super_lazygit_core::InputPromptOperation::RenameBranch { current_name } => {
             format!("Enter the new name for {current_name}.")
+        }
+        super_lazygit_core::InputPromptOperation::EditRemote { current_name, .. } => {
+            format!(
+                "Edit remote {current_name} as: <name> <url>. Renaming and URL updates are applied together."
+            )
         }
         super_lazygit_core::InputPromptOperation::RenameStash { stash_ref, .. } => {
             format!(
@@ -4908,6 +5136,7 @@ fn repo_subview_label(subview: RepoSubview) -> &'static str {
     match subview {
         RepoSubview::Status => "Status",
         RepoSubview::Branches => "Branches",
+        RepoSubview::Remotes => "Remotes",
         RepoSubview::RemoteBranches => "Remote Branches",
         RepoSubview::Tags => "Tags",
         RepoSubview::Commits => "Commits",
@@ -4923,6 +5152,7 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
     let all = [
         (RepoSubview::Status, "1 Status"),
         (RepoSubview::Branches, "2 Branches"),
+        (RepoSubview::Remotes, "m Remotes"),
         (RepoSubview::RemoteBranches, "9 Remote"),
         (RepoSubview::Tags, "t Tags"),
         (RepoSubview::Commits, "3 Commits"),
@@ -5013,6 +5243,9 @@ fn default_status_text(state: &AppState) -> String {
                     } else if repo_mode.active_subview == RepoSubview::Branches {
                         "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, w opens worktrees, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::Remotes {
+                        "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, w opens worktrees, and n/e/d manage remotes."
+                            .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
                         "Commits detail focus; a/A switch the all-branches graph direction, 0 returns to the main pane, / filters history, w opens worktrees, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
@@ -5086,40 +5319,42 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  s stash tracked changes  S stash options  D discard file  l next pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  s stash tracked changes  S stash options  D discard file  l next pane  1-9/t/m detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-8 detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-9/t/m detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  Enter apply hunk  0 main pane  w worktrees  D discard file  X nuke working tree  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  Enter apply hunk  0 main pane  w worktrees  D discard file  X nuke working tree  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  Enter commits  Space checkout  0 main pane  / filter  w worktrees  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  Enter commits  Space checkout  0 main pane  / filter  w worktrees  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                } else if repo_mode.active_subview == RepoSubview::Remotes {
+                    "Remotes pane  j/k move  Enter branches  f fetch remote  0 main pane  / filter  w worktrees  n add  e edit  d remove  h left pane  1-9/t/m switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  0 main pane  / filter  w worktrees  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  0 main pane  / filter  w worktrees  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
-                    "Compare pane  j/k scroll diff  0 main pane  x clear compare  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Compare pane  j/k scroll diff  0 main pane  x clear compare  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
-                    "Rebase pane  c continue  s skip  A abort  j/k scroll  0 main pane  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Rebase pane  c continue  s skip  A abort  j/k scroll  0 main pane  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Stash {
                     match repo_mode.stash_subview_mode {
                         StashSubviewMode::List => {
-                            "Stash pane  j/k move stash  Enter files  Space apply  0 main pane  / filter  w worktrees  n branch  r rename  g pop  d drop  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash pane  j/k move stash  Enter files  Space apply  0 main pane  / filter  w worktrees  n branch  r rename  g pop  d drop  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                         StashSubviewMode::Files => {
-                            "Stash files pane  j/k move file  Enter stash list  0 main pane  w worktrees  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash files pane  j/k move file  Enter stash list  0 main pane  w worktrees  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                     }
                 } else if repo_mode.active_subview == RepoSubview::Reflog {
-                    "Reflog pane  j/k move  Enter commits  Space checkout  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Reflog pane  j/k move  Enter commits  Space checkout  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Worktrees {
-                    "Worktrees pane  j/k move  Enter switch  0 main pane  / filter  n create  o open  d delete  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Worktrees pane  j/k move  Enter switch  0 main pane  / filter  n create  o open  d delete  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
-                        "{} detail pane  h left pane  1-8 switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
+                        "{} detail pane  h left pane  1-9/t/m switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
                         repo_subview_label(repo_mode.active_subview)
                     )
                 }
@@ -5357,6 +5592,20 @@ mod tests {
                     name: "feature".to_string(),
                     is_head: false,
                     upstream: None,
+                },
+            ],
+            remotes: vec![
+                super_lazygit_core::RemoteItem {
+                    name: "origin".to_string(),
+                    fetch_url: "/tmp/origin.git".to_string(),
+                    push_url: "/tmp/origin.git".to_string(),
+                    branch_count: 2,
+                },
+                super_lazygit_core::RemoteItem {
+                    name: "upstream".to_string(),
+                    fetch_url: "git@github.com:example/upstream.git".to_string(),
+                    push_url: "git@github.com:example/upstream.git".to_string(),
+                    branch_count: 0,
                 },
             ],
             remote_branches: vec![
@@ -7287,6 +7536,163 @@ mod tests {
                 .as_ref()
                 .map(|repo_mode| repo_mode.active_subview),
             Some(RepoSubview::Worktrees)
+        );
+    }
+
+    #[test]
+    fn repo_mode_remotes_detail_routes_selection_and_actions() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Remotes,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            down.state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.remotes_view.selected_index),
+            Some(1)
+        );
+
+        let mut open_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let opened = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            opened
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::RemoteBranches)
+        );
+        assert_eq!(
+            opened
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.remote_branches_filter.query.as_str()),
+            Some("upstream")
+        );
+
+        let mut create_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let create = create_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(create.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            create
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((&super_lazygit_core::InputPromptOperation::CreateRemote, ""))
+        );
+
+        let mut edit_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let edit = edit_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "e".to_string(),
+        })));
+        assert_eq!(edit.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            edit.state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::EditRemote {
+                    current_name: "upstream".to_string(),
+                    current_url: "git@github.com:example/upstream.git".to_string(),
+                },
+                "upstream git@github.com:example/upstream.git"
+            ))
+        );
+
+        let mut fetch_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let fetch = fetch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "f".to_string(),
+        })));
+        assert_eq!(fetch.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            fetch
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::FetchRemote {
+                remote_name: "upstream".to_string(),
+            })
+        );
+
+        let mut delete_app = TuiApp::new(down.state, AppConfig::default());
+        let delete = delete_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "d".to_string(),
+        })));
+        assert_eq!(delete.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            delete
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::RemoveRemote {
+                remote_name: "upstream".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn repo_mode_remotes_filter_clear_keeps_create_remote_prompt_routable() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Remotes,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let focused = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "/".to_string(),
+        })));
+        let mut filtered_app = TuiApp::new(focused.state, AppConfig::default());
+        let pasted = filtered_app.dispatch(Event::Input(InputEvent::Paste("orig".to_string())));
+        let mut cleared_app = TuiApp::new(pasted.state, AppConfig::default());
+        for _ in 0..4 {
+            let next = cleared_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "backspace".to_string(),
+            })));
+            cleared_app = TuiApp::new(next.state, AppConfig::default());
+        }
+        let blurred = cleared_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        let mut create_app = TuiApp::new(blurred.state, AppConfig::default());
+        let create = create_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+
+        assert_eq!(create.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            create
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((&super_lazygit_core::InputPromptOperation::CreateRemote, ""))
         );
     }
 
@@ -9458,6 +9864,61 @@ mod tests {
     }
 
     #[test]
+    fn render_repo_shell_shows_remote_details() {
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Remotes,
+                detail: Some(sample_repo_detail()),
+                remotes_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                remotes_filter: super_lazygit_core::RepoSubviewFilterState {
+                    query: "up".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(100, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Remotes"));
+        assert!(rendered.contains("Selected: upstream"));
+        assert!(rendered.contains("Fetch: git@github.com:example/upstream.git"));
+        assert!(rendered.contains("Push: git@github.com:example/upstream.git"));
+        assert!(rendered.contains("Branches: 0"));
+        assert!(rendered.contains("Filter /up_  Matches: 1/2  (focused)"));
+        assert!(rendered.contains("Context: Enter branches. f fetch."));
+        assert!(rendered.contains("n new remote"));
+        assert!(rendered.contains("upstream  [0 branches]"));
+    }
+
+    #[test]
     fn render_repo_shell_shows_remote_branch_details() {
         let mut state = AppState {
             mode: AppMode::Repository,
@@ -9757,6 +10218,20 @@ mod tests {
     }
 
     #[test]
+    fn remote_confirmation_copy_mentions_fetch_and_remove_operations() {
+        let fetch = confirmation_copy(&super_lazygit_core::ConfirmableOperation::FetchRemote {
+            remote_name: "upstream".to_string(),
+        });
+        let remove = confirmation_copy(&super_lazygit_core::ConfirmableOperation::RemoveRemote {
+            remote_name: "upstream".to_string(),
+        });
+
+        assert!(fetch.contains("Fetch updates from remote upstream?"));
+        assert!(remove.contains("Remove remote upstream?"));
+        assert!(remove.contains("configured remote entry"));
+    }
+
+    #[test]
     fn tag_confirmation_copy_mentions_delete_and_push_commands() {
         let delete = confirmation_copy(&super_lazygit_core::ConfirmableOperation::DeleteTag {
             tag_name: "release-candidate".to_string(),
@@ -9791,6 +10266,20 @@ mod tests {
 
         assert!(copy.contains("new tag name"));
         assert!(copy.contains("created at the current HEAD"));
+    }
+
+    #[test]
+    fn remote_prompt_copy_mentions_name_and_url_format() {
+        let create = input_prompt_copy(&super_lazygit_core::InputPromptOperation::CreateRemote);
+        let edit = input_prompt_copy(&super_lazygit_core::InputPromptOperation::EditRemote {
+            current_name: "upstream".to_string(),
+            current_url: "git@github.com:example/upstream.git".to_string(),
+        });
+
+        assert!(create.contains("<name> <url>"));
+        assert!(create.contains("upstream"));
+        assert!(edit.contains("Edit remote upstream"));
+        assert!(edit.contains("<name> <url>"));
     }
 
     #[test]

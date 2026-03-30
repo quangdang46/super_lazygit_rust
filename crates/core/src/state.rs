@@ -102,6 +102,9 @@ pub enum ConfirmableOperation {
     Fetch,
     Pull,
     Push,
+    FetchRemote {
+        remote_name: String,
+    },
     DiscardFile {
         path: PathBuf,
     },
@@ -140,6 +143,9 @@ pub enum ConfirmableOperation {
     DeleteBranch {
         branch_name: String,
     },
+    RemoveRemote {
+        remote_name: String,
+    },
     DeleteRemoteBranch {
         remote_name: String,
         branch_name: String,
@@ -174,6 +180,7 @@ pub struct PendingInputPrompt {
 pub enum InputPromptOperation {
     CheckoutBranch,
     CreateBranch,
+    CreateRemote,
     CreateTag,
     CreateBranchFromCommit {
         commit: String,
@@ -185,6 +192,10 @@ pub enum InputPromptOperation {
     },
     RenameBranch {
         current_name: String,
+    },
+    EditRemote {
+        current_name: String,
+        current_url: String,
     },
     RenameStash {
         stash_ref: String,
@@ -562,6 +573,7 @@ pub struct RepoModeState {
     pub staged_view: ListViewState,
     pub commit_box: CommitBoxState,
     pub branches_view: ListViewState,
+    pub remotes_view: ListViewState,
     pub remote_branches_view: ListViewState,
     pub tags_view: ListViewState,
     pub commits_view: ListViewState,
@@ -571,6 +583,7 @@ pub struct RepoModeState {
     pub reflog_view: ListViewState,
     pub worktree_view: ListViewState,
     pub branches_filter: RepoSubviewFilterState,
+    pub remotes_filter: RepoSubviewFilterState,
     pub remote_branches_filter: RepoSubviewFilterState,
     pub tags_filter: RepoSubviewFilterState,
     pub commits_filter: RepoSubviewFilterState,
@@ -604,6 +617,7 @@ impl RepoModeState {
             staged_view: ListViewState::default(),
             commit_box: CommitBoxState::default(),
             branches_view: ListViewState::default(),
+            remotes_view: ListViewState::default(),
             remote_branches_view: ListViewState::default(),
             tags_view: ListViewState::default(),
             commits_view: ListViewState::default(),
@@ -613,6 +627,7 @@ impl RepoModeState {
             reflog_view: ListViewState::default(),
             worktree_view: ListViewState::default(),
             branches_filter: RepoSubviewFilterState::default(),
+            remotes_filter: RepoSubviewFilterState::default(),
             remote_branches_filter: RepoSubviewFilterState::default(),
             tags_filter: RepoSubviewFilterState::default(),
             commits_filter: RepoSubviewFilterState::default(),
@@ -634,6 +649,7 @@ impl RepoModeState {
     pub fn subview_filter(&self, subview: RepoSubview) -> Option<&RepoSubviewFilterState> {
         match subview {
             RepoSubview::Branches => Some(&self.branches_filter),
+            RepoSubview::Remotes => Some(&self.remotes_filter),
             RepoSubview::RemoteBranches => Some(&self.remote_branches_filter),
             RepoSubview::Tags => Some(&self.tags_filter),
             RepoSubview::Commits => Some(match self.commit_subview_mode {
@@ -656,6 +672,7 @@ impl RepoModeState {
     ) -> Option<&mut RepoSubviewFilterState> {
         match subview {
             RepoSubview::Branches => Some(&mut self.branches_filter),
+            RepoSubview::Remotes => Some(&mut self.remotes_filter),
             RepoSubview::RemoteBranches => Some(&mut self.remote_branches_filter),
             RepoSubview::Tags => Some(&mut self.tags_filter),
             RepoSubview::Commits => Some(match self.commit_subview_mode {
@@ -713,6 +730,7 @@ pub enum RepoSubview {
     #[default]
     Status,
     Branches,
+    Remotes,
     RemoteBranches,
     Tags,
     Commits,
@@ -729,6 +747,7 @@ impl RepoSubview {
         matches!(
             self,
             Self::Branches
+                | Self::Remotes
                 | Self::RemoteBranches
                 | Self::Tags
                 | Self::Commits
@@ -864,6 +883,7 @@ pub struct RepoDetail {
     pub file_tree: Vec<FileStatus>,
     pub diff: DiffModel,
     pub branches: Vec<BranchItem>,
+    pub remotes: Vec<RemoteItem>,
     pub remote_branches: Vec<RemoteBranchItem>,
     pub tags: Vec<TagItem>,
     pub commits: Vec<CommitItem>,
@@ -969,6 +989,14 @@ pub struct BranchItem {
     pub name: String,
     pub is_head: bool,
     pub upstream: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteItem {
+    pub name: String,
+    pub fetch_url: String,
+    pub push_url: String,
+    pub branch_count: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1268,6 +1296,18 @@ pub fn branch_matches_filter(branch: &BranchItem, normalized_query: &str) -> boo
     [
         branch.name.as_str(),
         branch.upstream.as_deref().unwrap_or("-"),
+    ]
+    .into_iter()
+    .map(normalize_search_text)
+    .any(|field| fuzzy_matches(&field, normalized_query))
+}
+
+#[must_use]
+pub fn remote_matches_filter(remote: &RemoteItem, normalized_query: &str) -> bool {
+    [
+        remote.name.as_str(),
+        remote.fetch_url.as_str(),
+        remote.push_url.as_str(),
     ]
     .into_iter()
     .map(normalize_search_text)

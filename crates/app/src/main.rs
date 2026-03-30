@@ -897,6 +897,194 @@ mod tests {
     }
 
     #[test]
+    fn e2e_keyboard_harness_runs_remote_management_cycle() {
+        let origin = TempRepo::bare().expect("origin fixture");
+        let upstream = TempRepo::bare().expect("upstream fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", origin.path())
+            .expect("attach origin");
+        seed.push("origin", "HEAD:main").expect("seed push main");
+        seed.checkout_new_branch("feature-remote")
+            .expect("create feature branch");
+        seed.write_file("feature.txt", "remote branch content\n")
+            .expect("write remote feature file");
+        seed.commit_all("remote feature commit")
+            .expect("commit remote feature branch");
+        seed.push("origin", "HEAD:feature-remote")
+            .expect("push feature branch");
+
+        let upstream_seed = TempRepo::new().expect("upstream seed fixture");
+        upstream_seed
+            .write_file("upstream.txt", "upstream base\n")
+            .expect("write upstream file");
+        upstream_seed
+            .commit_all("upstream initial")
+            .expect("upstream initial commit");
+        upstream_seed
+            .add_remote("origin", upstream.path())
+            .expect("attach upstream remote");
+        upstream_seed
+            .push("origin", "HEAD:main")
+            .expect("push upstream main");
+
+        let repo = TempRepo::clone_from(origin.path()).expect("clone fixture");
+        repo.git(["branch", "--set-upstream-to=origin/main", "main"])
+            .expect("set upstream");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+
+        harness.press("open remotes detail", "m");
+        harness.assert_latest_contains("Detail: Remotes");
+        harness.assert_latest_contains("Context: Enter branches. f fetch.");
+
+        harness.press("focus remotes filter", "/");
+        harness.paste("filter remotes", "orig");
+        harness.assert_latest_contains("Filter /orig_");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_remote = repo_mode
+                        .remotes_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.remotes.get(index))
+                        })
+                        .map(|remote| remote.name.as_str());
+                    repo_mode.remotes_filter.focused
+                        && repo_mode.remotes_filter.query == "orig"
+                        && selected_remote == Some("origin")
+                })
+            },
+            "filtering remotes should focus the query and keep the matching remote selected",
+        );
+
+        harness.press("blur remotes filter", "enter");
+        harness.press("refocus remotes filter", "/");
+        for _ in 0..4 {
+            harness.press("clear remotes filter", "backspace");
+        }
+        harness.press("blur cleared remotes filter", "enter");
+        harness.press("open create remote prompt", "n");
+        harness.assert_latest_contains("Add remote");
+        harness.paste(
+            "type remote details",
+            &format!("upstream {}", upstream.path().display()),
+        );
+        harness.press("submit create remote prompt", "enter");
+        assert_eq!(
+            command_stdout(&repo, ["remote", "get-url", "upstream"])
+                .expect("upstream remote url after add"),
+            upstream.path().display().to_string(),
+            "adding a remote from the remotes panel should write the remote config\n{}",
+            harness.timeline()
+        );
+
+        harness.press("focus remotes filter for upstream", "/");
+        harness.paste("filter upstream remote", "upstream");
+        harness.press("blur upstream filter", "enter");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_remote = repo_mode
+                        .remotes_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.remotes.get(index))
+                        })
+                        .map(|remote| remote.name.as_str());
+                    selected_remote == Some("upstream")
+                })
+            },
+            "filtering to the added remote should select it",
+        );
+
+        harness.press("open fetch remote confirmation", "f");
+        harness.assert_latest_contains("Fetch remote upstream");
+        harness.press("confirm fetch remote", "enter");
+        assert_eq!(
+            command_stdout(&repo, ["rev-parse", "refs/remotes/upstream/main"])
+                .expect("upstream remote ref after fetch"),
+            upstream_seed.rev_parse("HEAD").expect("upstream head"),
+            "fetching the selected remote should update its tracking refs\n{}",
+            harness.timeline()
+        );
+
+        harness.press("return to remotes detail after fetch", "m");
+        harness.press("open edit remote prompt", "e");
+        harness.assert_latest_contains("Edit remote upstream");
+        let existing_prompt = format!("upstream {}", upstream.path().display());
+        for _ in 0..existing_prompt.chars().count() {
+            harness.press("clear edit remote prompt", "backspace");
+        }
+        harness.paste(
+            "type edited remote details",
+            &format!("mirror {}", origin.path().display()),
+        );
+        harness.press("submit edit remote prompt", "enter");
+        assert_eq!(
+            command_stdout(&repo, ["remote", "get-url", "mirror"])
+                .expect("mirror remote url after edit"),
+            origin.path().display().to_string(),
+            "editing the selected remote should rename it and update its URL\n{}",
+            harness.timeline()
+        );
+        repo.git_expect_failure(["remote", "get-url", "upstream"])
+            .expect("old remote name should be gone after edit");
+
+        harness.press("focus remotes filter for mirror", "/");
+        for _ in 0..8 {
+            harness.press("clear old remotes filter", "backspace");
+        }
+        harness.paste("filter renamed remote", "mirror");
+        harness.press("blur mirror filter", "enter");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    let selected_remote = repo_mode
+                        .remotes_view
+                        .selected_index
+                        .and_then(|index| {
+                            repo_mode
+                                .detail
+                                .as_ref()
+                                .and_then(|detail| detail.remotes.get(index))
+                        })
+                        .map(|remote| remote.name.as_str());
+                    selected_remote == Some("mirror")
+                })
+            },
+            "filtering to the renamed remote should select it",
+        );
+
+        harness.press("open remove remote confirmation", "d");
+        harness.assert_latest_contains("Remove remote mirror");
+        harness.press("confirm remove remote", "enter");
+        repo.git_expect_failure(["remote", "get-url", "mirror"])
+            .expect("mirror remote should be deleted");
+    }
+
+    #[test]
     fn e2e_keyboard_harness_runs_tag_filter_create_push_delete_cycle() {
         let remote = TempRepo::bare().expect("remote fixture");
         let seed = TempRepo::new().expect("seed fixture");
