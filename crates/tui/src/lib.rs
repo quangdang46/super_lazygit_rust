@@ -619,7 +619,7 @@ impl TuiApp {
                             "checkout_selected_branch",
                             raw,
                             normalized,
-                            &["enter"],
+                            &["enter", "space"],
                         ) {
                             return Some(Action::CheckoutSelectedBranch);
                         }
@@ -2299,7 +2299,9 @@ fn repo_branch_lines(
             comparison_target,
             comparison_source,
         )),
-        Line::from("Enter checks out. - previous branch. c prompts by name. n creates. R renames."),
+        Line::from(
+            "Enter/Space checks out. - previous branch. c prompts by name. n creates. R renames.",
+        ),
         Line::from("d deletes. u sets upstream. v marks compare base/target."),
         Line::from(""),
     ];
@@ -5227,6 +5229,20 @@ mod tests {
             }) if branch_ref == "-"
         )));
 
+        let mut space_checkout_app = TuiApp::new(down.state.clone(), AppConfig::default());
+
+        let space_checkout =
+            space_checkout_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "space".to_string(),
+            })));
+        assert!(space_checkout.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::CheckoutBranch { branch_ref },
+                ..
+            }) if branch_ref == "feature"
+        )));
+
         let rename = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "R".to_string(),
         })));
@@ -6872,7 +6888,7 @@ mod tests {
 
         assert!(rendered.contains("Detail: Branches"));
         assert!(rendered.contains("Selected: feature"));
-        assert!(rendered.contains("Enter checks out."));
+        assert!(rendered.contains("checks out."));
         assert!(rendered.contains("previous"));
         assert!(rendered.contains("prompts"));
         assert!(rendered.contains("* main"));
