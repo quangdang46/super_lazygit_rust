@@ -105,8 +105,19 @@ pub enum GitCommand {
     CreateBranch {
         branch_name: String,
     },
+    CreateBranchFromCommit {
+        branch_name: String,
+        commit: String,
+    },
     CheckoutBranch {
         branch_ref: String,
+    },
+    CheckoutCommit {
+        commit: String,
+    },
+    CheckoutCommitFile {
+        commit: String,
+        path: PathBuf,
     },
     RenameBranch {
         branch_name: String,

@@ -132,6 +132,9 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Select the next commit |
 | `k` / `Up` | Select the previous commit |
+| `Enter` | Open the selected commit's changed-files view |
+| `Space` | Check out the selected commit in detached-HEAD mode |
+| `n` | Open create-branch-from-commit prompt |
 | `i` | Start interactive rebase from the selected commit |
 | `A` | Open amend-selected-commit confirmation |
 | `F` | Open fixup-selected-commit confirmation |
@@ -146,6 +149,19 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `/` | Focus the commit-history filter |
 | `w` | Switch to the worktrees subview |
 | `0` | Return focus to the last active main pane |
+
+### Commit files detail mode
+
+| Key | Action |
+| --- | --- |
+| `j` / `Down` | Select the next changed file from the active commit |
+| `k` / `Up` | Select the previous changed file from the active commit |
+| `Enter` | Return to commit history for the same selected commit |
+| `Space` | Check out the selected file from the selected commit |
+| `e` | Open the selected file in the configured editor |
+| `/` | Focus the changed-files filter |
+| `0` | Return focus to the last active main pane |
+| `w` | Switch to the worktrees subview |
 
 ### Compare detail subview
 

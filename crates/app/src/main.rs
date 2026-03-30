@@ -775,6 +775,64 @@ mod tests {
     }
 
     #[test]
+    fn e2e_keyboard_harness_runs_commit_history_file_and_detached_checkout_cycle() {
+        let repo = TempRepo::new().expect("repo fixture");
+        repo.write_file("src/lib.rs", "pub fn version() -> u8 {\n    1\n}\n")
+            .expect("write initial source");
+        repo.commit_all("initial commit")
+            .expect("commit initial state");
+        let initial_commit =
+            command_stdout(&repo, ["rev-parse", "HEAD"]).expect("initial commit id");
+
+        repo.write_file("src/lib.rs", "pub fn version() -> u8 {\n    2\n}\n")
+            .expect("write updated source");
+        repo.commit_all("second commit")
+            .expect("commit updated state");
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut harness = E2eHarness::new(repo.path().to_path_buf());
+        harness.bootstrap();
+        harness.assert_state(
+            |state| state.workspace.selected_repo_id.as_ref() == Some(&repo_id),
+            "workspace selected repo should match scanned fixture",
+        );
+
+        harness.press("enter repo mode", "enter");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "enter should switch into repo mode",
+        );
+
+        harness.press("open commits detail", "3");
+        harness.assert_latest_contains("Detail: Commits");
+        harness.assert_latest_contains("Actions: Enter files  Space checkout  n branch  i rebase");
+
+        harness.press("open selected commit files", "enter");
+        harness.assert_latest_contains("Commit files");
+        harness
+            .assert_latest_contains("Context: Enter history. Space checkout file. e open editor.");
+        harness.assert_latest_contains("src/lib.rs");
+
+        harness.press("return to commit history", "enter");
+        harness.assert_latest_contains("Detail: Commits");
+
+        harness.press("select older commit", "j");
+        harness.assert_latest_contains("initial commit");
+
+        harness.press("detached checkout selected commit", "space");
+        harness.assert_state(
+            |state| state.mode == AppMode::Repository,
+            "detached checkout should keep the app in repo mode",
+        );
+        assert_eq!(
+            command_stdout(&repo, ["rev-parse", "HEAD"]).expect("head after detached checkout"),
+            initial_commit,
+            "space from commit history should detach HEAD at the selected commit\n{}",
+            harness.timeline()
+        );
+    }
+
+    #[test]
     fn performance_harness_measures_startup_scan_refresh_and_diff_loads() {
         let fixture = PerfWorkspaceFixture::new(6);
         let budgets = PerfBudgets::from_env();

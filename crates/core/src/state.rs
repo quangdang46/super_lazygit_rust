@@ -163,6 +163,10 @@ pub struct PendingInputPrompt {
 pub enum InputPromptOperation {
     CheckoutBranch,
     CreateBranch,
+    CreateBranchFromCommit {
+        commit: String,
+        summary: String,
+    },
     RenameBranch {
         current_name: String,
     },
@@ -531,6 +535,7 @@ pub enum WatcherHealth {
 pub struct RepoModeState {
     pub current_repo_id: RepoId,
     pub active_subview: RepoSubview,
+    pub commit_subview_mode: CommitSubviewMode,
     pub main_focus: PaneId,
     pub diff_scroll: usize,
     pub diff_line_cursor: Option<usize>,
@@ -540,11 +545,13 @@ pub struct RepoModeState {
     pub commit_box: CommitBoxState,
     pub branches_view: ListViewState,
     pub commits_view: ListViewState,
+    pub commit_files_view: ListViewState,
     pub stash_view: ListViewState,
     pub reflog_view: ListViewState,
     pub worktree_view: ListViewState,
     pub branches_filter: RepoSubviewFilterState,
     pub commits_filter: RepoSubviewFilterState,
+    pub commit_files_filter: RepoSubviewFilterState,
     pub stash_filter: RepoSubviewFilterState,
     pub reflog_filter: RepoSubviewFilterState,
     pub worktree_filter: RepoSubviewFilterState,
@@ -561,6 +568,7 @@ impl RepoModeState {
         Self {
             current_repo_id,
             active_subview: RepoSubview::default(),
+            commit_subview_mode: CommitSubviewMode::default(),
             main_focus: PaneId::RepoUnstaged,
             diff_scroll: 0,
             diff_line_cursor: None,
@@ -570,11 +578,13 @@ impl RepoModeState {
             commit_box: CommitBoxState::default(),
             branches_view: ListViewState::default(),
             commits_view: ListViewState::default(),
+            commit_files_view: ListViewState::default(),
             stash_view: ListViewState::default(),
             reflog_view: ListViewState::default(),
             worktree_view: ListViewState::default(),
             branches_filter: RepoSubviewFilterState::default(),
             commits_filter: RepoSubviewFilterState::default(),
+            commit_files_filter: RepoSubviewFilterState::default(),
             stash_filter: RepoSubviewFilterState::default(),
             reflog_filter: RepoSubviewFilterState::default(),
             worktree_filter: RepoSubviewFilterState::default(),
@@ -590,7 +600,10 @@ impl RepoModeState {
     pub fn subview_filter(&self, subview: RepoSubview) -> Option<&RepoSubviewFilterState> {
         match subview {
             RepoSubview::Branches => Some(&self.branches_filter),
-            RepoSubview::Commits => Some(&self.commits_filter),
+            RepoSubview::Commits => Some(match self.commit_subview_mode {
+                CommitSubviewMode::History => &self.commits_filter,
+                CommitSubviewMode::Files => &self.commit_files_filter,
+            }),
             RepoSubview::Stash => Some(&self.stash_filter),
             RepoSubview::Reflog => Some(&self.reflog_filter),
             RepoSubview::Worktrees => Some(&self.worktree_filter),
@@ -604,13 +617,23 @@ impl RepoModeState {
     ) -> Option<&mut RepoSubviewFilterState> {
         match subview {
             RepoSubview::Branches => Some(&mut self.branches_filter),
-            RepoSubview::Commits => Some(&mut self.commits_filter),
+            RepoSubview::Commits => Some(match self.commit_subview_mode {
+                CommitSubviewMode::History => &mut self.commits_filter,
+                CommitSubviewMode::Files => &mut self.commit_files_filter,
+            }),
             RepoSubview::Stash => Some(&mut self.stash_filter),
             RepoSubview::Reflog => Some(&mut self.reflog_filter),
             RepoSubview::Worktrees => Some(&mut self.worktree_filter),
             RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitSubviewMode {
+    #[default]
+    History,
+    Files,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1158,6 +1181,14 @@ pub fn commit_matches_filter(commit: &CommitItem, normalized_query: &str) -> boo
                 normalized_query,
             )
         })
+}
+
+#[must_use]
+pub fn commit_file_matches_filter(file: &CommitFileItem, normalized_query: &str) -> bool {
+    fuzzy_matches(
+        &normalize_search_text(&file.path.to_string_lossy()),
+        normalized_query,
+    )
 }
 
 #[must_use]

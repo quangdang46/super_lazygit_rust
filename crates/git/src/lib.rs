@@ -652,6 +652,16 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["checkout", "-b", branch_name.as_str()])?;
                 format!("Created and checked out {branch_name}")
             }
+            GitCommand::CreateBranchFromCommit {
+                branch_name,
+                commit,
+            } => {
+                git(
+                    &repo_path,
+                    ["checkout", "-b", branch_name.as_str(), commit.as_str()],
+                )?;
+                format!("Created and checked out {branch_name} from {commit}")
+            }
             GitCommand::CreateBranchFromStash {
                 stash_ref,
                 branch_name,
@@ -665,6 +675,18 @@ impl GitBackend for CliGitBackend {
             GitCommand::CheckoutBranch { branch_ref } => {
                 git(&repo_path, ["checkout", branch_ref.as_str()])?;
                 format!("Checked out {branch_ref}")
+            }
+            GitCommand::CheckoutCommit { commit } => {
+                git(&repo_path, ["checkout", commit.as_str()])?;
+                format!("Checked out commit {commit}")
+            }
+            GitCommand::CheckoutCommitFile { commit, path } => {
+                let path_value = path.to_string_lossy().into_owned();
+                git(
+                    &repo_path,
+                    ["checkout", commit.as_str(), "--", path_value.as_str()],
+                )?;
+                format!("Checked out {} from {commit}", path.display())
             }
             GitCommand::RenameBranch {
                 branch_name,
@@ -886,8 +908,11 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CreateBranch { .. } => "create_branch",
+        GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
+        GitCommand::CheckoutCommit { .. } => "checkout_commit",
+        GitCommand::CheckoutCommitFile { .. } => "checkout_commit_file",
         GitCommand::RenameBranch { .. } => "rename_branch",
         GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::DeleteBranch { .. } => "delete_branch",

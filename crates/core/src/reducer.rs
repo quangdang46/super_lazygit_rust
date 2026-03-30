@@ -165,6 +165,90 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::OpenSelectedCommitFiles => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if selected_commit_item(repo_mode).is_some() {
+                    repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::Files;
+                    sync_commit_file_selection(repo_mode);
+                    state.focused_pane = PaneId::RepoDetail;
+                    effects.push(Effect::ScheduleRender);
+                } else {
+                    push_warning(state, "Select a commit before opening changed files.");
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CloseSelectedCommitFiles => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::Files {
+                    repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                    repo_mode.commit_files_filter.focused = false;
+                    state.focused_pane = PaneId::RepoDetail;
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CheckoutSelectedCommit => {
+            match pending_history_commit_operation(state, |_, commit, _| {
+                Ok((
+                    GitCommand::CheckoutCommit {
+                        commit: commit.oid.clone(),
+                    },
+                    format!("Checkout commit {} {}", commit.short_oid, commit.summary),
+                ))
+            }) {
+                Ok(Some((repo_id, (command, summary)))) => {
+                    let job = git_job(repo_id, command);
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => {
+                    push_warning(state, "Select a commit before checking it out.");
+                    effects.push(Effect::ScheduleRender);
+                }
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CheckoutSelectedCommitFile => match selected_commit_file_checkout_target(state) {
+            Ok(Some((repo_id, commit, path))) => {
+                let summary = format!("Checkout {} from {}", path.display(), commit);
+                let job = git_job(repo_id, GitCommand::CheckoutCommitFile { commit, path });
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+            Ok(None) => {
+                push_warning(state, "Select a changed file before checking it out.");
+                effects.push(Effect::ScheduleRender);
+            }
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::CreateBranchFromSelectedCommit => {
+            match pending_history_commit_operation(state, |_, commit, _| {
+                Ok(InputPromptOperation::CreateBranchFromCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_input_prompt(state, repo_id, operation);
+                    effects.push(Effect::ScheduleRender);
+                }
+                Ok(None) => {
+                    push_warning(state, "Select a commit before creating a branch.");
+                    effects.push(Effect::ScheduleRender);
+                }
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
         Action::StartInteractiveRebase => {
             match pending_history_commit_operation(state, |_, commit, selected_index| {
                 if selected_index == 0 {
@@ -1028,6 +1112,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             let mut repo_detail_reload = None;
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 clear_repo_subview_filter_focus(repo_mode);
+                if subview != crate::state::RepoSubview::Commits {
+                    repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                }
                 repo_mode.active_subview = subview;
                 repo_mode.diff_scroll = 0;
                 if !matches!(
@@ -1170,6 +1257,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_status_selection(repo_mode);
                     sync_branch_selection(repo_mode);
                     sync_commit_selection(repo_mode);
+                    sync_commit_file_selection(repo_mode);
                     sync_stash_selection(repo_mode);
                     sync_reflog_selection(repo_mode);
                     sync_worktree_selection(repo_mode);
@@ -1441,6 +1529,13 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
         crate::state::RepoSubview::Branches => {
             reduce_action(state, Action::CheckoutSelectedBranch, effects);
         }
+        crate::state::RepoSubview::Commits => {
+            let action = match repo_mode.commit_subview_mode {
+                crate::state::CommitSubviewMode::History => Action::OpenSelectedCommitFiles,
+                crate::state::CommitSubviewMode::Files => Action::CloseSelectedCommitFiles,
+            };
+            reduce_action(state, action, effects);
+        }
         crate::state::RepoSubview::Stash => {
             reduce_action(state, Action::ApplySelectedStash, effects);
         }
@@ -1452,8 +1547,7 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
                 reduce_action(state, Action::EnterRepoMode { repo_id }, effects);
             }
         }
-        crate::state::RepoSubview::Commits
-        | crate::state::RepoSubview::Compare
+        crate::state::RepoSubview::Compare
         | crate::state::RepoSubview::Rebase
         | crate::state::RepoSubview::Reflog => {}
     }
@@ -1481,17 +1575,28 @@ fn step_commit_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
         return false;
     }
 
-    let visible_indices = filtered_commit_indices(repo_mode);
-    if step_filtered_selection(
-        &mut repo_mode.commits_view.selected_index,
-        &visible_indices,
-        step,
-    ) {
+    let changed = match repo_mode.commit_subview_mode {
+        crate::state::CommitSubviewMode::History => {
+            let visible_indices = filtered_commit_indices(repo_mode);
+            step_filtered_selection(
+                &mut repo_mode.commits_view.selected_index,
+                &visible_indices,
+                step,
+            )
+        }
+        crate::state::CommitSubviewMode::Files => {
+            let visible_indices = filtered_commit_file_indices(repo_mode);
+            step_filtered_selection(
+                &mut repo_mode.commit_files_view.selected_index,
+                &visible_indices,
+                step,
+            )
+        }
+    };
+    if changed {
         repo_mode.diff_scroll = 0;
-        true
-    } else {
-        false
     }
+    changed
 }
 
 fn step_diff_hunk_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
@@ -1577,6 +1682,7 @@ fn close_commit_box(repo_mode: &mut RepoModeState) {
 fn clear_repo_subview_filter_focus(repo_mode: &mut RepoModeState) {
     repo_mode.branches_filter.focused = false;
     repo_mode.commits_filter.focused = false;
+    repo_mode.commit_files_filter.focused = false;
     repo_mode.stash_filter.focused = false;
     repo_mode.reflog_filter.focused = false;
     repo_mode.worktree_filter.focused = false;
@@ -1952,6 +2058,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
     match operation {
         InputPromptOperation::CheckoutBranch => "Check out branch".to_string(),
         InputPromptOperation::CreateBranch => "Create branch".to_string(),
+        InputPromptOperation::CreateBranchFromCommit { summary, .. } => {
+            format!("New branch name from {summary}")
+        }
         InputPromptOperation::RenameBranch { current_name } => {
             format!("Rename branch {current_name}")
         }
@@ -1974,6 +2083,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
     match operation {
         InputPromptOperation::CheckoutBranch => String::new(),
         InputPromptOperation::CreateBranch => String::new(),
+        InputPromptOperation::CreateBranchFromCommit { .. } => String::new(),
         InputPromptOperation::RenameBranch { current_name } => current_name.clone(),
         InputPromptOperation::RenameStash { current_name, .. } => current_name.clone(),
         InputPromptOperation::CreateBranchFromStash { .. } => String::new(),
@@ -2017,6 +2127,13 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 branch_name: value.clone(),
             },
             format!("Create branch {value}"),
+        ),
+        InputPromptOperation::CreateBranchFromCommit { commit, summary } => (
+            GitCommand::CreateBranchFromCommit {
+                branch_name: value.clone(),
+                commit,
+            },
+            format!("Create branch {value} from {summary}"),
         ),
         InputPromptOperation::RenameBranch { current_name } => (
             GitCommand::RenameBranch {
@@ -2242,6 +2359,26 @@ fn sync_commit_selection(repo_mode: &mut RepoModeState) {
         .copied()
         .find(|index| repo_mode.commits_view.selected_index == Some(*index))
         .or_else(|| visible_indices.first().copied());
+}
+
+fn sync_commit_file_selection(repo_mode: &mut RepoModeState) {
+    let Some(commit) = selected_commit_item(repo_mode) else {
+        repo_mode.commit_files_view.selected_index = None;
+        return;
+    };
+
+    let visible_indices = filtered_commit_file_indices(repo_mode);
+    repo_mode.commit_files_view.selected_index = visible_indices
+        .iter()
+        .copied()
+        .find(|index| repo_mode.commit_files_view.selected_index == Some(*index))
+        .or_else(|| {
+            if commit.changed_files.is_empty() {
+                None
+            } else {
+                visible_indices.first().copied()
+            }
+        });
 }
 
 fn sync_stash_selection(repo_mode: &mut RepoModeState) {
@@ -2531,7 +2668,10 @@ fn selected_status_detail_request(
 fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::state::RepoSubview) {
     match subview {
         crate::state::RepoSubview::Branches => sync_branch_selection(repo_mode),
-        crate::state::RepoSubview::Commits => sync_commit_selection(repo_mode),
+        crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
+            crate::state::CommitSubviewMode::History => sync_commit_selection(repo_mode),
+            crate::state::CommitSubviewMode::Files => sync_commit_file_selection(repo_mode),
+        },
         crate::state::RepoSubview::Stash => sync_stash_selection(repo_mode),
         crate::state::RepoSubview::Reflog => sync_reflog_selection(repo_mode),
         crate::state::RepoSubview::Worktrees => sync_worktree_selection(repo_mode),
@@ -2591,6 +2731,12 @@ fn selected_repo_editor_path(
         PaneId::RepoDetail if repo_mode.active_subview == crate::state::RepoSubview::Worktrees => {
             selected_worktree_item(repo_mode).map(|worktree| worktree.path.clone())
         }
+        PaneId::RepoDetail
+            if repo_mode.active_subview == crate::state::RepoSubview::Commits
+                && repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::Files =>
+        {
+            selected_commit_file_item(repo_mode).map(|file| file.path.clone())
+        }
         _ => None,
     }?;
 
@@ -2645,6 +2791,42 @@ fn selected_commit_item(repo_mode: &RepoModeState) -> Option<&crate::state::Comm
         .filter(|index| filtered_commit_indices(repo_mode).contains(index))
         .or_else(|| filtered_commit_indices(repo_mode).first().copied())?;
     detail.commits.get(selected_index)
+}
+
+fn selected_commit_file_item(repo_mode: &RepoModeState) -> Option<&crate::state::CommitFileItem> {
+    let commit = selected_commit_item(repo_mode)?;
+    let visible_indices = filtered_commit_file_indices(repo_mode);
+    let selected_index = repo_mode
+        .commit_files_view
+        .selected_index
+        .filter(|index| visible_indices.contains(index))
+        .or_else(|| visible_indices.first().copied())?;
+    commit.changed_files.get(selected_index)
+}
+
+fn selected_commit_file_checkout_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, std::path::PathBuf)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(message) = history_action_block_reason(&detail.merge_state) {
+        return Err(message.to_string());
+    }
+    let Some(commit) = selected_commit_item(repo_mode) else {
+        return Ok(None);
+    };
+    let Some(file) = selected_commit_file_item(repo_mode) else {
+        return Ok(None);
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        commit.oid.clone(),
+        file.path.clone(),
+    )))
 }
 
 fn selected_reflog_restore_target(
@@ -2893,6 +3075,23 @@ fn filtered_commit_indices(repo_mode: &RepoModeState) -> Vec<usize> {
         .enumerate()
         .filter_map(|(index, commit)| {
             crate::state::commit_matches_filter(commit, &query).then_some(index)
+        })
+        .collect()
+}
+
+fn filtered_commit_file_indices(repo_mode: &RepoModeState) -> Vec<usize> {
+    let Some(commit) = selected_commit_item(repo_mode) else {
+        return Vec::new();
+    };
+    let Some(query) = repo_mode.commit_files_filter.active_query() else {
+        return (0..commit.changed_files.len()).collect();
+    };
+    commit
+        .changed_files
+        .iter()
+        .enumerate()
+        .filter_map(|(index, file)| {
+            crate::state::commit_file_matches_filter(file, &query).then_some(index)
         })
         .collect()
 }
@@ -3216,7 +3415,10 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::AbortRebase => "abort-rebase",
         GitCommand::SkipRebase => "skip-rebase",
         GitCommand::CreateBranch { .. } => "create-branch",
+        GitCommand::CreateBranchFromCommit { .. } => "create-branch-from-commit",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
+        GitCommand::CheckoutCommit { .. } => "checkout-commit",
+        GitCommand::CheckoutCommitFile { .. } => "checkout-commit-file",
         GitCommand::RenameBranch { .. } => "rename-branch",
         GitCommand::RenameStash { .. } => "rename-stash",
         GitCommand::CreateBranchFromStash { .. } => "create-branch-from-stash",
@@ -3470,6 +3672,71 @@ mod tests {
             vec![Effect::OpenEditor {
                 cwd: repo_root,
                 target: worktree_path,
+            }]
+        );
+    }
+
+    #[test]
+    fn open_in_editor_from_commit_file_mode_targets_selected_file() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let selected_path = std::path::PathBuf::from("src/lib.rs");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..crate::state::WorkspaceState::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![
+                            CommitFileItem {
+                                path: selected_path.clone(),
+                                kind: FileStatusKind::Added,
+                            },
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("notes.md"),
+                                kind: FileStatusKind::Added,
+                            },
+                        ],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commit_files_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenInEditor));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::OpenEditor {
+                cwd: repo_root.clone(),
+                target: repo_root.join(selected_path),
             }]
         );
     }
@@ -5042,6 +5309,56 @@ mod tests {
                 repo_id,
                 command: GitCommand::CheckoutBranch {
                     branch_ref: "origin/feature/new-ui".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_create_branch_from_commit_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "New branch name from abcdef1 add lib",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateBranchFromCommit {
+                    commit: "abcdef1234567890".to_string(),
+                    summary: "abcdef1 add lib".to_string(),
+                },
+                value: "feature/from-commit".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-branch-from-commit");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateBranchFromCommit {
+                    branch_name: "feature/from-commit".to_string(),
+                    commit: "abcdef1234567890".to_string(),
                 },
             })]
         );
@@ -7595,6 +7912,174 @@ mod tests {
                 .back()
                 .map(|notification| notification.text.as_str()),
             Some("Stage changes before starting fixup.")
+        );
+    }
+
+    #[test]
+    fn open_selected_commit_files_switches_into_file_mode() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "head".to_string(),
+                        short_oid: "head".to_string(),
+                        summary: "HEAD".to_string(),
+                        changed_files: vec![
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("src/lib.rs"),
+                                kind: FileStatusKind::Modified,
+                            },
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("notes.md"),
+                                kind: FileStatusKind::Added,
+                            },
+                        ],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedCommitFiles));
+
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_subview_mode),
+            Some(crate::state::CommitSubviewMode::Files)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_files_view.selected_index),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn checkout_selected_commit_queues_job_for_selected_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CheckoutSelectedCommit));
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&JobId::new("git:repo-1:checkout-commit"))
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: JobId::new("git:repo-1:checkout-commit"),
+                repo_id,
+                command: GitCommand::CheckoutCommit {
+                    commit: "older".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn checkout_selected_commit_file_queues_job_for_selected_file() {
+        let repo_id = RepoId::new("repo-1");
+        let selected_path = std::path::PathBuf::from("src/lib.rs");
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![
+                            CommitFileItem {
+                                path: selected_path.clone(),
+                                kind: FileStatusKind::Added,
+                            },
+                            CommitFileItem {
+                                path: std::path::PathBuf::from("notes.md"),
+                                kind: FileStatusKind::Added,
+                            },
+                        ],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commit_files_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CheckoutSelectedCommitFile));
+
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&JobId::new("git:repo-1:checkout-commit-file"))
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: JobId::new("git:repo-1:checkout-commit-file"),
+                repo_id,
+                command: GitCommand::CheckoutCommitFile {
+                    commit: "abcdef1234567890".to_string(),
+                    path: selected_path,
+                },
+            })]
         );
     }
 
