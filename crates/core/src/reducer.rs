@@ -970,6 +970,40 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::OpenFilterOptions => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if filter_menu_entries(state).is_empty() {
+                    push_warning(
+                        state,
+                        "Filter options are only available from filterable detail panels.",
+                    );
+                } else {
+                    open_menu(state, repo_id, MenuOperation::FilterOptions);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenDiffOptions => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if diff_menu_entries(state).is_empty() {
+                    push_warning(
+                        state,
+                        "Diff options are only available from branches, commits, or an active comparison.",
+                    );
+                } else {
+                    open_menu(state, repo_id, MenuOperation::DiffOptions);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::OpenMergeRebaseOptions => {
             if let Some(repo_id) = state
                 .repo_mode
@@ -3155,6 +3189,8 @@ struct MenuEntry {
 fn menu_title(operation: MenuOperation) -> &'static str {
     match operation {
         MenuOperation::StashOptions => "Stash options",
+        MenuOperation::FilterOptions => "Filter options",
+        MenuOperation::DiffOptions => "Diffing options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
         MenuOperation::PatchOptions => "Patch options",
         MenuOperation::RecentRepos => "Recent repositories",
@@ -3165,6 +3201,8 @@ fn menu_title(operation: MenuOperation) -> &'static str {
 fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
     match operation {
         MenuOperation::StashOptions => 5,
+        MenuOperation::FilterOptions => filter_menu_entries(state).len(),
+        MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
         MenuOperation::PatchOptions => patch_menu_entries(state).len(),
         MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
@@ -3240,6 +3278,42 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
             );
             true
         }
+        MenuOperation::FilterOptions => {
+            let entries = filter_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::DiffOptions => {
+            let entries = diff_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
         MenuOperation::MergeRebaseOptions => {
             let entries = merge_rebase_menu_entries(state);
             let Some(action) = entries
@@ -3295,6 +3369,116 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
                 state.focused_pane = menu.return_focus;
             }
             true
+        }
+    }
+}
+
+fn filter_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(filter) = repo_mode.subview_filter(repo_mode.active_subview) else {
+        return Vec::new();
+    };
+
+    let subject = filter_menu_subject(repo_mode);
+    let mut entries = vec![MenuEntry {
+        label: if filter.query.trim().is_empty() {
+            format!("Focus {subject} filter")
+        } else {
+            format!("Edit {subject} filter (/{})", filter.query)
+        },
+        action: Action::FocusRepoSubviewFilter,
+    }];
+
+    if !filter.query.trim().is_empty() {
+        entries.push(MenuEntry {
+            label: format!("Clear {subject} filter"),
+            action: Action::CancelRepoSubviewFilter,
+        });
+    }
+
+    entries
+}
+
+fn filter_menu_subject(repo_mode: &RepoModeState) -> &'static str {
+    match repo_mode.active_subview {
+        crate::state::RepoSubview::Branches => "branch list",
+        crate::state::RepoSubview::Remotes => "remote list",
+        crate::state::RepoSubview::RemoteBranches => "remote-branch list",
+        crate::state::RepoSubview::Tags => "tag list",
+        crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
+            crate::state::CommitSubviewMode::History => "commit history",
+            crate::state::CommitSubviewMode::Files => "commit-file list",
+        },
+        crate::state::RepoSubview::Stash => "stash list",
+        crate::state::RepoSubview::Reflog => "reflog list",
+        crate::state::RepoSubview::Worktrees => "worktree list",
+        crate::state::RepoSubview::Submodules => "submodule list",
+        crate::state::RepoSubview::Status
+        | crate::state::RepoSubview::Compare
+        | crate::state::RepoSubview::Rebase => "detail panel",
+    }
+}
+
+fn diff_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut entries = Vec::new();
+    if matches!(
+        repo_mode.active_subview,
+        crate::state::RepoSubview::Branches | crate::state::RepoSubview::Commits
+    ) {
+        if let Some(target) = selected_comparison_target(repo_mode) {
+            let label = comparison_target_menu_label(&target);
+            let same_source = repo_mode.comparison_source == Some(repo_mode.active_subview);
+            if repo_mode.comparison_base.is_none() || !same_source {
+                entries.push(MenuEntry {
+                    label: format!("Mark selected {label} as comparison base"),
+                    action: Action::ToggleComparisonSelection,
+                });
+            } else if repo_mode.comparison_base.as_ref() != Some(&target)
+                || repo_mode.comparison_target.as_ref() != Some(&target)
+            {
+                entries.push(MenuEntry {
+                    label: format!("Compare current base against selected {label}"),
+                    action: Action::ToggleComparisonSelection,
+                });
+            }
+        }
+    }
+
+    if repo_mode.comparison_base.is_some() && repo_mode.comparison_target.is_some() {
+        if repo_mode.active_subview != crate::state::RepoSubview::Compare {
+            entries.push(MenuEntry {
+                label: "Open comparison diff".to_string(),
+                action: Action::SwitchRepoSubview(crate::state::RepoSubview::Compare),
+            });
+        }
+        if matches!(
+            repo_mode.active_subview,
+            crate::state::RepoSubview::Branches
+                | crate::state::RepoSubview::Commits
+                | crate::state::RepoSubview::Compare
+        ) {
+            entries.push(MenuEntry {
+                label: "Clear comparison".to_string(),
+                action: Action::ClearComparison,
+            });
+        }
+    }
+
+    entries
+}
+
+fn comparison_target_menu_label(target: &ComparisonTarget) -> String {
+    match target {
+        ComparisonTarget::Branch(name) => format!("branch '{name}'"),
+        ComparisonTarget::Commit(oid) => {
+            let short = oid.chars().take(8).collect::<String>();
+            format!("commit {short}")
         }
     }
 }
@@ -8142,6 +8326,148 @@ mod tests {
                 .as_ref()
                 .map(|menu| menu.operation),
             Some(MenuOperation::CommandLog)
+        );
+    }
+
+    #[test]
+    fn open_filter_options_opens_filter_menu_from_commit_history() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenFilterOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(MenuOperation::FilterOptions)
+        );
+    }
+
+    #[test]
+    fn submit_filter_options_selection_dispatches_filter_action() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Filter options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::FilterOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.focused),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn open_diff_options_opens_diff_menu_from_branches() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![crate::state::BranchItem {
+                        name: "main".to_string(),
+                        is_head: true,
+                        upstream: Some("origin/main".to_string()),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenDiffOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(MenuOperation::DiffOptions)
+        );
+    }
+
+    #[test]
+    fn submit_diff_options_selection_dispatches_selected_action() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Diffing options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::DiffOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![crate::state::BranchItem {
+                        name: "main".to_string(),
+                        is_head: true,
+                        upstream: Some("origin/main".to_string()),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.comparison_base.clone()),
+            Some(crate::state::ComparisonTarget::Branch("main".to_string()))
         );
     }
 

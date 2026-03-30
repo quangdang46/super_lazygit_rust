@@ -65,6 +65,8 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `Ctrl+R` | Open the recent-repositories menu |
 | `:` | Open the shell-command prompt for the current repository root |
 | `@` | Open the command-log menu for recent session messages |
+| `Ctrl+S` in filterable `Repo detail` subviews | Open the filter-options menu for the active detail panel |
+| `W` / `Ctrl+E` in `Branches`, `Commits`, or `Compare` detail | Open the diffing-options menu for shipped comparison flows |
 | `m` in `Commits` or `Rebase` detail | Open the merge/rebase options menu for the shipped flows in the current context |
 | `Ctrl+P` in `Status detail` | Open the patch-options menu for shipped hunk/line patch flows |
 | `f` | Open fetch confirmation |
@@ -139,6 +141,8 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `u` | Open set-upstream prompt |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
+| `Ctrl+S` | Open the filter-options menu for the branch list |
+| `W` or `Ctrl+E` | Open the diffing-options menu for branch comparison flows |
 | `w` | Switch to the worktrees subview |
 
 ### Remotes detail subview
@@ -205,6 +209,8 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `H` | Open hard-reset confirmation |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
+| `Ctrl+S` | Open the filter-options menu for the commit history or commit-files list |
+| `W` or `Ctrl+E` | Open the diffing-options menu for commit comparison flows |
 | `/` | Focus the commit-history filter |
 | `w` | Switch to the worktrees subview |
 | `0` | Return focus to the last active main pane |
@@ -228,6 +234,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | --- | --- |
 | `j` / `Down` | Scroll down |
 | `k` / `Up` | Scroll up |
+| `W` or `Ctrl+E` | Open the diffing-options menu for the active comparison |
 | `x` | Clear the active comparison |
 
 ### Rebase detail subview

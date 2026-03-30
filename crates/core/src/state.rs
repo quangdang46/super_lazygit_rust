@@ -241,6 +241,8 @@ pub struct PendingMenu {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuOperation {
     StashOptions,
+    FilterOptions,
+    DiffOptions,
     MergeRebaseOptions,
     PatchOptions,
     RecentRepos,

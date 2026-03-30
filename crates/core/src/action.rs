@@ -91,6 +91,8 @@ pub enum Action {
     SubmitMenuSelection,
     ConfirmPendingOperation,
     OpenStashOptions,
+    OpenFilterOptions,
+    OpenDiffOptions,
     OpenMergeRebaseOptions,
     OpenPatchOptions,
     OpenRecentRepos,
