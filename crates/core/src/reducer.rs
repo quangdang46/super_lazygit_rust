@@ -5,10 +5,10 @@ use crate::effect::{
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
-    ComparisonTarget, ConfirmableOperation, DiffLineKind, DiffPresentation, InputPromptOperation,
-    JobId, MenuOperation, MergeState, MessageLevel, Notification, OperationProgress, PaneId,
-    PendingInputPrompt, PendingMenu, RepoModeState, ResetMode, ScanStatus, SelectedHunk, StashMode,
-    StatusMessage, WatcherHealth,
+    CommitHistoryMode, ComparisonTarget, ConfirmableOperation, DiffLineKind, DiffPresentation,
+    InputPromptOperation, JobId, MenuOperation, MergeState, MessageLevel, Notification,
+    OperationProgress, PaneId, PendingInputPrompt, PendingMenu, RepoModeState, ResetMode,
+    ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +46,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             });
             effects.push(Effect::ScheduleRender);
         }
@@ -117,6 +118,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                             selected_path: Some(selected_path),
                             diff_presentation,
                             commit_ref: None,
+                            commit_history_mode: CommitHistoryMode::Linear,
                         });
                     }
                     effects.push(Effect::ScheduleRender);
@@ -134,6 +136,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                             selected_path: Some(selected_path),
                             diff_presentation,
                             commit_ref: None,
+                            commit_history_mode: CommitHistoryMode::Linear,
                         });
                     }
                     effects.push(Effect::ScheduleRender);
@@ -182,7 +185,31 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 clear_repo_subview_filter_focus(repo_mode);
                 repo_mode.active_subview = crate::state::RepoSubview::Commits;
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                repo_mode.commit_history_mode = CommitHistoryMode::Linear;
                 repo_mode.commit_history_ref = Some(branch_ref);
+                repo_mode.diff_scroll = 0;
+                close_commit_box(repo_mode);
+                sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
+            }
+            state.focused_pane = PaneId::RepoDetail;
+            effects.push(load_repo_detail_effect(state, repo_id));
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenAllBranchGraph { reverse } => {
+            let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            else {
+                return;
+            };
+
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                clear_repo_subview_filter_focus(repo_mode);
+                repo_mode.active_subview = crate::state::RepoSubview::Commits;
+                repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                repo_mode.commit_history_mode = CommitHistoryMode::Graph { reverse };
+                repo_mode.commit_history_ref = None;
                 repo_mode.diff_scroll = 0;
                 close_commit_box(repo_mode);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
@@ -1139,9 +1166,8 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 clear_repo_subview_filter_focus(repo_mode);
                 repo_mode.commit_history_ref = None;
-                if subview != crate::state::RepoSubview::Commits {
-                    repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
-                }
+                repo_mode.commit_history_mode = CommitHistoryMode::Linear;
+                repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
                 repo_mode.active_subview = subview;
                 repo_mode.diff_scroll = 0;
                 if !matches!(
@@ -3214,11 +3240,18 @@ fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> E
             .then(|| repo_mode.commit_history_ref.clone())
             .flatten()
     });
+    let commit_history_mode = state
+        .repo_mode
+        .as_ref()
+        .filter(|repo_mode| repo_mode.active_subview == crate::state::RepoSubview::Commits)
+        .map(|repo_mode| repo_mode.commit_history_mode)
+        .unwrap_or(CommitHistoryMode::Linear);
     Effect::LoadRepoDetail {
         repo_id,
         selected_path,
         diff_presentation,
         commit_ref,
+        commit_history_mode,
     }
 }
 
@@ -3549,11 +3582,11 @@ mod tests {
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
-        CommitItem, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind, DiffModel,
-        DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId, MenuOperation,
-        MergeState, MessageLevel, ModalKind, PaneId, RebaseKind, RebaseState, ReflogItem,
-        RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState, RepoSummary,
-        ScanStatus, SelectedHunk, StashItem, StashMode, Timestamp, WatcherHealth,
+        CommitHistoryMode, CommitItem, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
+        DiffModel, DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId,
+        MenuOperation, MergeState, MessageLevel, ModalKind, PaneId, RebaseKind, RebaseState,
+        ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState,
+        RepoSummary, ScanStatus, SelectedHunk, StashItem, StashMode, Timestamp, WatcherHealth,
         WorkspaceFilterMode, WorktreeItem,
     };
 
@@ -3815,6 +3848,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 crate::effect::Effect::ScheduleRender,
             ]
@@ -4184,6 +4218,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 Effect::ScheduleRender,
             ]
@@ -4386,9 +4421,140 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("feature".to_string()),
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 Effect::ScheduleRender,
             ]
+        );
+    }
+
+    #[test]
+    fn open_all_branch_graph_switches_to_graph_history_and_loads_detail() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                current_repo_id: repo_id.clone(),
+                detail: Some(RepoDetail {
+                    commits: vec![crate::state::CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![],
+                        diff: DiffModel::default(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                status_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::OpenAllBranchGraph { reverse: true }),
+        );
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Graph { reverse: true })
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            None
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDetail {
+                    repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn switch_repo_subview_clears_graph_history_mode_without_losing_status_selection() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                status_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    commits: vec![crate::state::CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![],
+                        diff: DiffModel::default(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SwitchRepoSubview(RepoSubview::Status)),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Status)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Linear)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.status_view.selected_index),
+            Some(1)
         );
     }
 
@@ -6374,6 +6540,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
             ]
         );
@@ -6422,6 +6589,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("feature".to_string()),
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
             ]
         );
@@ -6919,6 +7087,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
             ]
         );
@@ -8625,6 +8794,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 Effect::ScheduleRender,
             ]
@@ -8692,6 +8862,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 Effect::ScheduleRender,
             ]
@@ -8788,6 +8959,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
             ]
         );
@@ -8914,6 +9086,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 Effect::RefreshRepoSummary {
                     repo_id: repo_visible,
@@ -9029,6 +9202,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 Effect::ScheduleRender,
             ]

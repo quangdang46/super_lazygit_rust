@@ -10,9 +10,10 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitSubviewMode,
-    Diagnostics, DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event, InputEvent, KeyPress,
-    PaneId, ReduceResult, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
+    reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitHistoryMode,
+    CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event,
+    InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoModeState, RepoSubview,
+    RepoSummary,
 };
 
 #[derive(Debug)]
@@ -550,6 +551,21 @@ impl TuiApp {
                     return Some(Action::StashAllChanges);
                 }
 
+                if self.binding_matches_action("open_all_branch_graph", raw, normalized, &["a"]) {
+                    return Some(Action::OpenAllBranchGraph { reverse: false });
+                }
+
+                if self.state.focused_pane == PaneId::RepoUnstaged
+                    && self.binding_matches_action(
+                        "open_all_branch_graph_reverse",
+                        raw,
+                        normalized,
+                        &["A"],
+                    )
+                {
+                    return Some(Action::OpenAllBranchGraph { reverse: true });
+                }
+
                 if self.state.focused_pane == PaneId::RepoUnstaged
                     && self.binding_matches_action(
                         "stage_selected_file",
@@ -847,6 +863,24 @@ impl TuiApp {
                         {
                             return Some(Action::NukeWorkingTree);
                         }
+
+                        if self.binding_matches_action(
+                            "open_all_branch_graph",
+                            raw,
+                            normalized,
+                            &["a"],
+                        ) {
+                            return Some(Action::OpenAllBranchGraph { reverse: false });
+                        }
+
+                        if self.binding_matches_action(
+                            "open_all_branch_graph_reverse",
+                            raw,
+                            normalized,
+                            &["A"],
+                        ) {
+                            return Some(Action::OpenAllBranchGraph { reverse: true });
+                        }
                     }
                     RepoSubview::Commits => {
                         if self.binding_matches_action(
@@ -1030,6 +1064,28 @@ impl TuiApp {
                             )
                         {
                             return Some(Action::HardResetToSelectedCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "open_all_branch_graph",
+                                raw,
+                                normalized,
+                                &["a"],
+                            )
+                        {
+                            return Some(Action::OpenAllBranchGraph { reverse: false });
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "open_all_branch_graph_reverse",
+                                raw,
+                                normalized,
+                                &["A"],
+                            )
+                        {
+                            return Some(Action::OpenAllBranchGraph { reverse: true });
                         }
                     }
                     RepoSubview::Compare => {
@@ -1702,6 +1758,7 @@ impl TuiApp {
                     repo_mode.commits_filter.focused,
                     repo_mode.commit_files_filter.query.as_str(),
                     repo_mode.commit_files_filter.focused,
+                    repo_mode.commit_history_mode,
                     repo_mode.commit_subview_mode,
                     repo_mode.comparison_base.as_ref(),
                     repo_mode.comparison_target.as_ref(),
@@ -2850,6 +2907,7 @@ fn repo_commit_lines(
     commit_filter_focused: bool,
     file_filter_query: &str,
     file_filter_focused: bool,
+    commit_history_mode: CommitHistoryMode,
     subview_mode: CommitSubviewMode,
     comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
     comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
@@ -2860,7 +2918,11 @@ fn repo_commit_lines(
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
-                "Commit history",
+                if commit_history_mode.is_graph() {
+                    "Commit graph"
+                } else {
+                    "Commit history"
+                },
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
@@ -2873,7 +2935,11 @@ fn repo_commit_lines(
     if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
-                "Commit history",
+                if commit_history_mode.is_graph() {
+                    "Commit graph"
+                } else {
+                    "Commit history"
+                },
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
@@ -2937,6 +3003,7 @@ fn repo_commit_lines(
         )),
         Line::from(history_operation_state_line(&detail.merge_state)),
         Line::from(repo_commit_context_line(
+            commit_history_mode,
             commit_filter_query,
             commit_filter_focused,
             visible_indices.len(),
@@ -2956,7 +3023,16 @@ fn repo_commit_lines(
             .map(|index| {
                 let commit = &detail.commits[*index];
                 let prefix = if *index == selected_index { ">" } else { " " };
-                Line::from(format!("{prefix} {} {}", commit.short_oid, commit.summary))
+                let row = if commit_history_mode.is_graph() {
+                    detail
+                        .commit_graph_lines
+                        .get(*index)
+                        .cloned()
+                        .unwrap_or_else(|| format!("{} {}", commit.short_oid, commit.summary))
+                } else {
+                    format!("{} {}", commit.short_oid, commit.summary)
+                };
+                Line::from(format!("{prefix} {row}"))
             }),
     );
 
@@ -3185,12 +3261,18 @@ fn repo_filter_summary_line(
 }
 
 fn repo_commit_context_line(
+    commit_history_mode: CommitHistoryMode,
     filter_query: &str,
     filter_focused: bool,
     visible_count: usize,
     total_count: usize,
 ) -> String {
-    let mut line = "Context: 0 main. / filter. w worktrees.".to_string();
+    let mut line = if commit_history_mode.is_graph() {
+        "Context: Enter files. a newest-first. A oldest-first. 0 main. / filter. w worktrees."
+            .to_string()
+    } else {
+        "Context: 0 main. / filter. w worktrees. a graph. A reverse graph.".to_string()
+    };
     if let Some(filter_line) =
         repo_filter_summary_line(filter_query, filter_focused, visible_count, total_count)
     {
@@ -4224,13 +4306,13 @@ fn default_status_text(state: &AppState) -> String {
                 || "Repository shell ready.".to_string(),
                 |repo_mode| {
                     if repo_mode.active_subview == RepoSubview::Status {
-                        "Status diff focus; Enter/Space applies the current hunk, 0 returns to the main pane, w opens worktrees, D discards the current file, and X nukes the working tree."
+                        "Status diff focus; Enter/Space applies the current hunk, a/A open the all-branches graph, 0 returns to the main pane, w opens worktrees, D discards the current file, and X nukes the working tree."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Branches {
                         "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, w opens worktrees, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; 0 returns to the main pane, / filters history, w opens worktrees, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; a/A switch the all-branches graph direction, 0 returns to the main pane, / filters history, w opens worktrees, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, 0 returns to the main pane, and x clears compare."
@@ -4627,6 +4709,10 @@ mod tests {
                         hunk_count: 0,
                     },
                 },
+            ],
+            commit_graph_lines: vec![
+                "* abcdef1 (HEAD -> main) add lib".to_string(),
+                "| * 1234567 second".to_string(),
             ],
             stashes: vec![
                 super_lazygit_core::StashItem {
@@ -6945,6 +7031,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
                 },
                 super_lazygit_core::Effect::ScheduleRender,
             ]
@@ -7485,6 +7572,53 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_status_detail_routes_all_branch_graph_shortcuts() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state.clone(), AppConfig::default());
+
+        let forward = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "a".to_string(),
+        })));
+        assert_eq!(
+            forward
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Graph { reverse: false })
+        );
+        assert!(forward.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::LoadRepoDetail {
+                commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                ..
+            }
+        )));
+
+        let mut reverse_app = TuiApp::new(state, AppConfig::default());
+        let reverse = reverse_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "A".to_string(),
+        })));
+        assert_eq!(
+            reverse
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Graph { reverse: true })
+        );
+    }
+
+    #[test]
     fn repo_mode_status_detail_routes_space_to_toggle_selected_hunk() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -7632,6 +7766,55 @@ mod tests {
         assert!(rendered.contains("V revert"));
         assert!(rendered.contains("S soft"));
         assert!(rendered.contains("A src/lib.rs"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_all_branch_graph_preview() {
+        let mut detail = sample_repo_detail();
+        detail.commit_graph_lines = vec![
+            "* abcdef1 (HEAD -> main) add lib".to_string(),
+            "| * 1234567 second".to_string(),
+        ];
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(160, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Commits"));
+        assert!(rendered.contains("* abcdef1 (HEAD -> main) add lib"));
+        assert!(rendered.contains("a newest-first"));
+        assert!(rendered.contains("A oldest-first"));
     }
 
     #[test]

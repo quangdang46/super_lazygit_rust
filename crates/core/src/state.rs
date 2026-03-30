@@ -536,6 +536,7 @@ pub struct RepoModeState {
     pub current_repo_id: RepoId,
     pub active_subview: RepoSubview,
     pub commit_subview_mode: CommitSubviewMode,
+    pub commit_history_mode: CommitHistoryMode,
     pub main_focus: PaneId,
     pub diff_scroll: usize,
     pub diff_line_cursor: Option<usize>,
@@ -570,6 +571,7 @@ impl RepoModeState {
             current_repo_id,
             active_subview: RepoSubview::default(),
             commit_subview_mode: CommitSubviewMode::default(),
+            commit_history_mode: CommitHistoryMode::default(),
             main_focus: PaneId::RepoUnstaged,
             diff_scroll: 0,
             diff_line_cursor: None,
@@ -636,6 +638,27 @@ pub enum CommitSubviewMode {
     #[default]
     History,
     Files,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitHistoryMode {
+    #[default]
+    Linear,
+    Graph {
+        reverse: bool,
+    },
+}
+
+impl CommitHistoryMode {
+    #[must_use]
+    pub const fn is_graph(self) -> bool {
+        matches!(self, Self::Graph { .. })
+    }
+
+    #[must_use]
+    pub const fn reverse(self) -> bool {
+        matches!(self, Self::Graph { reverse: true })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -787,6 +810,7 @@ pub struct RepoDetail {
     pub diff: DiffModel,
     pub branches: Vec<BranchItem>,
     pub commits: Vec<CommitItem>,
+    pub commit_graph_lines: Vec<String>,
     pub rebase_state: Option<RebaseState>,
     pub stashes: Vec<StashItem>,
     pub reflog_items: Vec<ReflogItem>,

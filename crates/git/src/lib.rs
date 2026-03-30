@@ -10,11 +10,12 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    BranchItem, CommitFileItem, CommitItem, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
-    DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
-    GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode, RebaseKind,
-    RebaseStartMode, RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId, RepoSummary,
-    ResetMode, SelectedHunk, StashItem, StashMode, Timestamp, WatcherFreshness, WorktreeItem,
+    BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget, Diagnostics,
+    DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus,
+    FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode,
+    RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteSummary, RepoDetail, RepoId,
+    RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, Timestamp, WatcherFreshness,
+    WorktreeItem,
 };
 use thiserror::Error;
 
@@ -323,6 +324,7 @@ pub struct RepoDetailRequest {
     pub selected_path: Option<PathBuf>,
     pub diff_presentation: DiffPresentation,
     pub commit_ref: Option<String>,
+    pub commit_history_mode: CommitHistoryMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,12 +505,17 @@ impl GitBackend for CliGitBackend {
             request.selected_path.or(status.first_path.clone()),
             request.diff_presentation,
         )?;
-        let commits = read_commits(&repo_path, request.commit_ref.as_deref());
+        let commit_history = read_commits(
+            &repo_path,
+            request.commit_ref.as_deref(),
+            request.commit_history_mode,
+        );
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
             branches: read_branches(&repo_path),
-            commits,
+            commits: commit_history.commits,
+            commit_graph_lines: commit_history.graph_lines,
             rebase_state: read_rebase_state(&repo_path),
             stashes: read_stashes(&repo_path),
             reflog_items: read_reflog(&repo_path),
@@ -2119,7 +2126,24 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
     .unwrap_or_default()
 }
 
-fn read_commits(repo_path: &Path, commit_ref: Option<&str>) -> Vec<CommitItem> {
+#[derive(Default)]
+struct CommitHistoryResult {
+    commits: Vec<CommitItem>,
+    graph_lines: Vec<String>,
+}
+
+fn read_commits(
+    repo_path: &Path,
+    commit_ref: Option<&str>,
+    commit_history_mode: CommitHistoryMode,
+) -> CommitHistoryResult {
+    match commit_history_mode {
+        CommitHistoryMode::Linear => read_linear_commits(repo_path, commit_ref),
+        CommitHistoryMode::Graph { reverse } => read_graph_commits(repo_path, reverse),
+    }
+}
+
+fn read_linear_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHistoryResult {
     let mut args = vec!["log", "--format=%H%x00%s", "-n", "64"];
     if let Some(commit_ref) = commit_ref {
         args.push(commit_ref);
@@ -2140,7 +2164,66 @@ fn read_commits(repo_path: &Path, commit_ref: Option<&str>) -> Vec<CommitItem> {
                         diff,
                     })
                 })
-                .collect()
+                .collect::<Vec<_>>()
+        })
+        .map(|commits| CommitHistoryResult {
+            commits,
+            graph_lines: Vec::new(),
+        })
+        .unwrap_or_default()
+}
+
+fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
+    let args = vec![
+        "log",
+        "--graph",
+        "--decorate=short",
+        "--format=%x1f%H%x00%h%x00%D%x00%s",
+        "--all",
+        "-n",
+        "64",
+    ];
+    git_stdout(repo_path, args)
+        .map(|output| {
+            let mut commits = Vec::new();
+            let mut graph_lines = Vec::new();
+            for line in output.lines() {
+                let Some((graph_prefix, payload)) = line.split_once('\x1f') else {
+                    continue;
+                };
+                let mut parts = payload.splitn(4, '\0');
+                let Some(oid) = parts.next() else {
+                    continue;
+                };
+                let Some(short_oid) = parts.next() else {
+                    continue;
+                };
+                let decorations = parts.next().unwrap_or_default().trim();
+                let summary = parts.next().unwrap_or_default();
+                let graph_line = if decorations.is_empty() {
+                    format!("{graph_prefix}{short_oid} {summary}")
+                } else {
+                    format!("{graph_prefix}{short_oid} ({decorations}) {summary}")
+                };
+                let changed_files = read_commit_files(repo_path, oid);
+                let diff = read_commit_diff(repo_path, oid);
+                commits.push(CommitItem {
+                    oid: oid.to_string(),
+                    short_oid: short_oid.to_string(),
+                    summary: summary.to_string(),
+                    changed_files,
+                    diff,
+                });
+                graph_lines.push(graph_line);
+            }
+            if reverse {
+                commits.reverse();
+                graph_lines.reverse();
+            }
+            CommitHistoryResult {
+                commits,
+                graph_lines,
+            }
         })
         .unwrap_or_default()
 }
@@ -2839,6 +2922,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail succeeds");
 
@@ -2931,6 +3015,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -2952,6 +3037,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3286,6 +3372,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3309,6 +3396,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3344,6 +3432,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: Some("feature".to_string()),
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3352,6 +3441,82 @@ mod tests {
             .commits
             .iter()
             .all(|commit| commit.summary != "main branch commit"));
+    }
+
+    #[test]
+    fn cli_backend_reads_all_branch_graph_history_and_reverse_order() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write shared file");
+        repo.commit_all("initial").expect("initial commit");
+
+        repo.checkout_new_branch("feature")
+            .expect("checkout feature branch");
+        repo.write_file("feature.txt", "feature\n")
+            .expect("write feature file");
+        repo.commit_all("feature branch commit")
+            .expect("commit feature branch");
+
+        repo.checkout("main").expect("return to main");
+        repo.write_file("main.txt", "main\n")
+            .expect("write main file");
+        repo.commit_all("main branch commit")
+            .expect("commit main branch");
+        repo.git(["merge", "--no-ff", "feature", "-m", "merge feature"])
+            .expect("merge feature");
+
+        let backend = CliGitBackend;
+        let forward = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+            })
+            .expect("forward graph should load");
+        let reverse = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+            })
+            .expect("reverse graph should load");
+
+        assert_eq!(forward.commit_graph_lines.len(), forward.commits.len());
+        assert_eq!(reverse.commit_graph_lines.len(), reverse.commits.len());
+        assert_eq!(
+            forward
+                .commits
+                .first()
+                .map(|commit| commit.summary.as_str()),
+            Some("merge feature")
+        );
+        assert_eq!(
+            reverse
+                .commits
+                .first()
+                .map(|commit| commit.summary.as_str()),
+            Some("initial")
+        );
+        assert!(forward
+            .commit_graph_lines
+            .iter()
+            .any(|line| line.contains("merge feature")));
+        assert!(forward
+            .commit_graph_lines
+            .iter()
+            .any(|line| line.contains("feature branch commit")));
+        assert!(forward
+            .commit_graph_lines
+            .iter()
+            .any(|line| line.contains("main branch commit")));
+        assert!(forward
+            .commit_graph_lines
+            .iter()
+            .any(|line| line.contains('*')));
     }
 
     #[test]
@@ -3365,6 +3530,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3441,6 +3607,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
         let diff = backend
@@ -3520,6 +3687,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3568,6 +3736,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3633,6 +3802,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3674,6 +3844,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3711,6 +3882,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3775,6 +3947,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3815,6 +3988,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3852,6 +4026,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3884,6 +4059,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3912,6 +4088,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3944,6 +4121,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -3976,6 +4154,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should load");
 
@@ -4159,6 +4338,7 @@ mod tests {
                 selected_path: None,
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
             })
             .expect("detail should refresh");
         assert!(detail

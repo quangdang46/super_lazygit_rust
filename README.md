@@ -25,6 +25,7 @@ That means:
 - Commit, no-verify commit, and amend commit-box flows, plus Git-editor commit and reword flows
 - Fetch, pull, and push flows with confirmation overlays
 - Commit history detail view with compare-target context
+- Status-origin all-branches commit graph view with forward and reverse ordering
 - Branch detail view with checkout, create, rename, delete, and upstream-setting actions
 - Compare, rebase, stash, reflog, and worktree detail subviews
 - Stash create/apply/pop/drop/rename/new-branch, stash-options menu parity for tracked, keep-index, include-untracked, staged, and lazygit-style unstaged creation, reflog restore, and worktree create/remove flows

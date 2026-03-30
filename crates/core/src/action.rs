@@ -22,6 +22,7 @@ pub enum Action {
     SelectNextCommit,
     SelectPreviousCommit,
     OpenSelectedBranchCommits,
+    OpenAllBranchGraph { reverse: bool },
     OpenSelectedCommitFiles,
     CloseSelectedCommitFiles,
     CheckoutSelectedCommit,

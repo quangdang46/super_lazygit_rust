@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::state::{
-    ComparisonTarget, DiffPresentation, JobId, RepoId, ResetMode, SelectedHunk, StashMode,
+    CommitHistoryMode, ComparisonTarget, DiffPresentation, JobId, RepoId, ResetMode, SelectedHunk,
+    StashMode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +25,7 @@ pub enum Effect {
         selected_path: Option<PathBuf>,
         diff_presentation: DiffPresentation,
         commit_ref: Option<String>,
+        commit_history_mode: CommitHistoryMode,
     },
     LoadRepoDiff {
         repo_id: RepoId,

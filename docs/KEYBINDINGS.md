@@ -87,6 +87,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `C` in `Working tree` or `Staged changes` | Commit staged changes using the configured Git editor |
 | `s` in `Working tree` or `Staged changes` | Open the tracked-changes stash prompt |
 | `S` in `Working tree` or `Staged changes` | Open the stash-options menu, then choose tracked, keep-index, include-untracked, staged, or unstaged stash creation |
+| `a` in `Working tree` or `Staged changes` | Open the all-branches commit graph |
 | `A` in `Staged changes` | Open the amend commit box |
 | `D` | Open discard confirmation for the selected file |
 | `e` | Open the selected file in the configured editor |
@@ -106,6 +107,8 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `L` | Stage or unstage the selected line range, depending on diff orientation |
 | `D` | Open discard confirmation for the selected file |
 | `e` | Open the selected diff file in the configured editor |
+| `a` | Open the all-branches commit graph, newest first |
+| `A` | Open the all-branches commit graph, oldest first |
 | `X` | Open destructive confirmation for nuking the working tree |
 
 ### Branches detail subview
@@ -134,6 +137,8 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `k` / `Up` | Select the previous commit |
 | `Enter` | Open the selected commit's changed-files view |
 | `Space` | Check out the selected commit in detached-HEAD mode |
+| `a` | Switch to the all-branches commit graph, newest first |
+| `A` | Switch to the all-branches commit graph, oldest first |
 | `n` | Open create-branch-from-commit prompt |
 | `i` | Start interactive rebase from the selected commit |
 | `A` | Open amend-selected-commit confirmation |
