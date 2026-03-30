@@ -91,6 +91,8 @@ pub enum Action {
     SubmitMenuSelection,
     ConfirmPendingOperation,
     OpenStashOptions,
+    OpenRecentRepos,
+    OpenCommandLog,
     OpenInputPrompt {
         operation: InputPromptOperation,
     },
@@ -101,6 +103,7 @@ pub enum Action {
     SubmitPromptInput,
     OpenInEditor,
     RefreshSelectedRepo,
+    RefreshSelectedRepoDeep,
     RefreshVisibleRepos,
     StageSelection,
     StageSelectedFile,

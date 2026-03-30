@@ -61,6 +61,10 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `/` in filterable `Repo detail` subviews | Focus the panel-local filter (`Branches`, `Remotes`, `Remote Branches`, `Tags`, `Commits`, `Stash`, `Reflog`, `Worktrees`, or `Submodules`) |
 | `w` in `Repo detail` | Switch the current detail subview to `Worktrees` |
 | `r` | Refresh the selected repository |
+| `R` | Run a deeper repository refresh: refresh the selected repo, reload detail, and rescan the workspace |
+| `Ctrl+R` | Open the recent-repositories menu |
+| `:` | Open the shell-command prompt for the current repository root |
+| `@` | Open the command-log menu for recent session messages |
 | `f` | Open fetch confirmation |
 | `p` | Open pull confirmation |
 | `P` | Open push confirmation |

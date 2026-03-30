@@ -1,6 +1,7 @@
 use crate::action::Action;
 use crate::effect::{
-    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob, RebaseStartMode,
+    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob,
+    RebaseStartMode, ShellCommandRequest,
 };
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
@@ -932,21 +933,17 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::SelectNextMenuItem => {
-            if let Some(menu) = state.pending_menu.as_mut() {
-                if step_menu_selection(menu, 1) {
-                    effects.push(Effect::ScheduleRender);
-                }
+            if step_menu_selection(state, 1) {
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::SelectPreviousMenuItem => {
-            if let Some(menu) = state.pending_menu.as_mut() {
-                if step_menu_selection(menu, -1) {
-                    effects.push(Effect::ScheduleRender);
-                }
+            if step_menu_selection(state, -1) {
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::SubmitMenuSelection => {
-            if submit_menu_selection(state) {
+            if submit_menu_selection(state, effects) {
                 effects.push(Effect::ScheduleRender);
             }
         }
@@ -969,6 +966,34 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     open_menu(state, repo_id, MenuOperation::StashOptions);
                 } else {
                     push_warning(state, "No local changes are available to stash.");
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenRecentRepos => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if recent_repo_menu_repo_ids(state).is_empty() {
+                    push_warning(state, "No recent repositories are available to reopen.");
+                } else {
+                    open_menu(state, repo_id, MenuOperation::RecentRepos);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenCommandLog => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if state.status_messages.is_empty() {
+                    push_warning(state, "No command log entries are available yet.");
+                } else {
+                    open_menu(state, repo_id, MenuOperation::CommandLog);
                 }
                 effects.push(Effect::ScheduleRender);
             }
@@ -997,8 +1022,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::SubmitPromptInput => {
-            if let Some(job) = submit_input_prompt(state) {
-                effects.push(Effect::RunGitCommand(job));
+            if let Some(submission) = submit_input_prompt(state) {
+                match submission {
+                    PromptSubmission::Git(job) => effects.push(Effect::RunGitCommand(job)),
+                    PromptSubmission::Shell(job) => effects.push(Effect::RunShellCommand(job)),
+                }
             } else {
                 effects.push(Effect::ScheduleRender);
             }
@@ -1015,6 +1043,17 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RefreshRepoSummary {
                     repo_id: repo_id.clone(),
                 });
+                if matches!(state.mode, AppMode::Repository) {
+                    effects.push(load_repo_detail_effect(state, repo_id));
+                }
+            }
+        }
+        Action::RefreshSelectedRepoDeep => {
+            if let Some(repo_id) = state.workspace.selected_repo_id.clone() {
+                effects.push(Effect::RefreshRepoSummary {
+                    repo_id: repo_id.clone(),
+                });
+                effects.push(Effect::StartRepoScan);
                 if matches!(state.mode, AppMode::Repository) {
                     effects.push(load_repo_detail_effect(state, repo_id));
                 }
@@ -2770,6 +2809,7 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateStash { mode } => stash_prompt_title(*mode).to_string(),
         InputPromptOperation::CreateWorktree => "Create worktree".to_string(),
         InputPromptOperation::CreateSubmodule => "Add submodule".to_string(),
+        InputPromptOperation::ShellCommand => "Run shell command".to_string(),
         InputPromptOperation::EditSubmoduleUrl { name, .. } => {
             format!("Edit submodule {name}")
         }
@@ -2798,6 +2838,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateStash { mode: _ } => String::new(),
         InputPromptOperation::CreateWorktree => String::new(),
         InputPromptOperation::CreateSubmodule => String::new(),
+        InputPromptOperation::ShellCommand => String::new(),
         InputPromptOperation::EditSubmoduleUrl { current_url, .. } => current_url.clone(),
         InputPromptOperation::RewordCommit {
             initial_message, ..
@@ -2805,7 +2846,12 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
     }
 }
 
-fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
+enum PromptSubmission {
+    Git(GitCommandRequest),
+    Shell(ShellCommandRequest),
+}
+
+fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
     let pending = state.pending_input_prompt.take()?;
     let value = pending.value.trim().to_string();
     if value.is_empty()
@@ -2824,17 +2870,23 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
         state.focused_pane = pending.return_focus;
     }
 
-    let (command, summary) = match pending.operation {
+    let (submission, summary) = match pending.operation {
         InputPromptOperation::CheckoutBranch => (
-            GitCommand::CheckoutBranch {
-                branch_ref: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CheckoutBranch {
+                    branch_ref: value.clone(),
+                },
+            )),
             format!("Checkout branch {value}"),
         ),
         InputPromptOperation::CreateBranch => (
-            GitCommand::CreateBranch {
-                branch_name: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateBranch {
+                    branch_name: value.clone(),
+                },
+            )),
             format!("Create branch {value}"),
         ),
         InputPromptOperation::CreateRemote => {
@@ -2844,40 +2896,55 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 return None;
             };
             (
-                GitCommand::AddRemote {
-                    remote_name: remote_name.clone(),
-                    remote_url: remote_url.clone(),
-                },
+                PromptSubmission::Git(git_job(
+                    pending.repo_id.clone(),
+                    GitCommand::AddRemote {
+                        remote_name: remote_name.clone(),
+                        remote_url: remote_url.clone(),
+                    },
+                )),
                 format!("Add remote {remote_name}"),
             )
         }
         InputPromptOperation::CreateTag => (
-            GitCommand::CreateTag {
-                tag_name: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateTag {
+                    tag_name: value.clone(),
+                },
+            )),
             format!("Create tag {value}"),
         ),
         InputPromptOperation::CreateBranchFromCommit { commit, summary } => (
-            GitCommand::CreateBranchFromCommit {
-                branch_name: value.clone(),
-                commit,
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateBranchFromCommit {
+                    branch_name: value.clone(),
+                    commit,
+                },
+            )),
             format!("Create branch {value} from {summary}"),
         ),
         InputPromptOperation::CreateBranchFromRemote {
             remote_branch_ref, ..
         } => (
-            GitCommand::CreateBranchFromRef {
-                branch_name: value.clone(),
-                start_point: remote_branch_ref.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateBranchFromRef {
+                    branch_name: value.clone(),
+                    start_point: remote_branch_ref.clone(),
+                },
+            )),
             format!("Create branch {value} from {remote_branch_ref}"),
         ),
         InputPromptOperation::RenameBranch { current_name } => (
-            GitCommand::RenameBranch {
-                branch_name: current_name.clone(),
-                new_name: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::RenameBranch {
+                    branch_name: current_name.clone(),
+                    new_name: value.clone(),
+                },
+            )),
             format!("Rename branch {current_name} to {value}"),
         ),
         InputPromptOperation::EditRemote {
@@ -2889,44 +2956,59 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 return None;
             };
             (
-                GitCommand::EditRemote {
-                    current_name: current_name.clone(),
-                    new_name: new_name.clone(),
-                    remote_url,
-                },
+                PromptSubmission::Git(git_job(
+                    pending.repo_id.clone(),
+                    GitCommand::EditRemote {
+                        current_name: current_name.clone(),
+                        new_name: new_name.clone(),
+                        remote_url,
+                    },
+                )),
                 format!("Edit remote {current_name}"),
             )
         }
         InputPromptOperation::RenameStash { stash_ref, .. } => (
-            GitCommand::RenameStash {
-                stash_ref: stash_ref.clone(),
-                message: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::RenameStash {
+                    stash_ref: stash_ref.clone(),
+                    message: value.clone(),
+                },
+            )),
             format!("Rename stash {stash_ref}"),
         ),
         InputPromptOperation::CreateBranchFromStash { stash_ref, .. } => (
-            GitCommand::CreateBranchFromStash {
-                stash_ref: stash_ref.clone(),
-                branch_name: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateBranchFromStash {
+                    stash_ref: stash_ref.clone(),
+                    branch_name: value.clone(),
+                },
+            )),
             format!("Create branch {value} from {stash_ref}"),
         ),
         InputPromptOperation::SetBranchUpstream { branch_name } => (
-            GitCommand::SetBranchUpstream {
-                branch_name: branch_name.clone(),
-                upstream_ref: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::SetBranchUpstream {
+                    branch_name: branch_name.clone(),
+                    upstream_ref: value.clone(),
+                },
+            )),
             format!("Set upstream for {branch_name}"),
         ),
         InputPromptOperation::CreateStash { mode } => (
-            GitCommand::CreateStash {
-                message: if value.is_empty() {
-                    None
-                } else {
-                    Some(value.clone())
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateStash {
+                    message: if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.clone())
+                    },
+                    mode,
                 },
-                mode,
-            },
+            )),
             stash_operation_summary(mode, if value.is_empty() { None } else { Some(&value) }),
         ),
         InputPromptOperation::CreateWorktree => {
@@ -2936,10 +3018,13 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 return None;
             };
             (
-                GitCommand::CreateWorktree {
-                    path: path.clone(),
-                    branch_ref: branch_ref.clone(),
-                },
+                PromptSubmission::Git(git_job(
+                    pending.repo_id.clone(),
+                    GitCommand::CreateWorktree {
+                        path: path.clone(),
+                        branch_ref: branch_ref.clone(),
+                    },
+                )),
                 format!("Create worktree {} from {branch_ref}", path.display()),
             )
         }
@@ -2950,36 +3035,51 @@ fn submit_input_prompt(state: &mut AppState) -> Option<GitCommandRequest> {
                 return None;
             };
             (
-                GitCommand::AddSubmodule {
-                    path: path.clone(),
-                    url: url.clone(),
-                },
+                PromptSubmission::Git(git_job(
+                    pending.repo_id.clone(),
+                    GitCommand::AddSubmodule {
+                        path: path.clone(),
+                        url: url.clone(),
+                    },
+                )),
                 format!("Add submodule {} from {url}", path.display()),
             )
         }
         InputPromptOperation::EditSubmoduleUrl { name, path, .. } => (
-            GitCommand::EditSubmoduleUrl {
-                name: name.clone(),
-                path: path.clone(),
-                url: value.clone(),
-            },
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::EditSubmoduleUrl {
+                    name: name.clone(),
+                    path: path.clone(),
+                    url: value.clone(),
+                },
+            )),
             format!("Edit submodule {name}"),
+        ),
+        InputPromptOperation::ShellCommand => (
+            PromptSubmission::Shell(shell_job(pending.repo_id.clone(), value.clone())),
+            format!("Run shell command: {value}"),
         ),
         InputPromptOperation::RewordCommit {
             commit, summary, ..
         } => (
-            GitCommand::StartCommitRebase {
-                commit,
-                mode: RebaseStartMode::Reword {
-                    message: value.clone(),
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::StartCommitRebase {
+                    commit,
+                    mode: RebaseStartMode::Reword {
+                        message: value.clone(),
+                    },
                 },
-            },
+            )),
             format!("Reword {summary}"),
         ),
     };
-    let job = git_job(pending.repo_id, command);
-    enqueue_git_job(state, &job, &summary);
-    Some(job)
+    match &submission {
+        PromptSubmission::Git(job) => enqueue_git_job(state, job, &summary),
+        PromptSubmission::Shell(job) => enqueue_shell_job(state, job, &summary),
+    }
+    Some(submission)
 }
 
 fn parse_create_worktree_input(value: &str) -> Option<(std::path::PathBuf, String)> {
@@ -3015,69 +3115,129 @@ fn parse_remote_input(value: &str) -> Option<(String, String)> {
 fn menu_title(operation: MenuOperation) -> &'static str {
     match operation {
         MenuOperation::StashOptions => "Stash options",
+        MenuOperation::RecentRepos => "Recent repositories",
+        MenuOperation::CommandLog => "Command log",
     }
 }
 
-fn menu_item_count(operation: MenuOperation) -> usize {
+fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
     match operation {
         MenuOperation::StashOptions => 5,
+        MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
+        MenuOperation::CommandLog => state.status_messages.len(),
     }
 }
 
-fn step_menu_selection(menu: &mut PendingMenu, step: isize) -> bool {
-    let count = menu_item_count(menu.operation);
+fn step_menu_selection(state: &mut AppState, step: isize) -> bool {
+    let Some((operation, selected_index)) = state
+        .pending_menu
+        .as_ref()
+        .map(|menu| (menu.operation, menu.selected_index))
+    else {
+        return false;
+    };
+    let count = menu_item_count(state, operation);
     if count == 0 {
         return false;
     }
-    let next = (menu.selected_index as isize + step).rem_euclid(count as isize) as usize;
-    if next == menu.selected_index {
+    let next = (selected_index as isize + step).rem_euclid(count as isize) as usize;
+    if next == selected_index {
         return false;
     }
-    menu.selected_index = next;
+    if let Some(menu) = state.pending_menu.as_mut() {
+        menu.selected_index = next;
+    }
     true
 }
 
-fn submit_menu_selection(state: &mut AppState) -> bool {
+fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> bool {
     let Some(menu) = state.pending_menu.as_ref() else {
         return false;
     };
 
-    let mode = match menu.operation {
-        MenuOperation::StashOptions => match menu.selected_index {
-            0 => StashMode::Tracked,
-            1 => StashMode::KeepIndex,
-            2 => StashMode::IncludeUntracked,
-            3 => StashMode::Staged,
-            _ => StashMode::Unstaged,
-        },
-    };
+    match menu.operation {
+        MenuOperation::StashOptions => {
+            let mode = match menu.selected_index {
+                0 => StashMode::Tracked,
+                1 => StashMode::KeepIndex,
+                2 => StashMode::IncludeUntracked,
+                3 => StashMode::Staged,
+                _ => StashMode::Unstaged,
+            };
 
-    let Some(detail) = state
+            let Some(detail) = state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref())
+            else {
+                return false;
+            };
+
+            if !stash_mode_available(detail, mode) {
+                push_warning(state, stash_mode_unavailable_message(mode));
+                return true;
+            }
+
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            open_input_prompt(
+                state,
+                menu.repo_id,
+                InputPromptOperation::CreateStash { mode },
+            );
+            true
+        }
+        MenuOperation::RecentRepos => {
+            let repo_ids = recent_repo_menu_repo_ids(state);
+            let Some(repo_id) = repo_ids.get(menu.selected_index).cloned() else {
+                return false;
+            };
+            state.pending_menu.take();
+            state.modal_stack.pop();
+            enter_repo_mode_with_parents(state, repo_id, Vec::new(), effects);
+            true
+        }
+        MenuOperation::CommandLog => {
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            true
+        }
+    }
+}
+
+fn recent_repo_menu_repo_ids(state: &AppState) -> Vec<crate::state::RepoId> {
+    let current_repo_id = state
         .repo_mode
         .as_ref()
-        .and_then(|repo_mode| repo_mode.detail.as_ref())
-    else {
-        return false;
-    };
-
-    if !stash_mode_available(detail, mode) {
-        push_warning(state, stash_mode_unavailable_message(mode));
-        return true;
+        .map(|repo_mode| &repo_mode.current_repo_id)
+        .or(state.workspace.selected_repo_id.as_ref());
+    let mut repo_ids = Vec::new();
+    for repo_id in state.recent_repo_stack.iter().rev() {
+        if current_repo_id.is_some_and(|current| current == repo_id) {
+            continue;
+        }
+        if (state.workspace.repo_summaries.contains_key(repo_id)
+            || state
+                .workspace
+                .discovered_repo_ids
+                .iter()
+                .any(|candidate| candidate == repo_id))
+            && !repo_ids.iter().any(|candidate| candidate == repo_id)
+        {
+            repo_ids.push(repo_id.clone());
+        }
     }
-
-    let Some(menu) = state.pending_menu.take() else {
-        return false;
-    };
-    state.modal_stack.pop();
-    if state.modal_stack.is_empty() {
-        state.focused_pane = menu.return_focus;
-    }
-    open_input_prompt(
-        state,
-        menu.repo_id,
-        InputPromptOperation::CreateStash { mode },
-    );
-    true
+    repo_ids
 }
 
 fn ensure_rebase_active(state: &mut AppState) -> bool {
@@ -4494,6 +4654,15 @@ fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequ
     }
 }
 
+fn shell_job(repo_id: crate::state::RepoId, command: String) -> ShellCommandRequest {
+    let job_id = JobId::new(format!("shell:{}:run-command", repo_id.0));
+    ShellCommandRequest {
+        job_id,
+        repo_id,
+        command,
+    }
+}
+
 fn patch_job(
     repo_id: crate::state::RepoId,
     path: std::path::PathBuf,
@@ -4701,6 +4870,20 @@ fn enqueue_git_job(state: &mut AppState, job: &GitCommandRequest, summary: &str)
     };
 }
 
+fn enqueue_shell_job(state: &mut AppState, job: &ShellCommandRequest, summary: &str) {
+    state
+        .background_jobs
+        .insert(job.job_id.clone(), background_shell_job(job));
+    state
+        .repo_mode
+        .as_mut()
+        .expect("repo mode exists")
+        .operation_progress = OperationProgress::Running {
+        job_id: job.job_id.clone(),
+        summary: summary.to_string(),
+    };
+}
+
 fn enqueue_patch_job(state: &mut AppState, job: &PatchSelectionJob, summary: &str) {
     state
         .background_jobs
@@ -4733,6 +4916,15 @@ fn background_patch_job(job: &PatchSelectionJob) -> BackgroundJob {
     }
 }
 
+fn background_shell_job(job: &ShellCommandRequest) -> BackgroundJob {
+    BackgroundJob {
+        id: job.job_id.clone(),
+        kind: BackgroundJobKind::ShellCommand,
+        target_repo: Some(job.repo_id.clone()),
+        state: BackgroundJobState::Queued,
+    }
+}
+
 fn complete_job(state: &mut AppState, job_id: &JobId, next_state: BackgroundJobState) {
     if let Some(job) = state.background_jobs.get_mut(job_id) {
         job.state = next_state;
@@ -4742,7 +4934,9 @@ fn complete_job(state: &mut AppState, job_id: &JobId, next_state: BackgroundJobS
 #[cfg(test)]
 mod tests {
     use crate::action::Action;
-    use crate::effect::{Effect, GitCommand, GitCommandRequest, RebaseStartMode};
+    use crate::effect::{
+        Effect, GitCommand, GitCommandRequest, RebaseStartMode, ShellCommandRequest,
+    };
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
@@ -7346,6 +7540,132 @@ mod tests {
     }
 
     #[test]
+    fn open_recent_repos_opens_recent_repo_menu() {
+        let current_repo_id = RepoId::new("/tmp/current");
+        let recent_repo_id = RepoId::new("/tmp/recent");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            recent_repo_stack: vec![recent_repo_id.clone(), current_repo_id.clone()],
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![recent_repo_id.clone(), current_repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (recent_repo_id.clone(), workspace_summary(&recent_repo_id.0)),
+                    (
+                        current_repo_id.clone(),
+                        workspace_summary(&current_repo_id.0),
+                    ),
+                ]),
+                selected_repo_id: Some(current_repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState::new(current_repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenRecentRepos));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                current_repo_id,
+                MenuOperation::RecentRepos,
+                0,
+                PaneId::RepoDetail,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_recent_repo_selection_enters_selected_recent_repo() {
+        let current_repo_id = RepoId::new("/tmp/current");
+        let recent_repo_id = RepoId::new("/tmp/recent");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Recent repositories",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: current_repo_id.clone(),
+                operation: MenuOperation::RecentRepos,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            recent_repo_stack: vec![recent_repo_id.clone(), current_repo_id.clone()],
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![recent_repo_id.clone(), current_repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (recent_repo_id.clone(), workspace_summary(&recent_repo_id.0)),
+                    (
+                        current_repo_id.clone(),
+                        workspace_summary(&current_repo_id.0),
+                    ),
+                ]),
+                selected_repo_id: Some(current_repo_id),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState::new(RepoId::new("/tmp/current"))),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert_eq!(result.state.mode, AppMode::Repository);
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone()),
+            Some(recent_repo_id.clone())
+        );
+        assert_eq!(
+            result.state.workspace.selected_repo_id,
+            Some(recent_repo_id.clone())
+        );
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LoadRepoDetail { repo_id, .. } if repo_id == &recent_repo_id
+        )));
+    }
+
+    #[test]
+    fn open_command_log_opens_command_log_menu() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            status_messages: std::collections::VecDeque::from([
+                crate::state::StatusMessage::info(1, "Ran fetch"),
+                crate::state::StatusMessage::info(2, "Ran pull"),
+            ]),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenCommandLog));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(MenuOperation::CommandLog)
+        );
+    }
+
+    #[test]
     fn submit_stash_options_selection_warns_when_keep_index_scope_is_unavailable() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -8178,6 +8498,53 @@ mod tests {
     }
 
     #[test]
+    fn submit_shell_command_prompt_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Run shell command",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::ShellCommand,
+                value: "git status --short".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("shell:/tmp/repo-1:run-command");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| (&job.kind, &job.state)),
+            Some((
+                &BackgroundJobKind::ShellCommand,
+                &BackgroundJobState::Queued
+            ))
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunShellCommand(ShellCommandRequest {
+                job_id,
+                repo_id,
+                command: "git status --short".to_string(),
+            })]
+        );
+    }
+
+    #[test]
     fn submit_stash_prompt_queues_git_job_and_restores_original_focus() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -8958,6 +9325,33 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn refresh_selected_repo_deep_adds_workspace_scan() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Action(Action::RefreshSelectedRepoDeep));
+
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RefreshRepoSummary { repo_id: effect_repo_id } if effect_repo_id == &repo_id
+        )));
+        assert!(result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::StartRepoScan)));
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LoadRepoDetail { repo_id: effect_repo_id, .. } if effect_repo_id == &repo_id
+        )));
     }
 
     #[test]

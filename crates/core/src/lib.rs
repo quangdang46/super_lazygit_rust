@@ -11,7 +11,8 @@ pub use diagnostics::{
     WatcherEvent, WatcherEventKind,
 };
 pub use effect::{
-    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob, RebaseStartMode,
+    Effect, GitCommand, GitCommandRequest, PatchApplicationMode, PatchSelectionJob,
+    RebaseStartMode, ShellCommandRequest,
 };
 pub use event::{
     Event, InputEvent, KeyPress, TimerEvent, WatcherEvent as AppWatcherEvent, WorkerEvent,

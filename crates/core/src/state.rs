@@ -217,6 +217,7 @@ pub enum InputPromptOperation {
     },
     CreateWorktree,
     CreateSubmodule,
+    ShellCommand,
     EditSubmoduleUrl {
         name: String,
         path: PathBuf,
@@ -240,6 +241,8 @@ pub struct PendingMenu {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuOperation {
     StashOptions,
+    RecentRepos,
+    CommandLog,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1136,6 +1139,7 @@ pub enum BackgroundJobKind {
     RepoRefresh,
     RepoDetailLoad,
     GitCommand,
+    ShellCommand,
     PersistCache,
     PersistConfig,
 }

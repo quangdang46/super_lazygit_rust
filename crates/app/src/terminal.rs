@@ -182,7 +182,13 @@ fn keypress_from_event(key: KeyEvent) -> Option<KeyPress> {
         KeyCode::Delete => "delete".to_string(),
         KeyCode::Insert => "insert".to_string(),
         KeyCode::Esc => "esc".to_string(),
-        KeyCode::Char(character) => character.to_string(),
+        KeyCode::Char(character) => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                format!("ctrl+{}", character.to_ascii_lowercase())
+            } else {
+                character.to_string()
+            }
+        }
         KeyCode::F(number) => format!("f{number}"),
         KeyCode::Null
         | KeyCode::CapsLock
@@ -247,6 +253,17 @@ mod tests {
             }),
             Some(KeyPress {
                 key: "P".to_string(),
+            })
+        );
+        assert_eq!(
+            keypress_from_event(KeyEvent {
+                code: KeyCode::Char('r'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }),
+            Some(KeyPress {
+                key: "ctrl+r".to_string(),
             })
         );
     }

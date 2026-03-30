@@ -12,8 +12,8 @@ use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
     reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitHistoryMode,
     CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event,
-    InputEvent, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoModeState, RepoSubview,
-    RepoSummary, StashSubviewMode,
+    InputEvent, InputPromptOperation, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId,
+    RepoModeState, RepoSubview, RepoSummary, StashSubviewMode,
 };
 
 #[derive(Debug)]
@@ -501,6 +501,20 @@ impl TuiApp {
                 }),
                 _ => None,
             };
+        }
+
+        if self.binding_matches_action("open_recent_repos", raw, normalized, &["ctrl+r"]) {
+            return Some(Action::OpenRecentRepos);
+        }
+
+        if self.binding_matches_action("open_command_log", raw, normalized, &["@"]) {
+            return Some(Action::OpenCommandLog);
+        }
+
+        if self.binding_matches_action("open_shell_command_prompt", raw, normalized, &[":"]) {
+            return Some(Action::OpenInputPrompt {
+                operation: InputPromptOperation::ShellCommand,
+            });
         }
 
         if matches!(self.state.focused_pane, PaneId::RepoDetail)
@@ -1853,6 +1867,10 @@ impl TuiApp {
             return Some(Action::RefreshSelectedRepo);
         }
 
+        if self.binding_matches_action("refresh_selected_repo_deep", raw, normalized, &["R"]) {
+            return Some(Action::RefreshSelectedRepoDeep);
+        }
+
         if self.binding_matches_action("fetch_selected_repo", raw, normalized, &["f"]) {
             return Some(Action::FetchSelectedRepo);
         }
@@ -2440,7 +2458,7 @@ impl TuiApp {
                     lines.push(Line::from(format!("Repo: {}", menu.repo_id.0)));
                     lines.push(Line::from(menu_copy(menu.operation)));
                     lines.push(Line::from(""));
-                    lines.extend(menu_lines(menu, theme));
+                    lines.extend(menu_lines(&self.state, menu, theme));
                     lines.push(Line::from(""));
                     lines.push(Line::from("j/k moves. Enter selects. Esc cancels."));
                 }
@@ -5026,6 +5044,10 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             "Enter submodule details as: <path> <url>. Example: vendor/lib ../lib.git."
                 .to_string()
         }
+        super_lazygit_core::InputPromptOperation::ShellCommand => {
+            "Enter a shell command to run in the current repository root. The terminal suspends until the command exits."
+                .to_string()
+        }
         super_lazygit_core::InputPromptOperation::EditSubmoduleUrl { name, .. } => {
             format!(
                 "Enter the new URL for submodule {name}. This updates both .gitmodules and local submodule config."
@@ -5044,18 +5066,30 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::StashOptions => {
             "Choose which stash scope to save from the current repository state."
         }
+        super_lazygit_core::MenuOperation::RecentRepos => {
+            "Switch directly to one of the repositories you visited recently."
+        }
+        super_lazygit_core::MenuOperation::CommandLog => {
+            "Review recent command and status messages recorded in this session."
+        }
     }
 }
 
-fn menu_lines(menu: &super_lazygit_core::PendingMenu, theme: Theme) -> Vec<Line<'static>> {
-    let items: &[&str] = match menu.operation {
-        super_lazygit_core::MenuOperation::StashOptions => &[
-            "Stash tracked changes",
-            "Stash tracked changes and keep staged changes",
-            "Stash all changes including untracked",
-            "Stash staged changes",
-            "Stash unstaged changes",
+fn menu_lines(
+    state: &AppState,
+    menu: &super_lazygit_core::PendingMenu,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let items: Vec<String> = match menu.operation {
+        super_lazygit_core::MenuOperation::StashOptions => vec![
+            "Stash tracked changes".to_string(),
+            "Stash tracked changes and keep staged changes".to_string(),
+            "Stash all changes including untracked".to_string(),
+            "Stash staged changes".to_string(),
+            "Stash unstaged changes".to_string(),
         ],
+        super_lazygit_core::MenuOperation::RecentRepos => recent_repo_menu_lines(state),
+        super_lazygit_core::MenuOperation::CommandLog => command_log_menu_lines(state),
     };
 
     items
@@ -5119,6 +5153,43 @@ fn help_text(state: &AppState) -> String {
         }
         AppMode::Repository => repo_help_text(state),
     }
+}
+
+fn recent_repo_menu_lines(state: &AppState) -> Vec<String> {
+    let current_repo_id = state
+        .repo_mode
+        .as_ref()
+        .map(|repo_mode| &repo_mode.current_repo_id)
+        .or(state.workspace.selected_repo_id.as_ref());
+    let mut entries = Vec::new();
+    for repo_id in state.recent_repo_stack.iter().rev() {
+        if current_repo_id.is_some_and(|current| current == repo_id) {
+            continue;
+        }
+        if entries
+            .iter()
+            .any(|line: &String| line.ends_with(&repo_id.0))
+        {
+            continue;
+        }
+        let label = state
+            .workspace
+            .repo_summaries
+            .get(repo_id)
+            .map(|summary| format!("{}  {}", summary.display_name, summary.display_path))
+            .unwrap_or_else(|| repo_id.0.clone());
+        entries.push(label);
+    }
+    entries
+}
+
+fn command_log_menu_lines(state: &AppState) -> Vec<String> {
+    state
+        .status_messages
+        .iter()
+        .rev()
+        .map(|message| format!("[{:?}] {}", message.level, message.text))
+        .collect()
 }
 
 fn compile_keybinding_overrides(config: &AppConfig) -> BTreeMap<String, Vec<String>> {
@@ -5574,44 +5645,44 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  Enter stage file  s stash tracked changes  S stash options  D discard file  l next pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  Enter stage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  l next pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  Enter unstage file  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  Enter unstage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  Enter apply hunk  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  Enter apply hunk  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  Enter commits  Space checkout  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
-                    "Remotes pane  j/k move  Enter branches  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Remotes pane  j/k move  Enter branches  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
-                    "Compare pane  j/k scroll diff  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Compare pane  j/k scroll diff  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
-                    "Rebase pane  c continue  s skip  A abort  j/k scroll  0 main pane  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Rebase pane  c continue  s skip  A abort  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  j/k scroll  0 main pane  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Stash {
                     match repo_mode.stash_subview_mode {
                         StashSubviewMode::List => {
-                            "Stash pane  j/k move stash  Enter files  Space apply  0 main pane  / filter  w worktrees  b submodules  n branch  r rename  g pop  d drop  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash pane  j/k move stash  Enter files  Space apply  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  w worktrees  b submodules  n branch  g pop  d drop  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                         StashSubviewMode::Files => {
-                            "Stash files pane  j/k move file  Enter stash list  0 main pane  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                            "Stash files pane  j/k move file  Enter stash list  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                         }
                     }
                 } else if repo_mode.active_subview == RepoSubview::Reflog {
-                    "Reflog pane  j/k move  Enter commits  Space checkout  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Reflog pane  j/k move  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Worktrees {
-                    "Worktrees pane  j/k move  Enter switch  0 main pane  / filter  b submodules  n create  o open  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Worktrees pane  j/k move  Enter switch  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  b submodules  n create  o open  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Submodules {
-                    "Submodules pane  j/k move  Enter nested repo  0 main pane  / filter  n add  e edit-url  i init  u update  o open  d remove  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Submodules pane  j/k move  Enter nested repo  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  n add  e edit-url  i init  u update  o open  d remove  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
-                        "{} detail pane  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
+                        "{} detail pane  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
                         repo_subview_label(repo_mode.active_subview)
                     )
                 }
@@ -6620,6 +6691,164 @@ mod tests {
                 target: repo_root.join("src/lib.rs"),
             }]
         );
+    }
+
+    #[test]
+    fn route_repository_global_recent_repo_command_log_and_shell_prompt_keys() {
+        let current_repo_id = RepoId::new("/tmp/current");
+        let recent_repo_id = RepoId::new("/tmp/recent");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            recent_repo_stack: vec![recent_repo_id.clone(), current_repo_id.clone()],
+            status_messages: std::collections::VecDeque::from([
+                super_lazygit_core::StatusMessage::info(1, "Fetch complete"),
+            ]),
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![recent_repo_id.clone(), current_repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (
+                        recent_repo_id.clone(),
+                        workspace_repo_summary(&recent_repo_id.0, "recent"),
+                    ),
+                    (
+                        current_repo_id.clone(),
+                        workspace_repo_summary(&current_repo_id.0, "current"),
+                    ),
+                ]),
+                selected_repo_id: Some(current_repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: current_repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(current_repo_id.clone())
+            }),
+            ..Default::default()
+        };
+
+        let mut recent_app = TuiApp::new(state.clone(), AppConfig::default());
+        let recent = recent_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+r".to_string(),
+        })));
+        assert_eq!(
+            recent
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::RecentRepos)
+        );
+
+        let mut log_app = TuiApp::new(state.clone(), AppConfig::default());
+        let log = log_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "@".to_string(),
+        })));
+        assert_eq!(
+            log.state.pending_menu.as_ref().map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::CommandLog)
+        );
+
+        let mut shell_app = TuiApp::new(state, AppConfig::default());
+        let shell = shell_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: ":".to_string(),
+        })));
+        assert_eq!(
+            shell
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.operation.clone()),
+            Some(super_lazygit_core::InputPromptOperation::ShellCommand)
+        );
+    }
+
+    #[test]
+    fn route_repository_status_uppercase_refresh_triggers_deep_refresh() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "R".to_string(),
+        })));
+
+        assert!(result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::StartRepoScan)));
+    }
+
+    #[test]
+    fn render_menu_modal_shows_recent_repo_and_command_log_entries() {
+        let current_repo_id = RepoId::new("/tmp/current");
+        let recent_repo_id = RepoId::new("/tmp/recent");
+        let mut recent_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![super_lazygit_core::Modal::new(
+                super_lazygit_core::ModalKind::Menu,
+                "Recent repositories",
+            )],
+            pending_menu: Some(super_lazygit_core::PendingMenu {
+                repo_id: current_repo_id.clone(),
+                operation: super_lazygit_core::MenuOperation::RecentRepos,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            recent_repo_stack: vec![recent_repo_id.clone(), current_repo_id.clone()],
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![recent_repo_id.clone(), current_repo_id],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    recent_repo_id.clone(),
+                    workspace_repo_summary(&recent_repo_id.0, "recent-repo"),
+                )]),
+                selected_repo_id: Some(RepoId::new("/tmp/current")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState::new(RepoId::new("/tmp/current"))),
+            ..Default::default()
+        };
+        let mut recent_app = TuiApp::new(recent_state.clone(), AppConfig::default());
+        assert!(recent_app.render_to_string().contains("recent-repo"));
+
+        recent_state.modal_stack = vec![super_lazygit_core::Modal::new(
+            super_lazygit_core::ModalKind::Menu,
+            "Command log",
+        )];
+        recent_state.pending_menu = Some(super_lazygit_core::PendingMenu {
+            repo_id: RepoId::new("/tmp/current"),
+            operation: super_lazygit_core::MenuOperation::CommandLog,
+            selected_index: 0,
+            return_focus: PaneId::RepoDetail,
+        });
+        recent_state.status_messages =
+            std::collections::VecDeque::from([super_lazygit_core::StatusMessage::info(
+                1,
+                "Ran fetch",
+            )]);
+        let mut log_app = TuiApp::new(recent_state, AppConfig::default());
+        assert!(log_app.render_to_string().contains("Ran fetch"));
     }
 
     #[test]

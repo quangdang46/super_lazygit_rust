@@ -14,8 +14,8 @@ use ratatui::Frame;
 use crate::watcher::{NullWatcherBackend, WatchRegistration, WatcherBackend};
 use super_lazygit_core::{
     AppWatcherEvent, Diagnostics, DiagnosticsSnapshot, Effect, Event, GitCommand, JobId,
-    PatchApplicationMode, PatchSelectionJob, RepoId, RepoSummary, TimerEvent, Timestamp,
-    WorkerEvent,
+    PatchApplicationMode, PatchSelectionJob, RepoId, RepoSummary, ShellCommandRequest, TimerEvent,
+    Timestamp, WorkerEvent,
 };
 use super_lazygit_git::{
     GitCommandOutcome, GitError, GitFacade, GitResult, PatchSelectionRequest, RepoDetailRequest,
@@ -133,6 +133,23 @@ impl AppRuntime {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn persist_cache(&self) -> std::io::Result<()> {
         self.workspace.persist_cache(&self.app.state().workspace)
+    }
+
+    fn run_shell_command(&self, request: &ShellCommandRequest) -> std::io::Result<()> {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args(["/C", request.command.as_str()]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-lc", request.command.as_str()]);
+            command
+        };
+        command.current_dir(PathBuf::from(&request.repo_id.0));
+        crate::terminal::run_external_command_named(&mut command, "shell command")
     }
 
     fn apply_effects(&mut self, effects: &[Effect]) -> Vec<Event> {
@@ -262,6 +279,32 @@ impl AppRuntime {
                                     job_id: request.job_id.clone(),
                                     repo_id: outcome.repo_id,
                                     summary: outcome.summary,
+                                },
+                            ));
+                        }
+                        Err(error) => {
+                            follow_up_events.push(Event::Worker(WorkerEvent::GitOperationFailed {
+                                job_id: request.job_id.clone(),
+                                repo_id: request.repo_id.clone(),
+                                error: error.to_string(),
+                            }));
+                        }
+                    }
+                }
+                Effect::RunShellCommand(request) => {
+                    follow_up_events.push(Event::Worker(WorkerEvent::GitOperationStarted {
+                        job_id: request.job_id.clone(),
+                        repo_id: request.repo_id.clone(),
+                        summary: "run_shell_command".to_string(),
+                    }));
+
+                    match self.run_shell_command(request) {
+                        Ok(()) => {
+                            follow_up_events.push(Event::Worker(
+                                WorkerEvent::GitOperationCompleted {
+                                    job_id: request.job_id.clone(),
+                                    repo_id: request.repo_id.clone(),
+                                    summary: format!("Ran shell command: {}", request.command),
                                 },
                             ));
                         }
@@ -709,7 +752,9 @@ mod tests {
 
     use super::*;
     use super_lazygit_config::AppConfig;
-    use super_lazygit_core::{Action, AppMode, AppState, GitCommandRequest, PaneId, RepoSubview};
+    use super_lazygit_core::{
+        Action, AppMode, AppState, GitCommandRequest, PaneId, RepoSubview, ShellCommandRequest,
+    };
     use super_lazygit_test_support::{
         history_preview_repo, staged_and_unstaged_repo, submodule_repo,
     };
@@ -780,6 +825,56 @@ mod tests {
         let log = String::from_utf8(repo.git_capture(["log", "--format=%s", "-n", "3"])?.stdout)
             .map_err(io::Error::other)?;
         assert!(log.lines().any(|line| line == "rewritten second"));
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_runs_command_in_repo_root() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest {
+            job_id: JobId::new("shell:repo:run-command"),
+            repo_id: repo_id.clone(),
+            command: "printf 'ok' > shell-command.txt".to_string(),
+        })]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationCompleted { summary, .. })
+            if summary == "Ran shell command: printf 'ok' > shell-command.txt"
+        )));
+        let contents = std::fs::read_to_string(repo.path().join("shell-command.txt"))?;
+        assert_eq!(contents, "ok");
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_reports_failures() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest {
+            job_id: JobId::new("shell:repo:run-command"),
+            repo_id,
+            command: "exit 7".to_string(),
+        })]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationFailed { error, .. })
+            if error.contains("shell command exited with status")
+        )));
         Ok(())
     }
 

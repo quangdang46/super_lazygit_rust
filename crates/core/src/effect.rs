@@ -39,6 +39,7 @@ pub enum Effect {
         target: PathBuf,
     },
     RunGitCommand(GitCommandRequest),
+    RunShellCommand(ShellCommandRequest),
     RunPatchSelection(PatchSelectionJob),
     PersistCache,
     PersistConfig,
@@ -50,6 +51,13 @@ pub struct GitCommandRequest {
     pub job_id: JobId,
     pub repo_id: RepoId,
     pub command: GitCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellCommandRequest {
+    pub job_id: JobId,
+    pub repo_id: RepoId,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
