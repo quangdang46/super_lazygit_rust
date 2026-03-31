@@ -315,6 +315,7 @@ pub enum MenuOperation {
     FilterOptions,
     DiffOptions,
     CommitLogOptions,
+    CommitCopyOptions,
     CommitFixupOptions,
     BisectOptions,
     MergeRebaseOptions,

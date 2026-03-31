@@ -248,6 +248,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `V` | Cherry-pick the copied commit onto the current branch |
 | `Ctrl+R` | Clear the copied commit selection when one is active |
 | `Ctrl+O` | Copy the selected commit's short hash to the clipboard |
+| `y` | Open the copy-commit menu for hash, summary, diff, and browser URL clipboard targets |
 | `o` | Open the selected commit in the browser when a browser-compatible remote is configured |
 | `3` | Reset the commits view to the current branch's linear history |
 | `a` | Switch to the all-branches commit graph, newest first |

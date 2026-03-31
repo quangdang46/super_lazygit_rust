@@ -1726,6 +1726,17 @@ impl TuiApp {
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
                             && self.binding_matches_action(
+                                "open_commit_copy_options",
+                                raw,
+                                normalized,
+                                &["y"],
+                            )
+                        {
+                            return Some(Action::OpenCommitCopyOptions);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
                                 "open_commit_fixup_options",
                                 raw,
                                 normalized,
@@ -4675,7 +4686,7 @@ fn repo_commit_lines(
         )),
         Line::from("Actions: Enter files  Space checkout  n branch  T tag  b bisect  i rebase"),
         Line::from("         A amend  f fixup menu  F fixup  g apply-fixups  s squash  d drop"),
-        Line::from("         Ctrl+K/Ctrl+J move  R reword  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"),
+        Line::from("         Ctrl+K/Ctrl+J move  R reword  y copy menu  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"),
         Line::from("History:"),
     ];
 
@@ -5047,13 +5058,13 @@ fn repo_commit_context_line(
     total_count: usize,
 ) -> String {
     let mut line = if commit_history_mode.is_graph() {
-        "Context: Enter files. Ctrl+O copy hash. o browser. 3 current branch. a/A graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
+        "Context: Enter files. Ctrl+O copy hash. y copy menu. o browser. 3 current branch. a/A graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
             .to_string()
     } else if commit_history_ref.is_some() {
-        "Context: Enter files. Ctrl+O copy hash. o browser. 3 current branch. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
+        "Context: Enter files. Ctrl+O copy hash. y copy menu. o browser. 3 current branch. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
             .to_string()
     } else {
-        "Context: Enter files. Ctrl+O copy hash. o browser. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees.".to_string()
+        "Context: Enter files. Ctrl+O copy hash. y copy menu. o browser. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees.".to_string()
     };
     if let Some(filter_line) =
         repo_filter_summary_line(filter_query, filter_focused, visible_count, total_count)
@@ -5798,6 +5809,9 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::CommitLogOptions => {
             "Switch the commits panel between current-branch history and the whole-repository graph."
         }
+        super_lazygit_core::MenuOperation::CommitCopyOptions => {
+            "Choose which selected commit attribute to copy to the clipboard."
+        }
         super_lazygit_core::MenuOperation::CommitFixupOptions => {
             "Choose whether to create a fixup! commit or one of the amend! variants for the selected commit."
         }
@@ -5841,6 +5855,13 @@ fn menu_lines(
         super_lazygit_core::MenuOperation::FilterOptions => filter_menu_lines(state),
         super_lazygit_core::MenuOperation::DiffOptions => diff_menu_lines(state),
         super_lazygit_core::MenuOperation::CommitLogOptions => commit_log_menu_lines(state),
+        super_lazygit_core::MenuOperation::CommitCopyOptions => vec![
+            "Copy short hash".to_string(),
+            "Copy full hash".to_string(),
+            "Copy summary".to_string(),
+            "Copy diff".to_string(),
+            "Copy browser URL".to_string(),
+        ],
         super_lazygit_core::MenuOperation::CommitFixupOptions => vec![
             "Create fixup! commit".to_string(),
             "Create amend! commit with staged changes".to_string(),
@@ -6657,7 +6678,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; 3 returns to current-branch history, a/A switch the all-branches graph direction, Ctrl+L opens log options, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends, f opens fixup options, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V pastes the copied commit, t reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; 3 returns to current-branch history, a/A switch the all-branches graph direction, Ctrl+L opens log options, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends, f opens fixup options, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, y opens copy options, C cherry-picks, V pastes the copied commit, t reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
@@ -6776,7 +6797,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8602,6 +8623,49 @@ mod tests {
             .effects
             .iter()
             .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
+    }
+
+    #[test]
+    fn route_repository_commit_history_y_opens_copy_menu() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut app = TuiApp::new(state, AppConfig::default());
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "y".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::CommitCopyOptions)
+        );
     }
 
     #[test]
@@ -12684,10 +12748,12 @@ mod tests {
         assert!(rendered.contains("A amend"));
         assert!(rendered.contains("F fixup"));
         assert!(rendered.contains("R reword"));
-        assert!(rendered.contains("C copy"));
-        assert!(rendered.contains("V paste copied"));
-        assert!(rendered.contains("t revert"));
-        assert!(rendered.contains("S soft"));
+        let help = repo_help_text(app.state());
+        assert!(help.contains("y copy menu"));
+        assert!(help.contains("C copy"));
+        assert!(help.contains("V paste copied"));
+        assert!(help.contains("t revert"));
+        assert!(help.contains("S soft"));
         assert!(rendered.contains("A src/lib.rs"));
     }
 
@@ -12887,9 +12953,11 @@ mod tests {
         let rendered = app.render_to_string();
 
         assert!(rendered.contains("State: cherry-pick in progress"));
-        assert!(rendered.contains("C copy"));
-        assert!(rendered.contains("V paste copied"));
-        assert!(repo_help_text(app.state()).contains("t revert"));
+        let help = repo_help_text(app.state());
+        assert!(help.contains("y copy menu"));
+        assert!(help.contains("C copy"));
+        assert!(help.contains("V paste copied"));
+        assert!(help.contains("t revert"));
     }
 
     #[test]
@@ -13911,15 +13979,13 @@ mod tests {
 
         let rendered = app.render_to_string();
 
-        assert!(rendered.contains("Ctrl+O copy hash."));
-        assert!(rendered.contains("o browser."));
-        assert!(rendered.contains("C copy"));
         assert!(rendered.contains("3 returns to current-branch history"));
-        assert!(repo_help_text(app.state()).contains("Ctrl+O copy hash"));
-        assert!(repo_help_text(app.state()).contains("o browser"));
-        assert!(repo_help_text(app.state()).contains("C copy"));
-        assert!(repo_help_text(app.state()).contains("t revert"));
-        assert!(repo_help_text(app.state()).contains("Ctrl+L log menu"));
+        let help = repo_help_text(app.state());
+        assert!(help.contains("Ctrl+O copy hash"));
+        assert!(help.contains("o browser"));
+        assert!(help.contains("C copy"));
+        assert!(help.contains("t revert"));
+        assert!(help.contains("Ctrl+L log menu"));
     }
 
     #[test]

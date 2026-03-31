@@ -678,6 +678,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::OpenCommitCopyOptions => {
+            match pending_history_commit_operation(state, |_, _, _| Ok(())) {
+                Ok(Some((repo_id, ()))) => {
+                    open_menu(state, repo_id, MenuOperation::CommitCopyOptions)
+                }
+                Ok(None) => push_warning(state, "Select a commit before opening copy options."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::CopySelectedCommitForCherryPick => {
             let copied_commit =
                 state
@@ -4219,6 +4229,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::FilterOptions => "Filter options",
         MenuOperation::DiffOptions => "Diffing options",
         MenuOperation::CommitLogOptions => "Commit log options",
+        MenuOperation::CommitCopyOptions => "Copy commit attribute",
         MenuOperation::CommitFixupOptions => "Fixup options",
         MenuOperation::BisectOptions => "Bisect options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
@@ -4236,6 +4247,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::FilterOptions => filter_menu_entries(state).len(),
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::CommitLogOptions => commit_log_menu_entries(state).len(),
+        MenuOperation::CommitCopyOptions => 5,
         MenuOperation::CommitFixupOptions => 3,
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
@@ -4420,6 +4432,36 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
                 open_input_prompt(state, menu.repo_id, operation);
             } else {
                 reduce_action(state, Action::CreateFixupCommit, effects);
+            }
+            true
+        }
+        MenuOperation::CommitCopyOptions => {
+            let target = match selected_index {
+                0 => CommitClipboardTarget::ShortHash,
+                1 => CommitClipboardTarget::FullHash,
+                2 => CommitClipboardTarget::Summary,
+                3 => CommitClipboardTarget::Diff,
+                _ => CommitClipboardTarget::BrowserUrl,
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            match selected_commit_clipboard_target(state, target) {
+                Ok(Some((repo_id, value, summary))) => {
+                    let command = clipboard_shell_command(std::ffi::OsStr::new(&value));
+                    let job = shell_job(repo_id, command);
+                    enqueue_shell_job(state, &job, &summary);
+                    effects.push(Effect::RunShellCommand(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
             }
             true
         }
@@ -4729,6 +4771,15 @@ fn commit_log_menu_entries(state: &AppState) -> Vec<MenuEntry> {
             action: Action::OpenAllBranchGraph { reverse: true },
         },
     ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommitClipboardTarget {
+    ShortHash,
+    FullHash,
+    Summary,
+    Diff,
+    BrowserUrl,
 }
 
 fn comparison_target_menu_label(target: &ComparisonTarget) -> String {
@@ -5629,6 +5680,79 @@ fn selected_commit_browser_target(
         return Err("No browser-compatible remote URL found for the selected commit.".to_string());
     };
     Ok(Some((repo_mode.current_repo_id.clone(), target)))
+}
+
+fn selected_commit_clipboard_target(
+    state: &AppState,
+    target: CommitClipboardTarget,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(commit) = selected_commit_item(repo_mode) else {
+        return Err("Select a commit before copying a commit attribute.".to_string());
+    };
+    let commit_label = format!(
+        "{} {}",
+        if commit.short_oid.is_empty() {
+            commit.oid.chars().take(8).collect::<String>()
+        } else {
+            commit.short_oid.clone()
+        },
+        commit.summary
+    );
+
+    let (value, summary) = match target {
+        CommitClipboardTarget::ShortHash => {
+            let value = if commit.short_oid.is_empty() {
+                commit.oid.clone()
+            } else {
+                commit.short_oid.clone()
+            };
+            let summary = format!("Copy {value}");
+            (value, summary)
+        }
+        CommitClipboardTarget::FullHash => {
+            let value = commit.oid.clone();
+            let summary = format!("Copy full hash for {commit_label}");
+            (value, summary)
+        }
+        CommitClipboardTarget::Summary => {
+            let value = commit.summary.clone();
+            let summary = format!("Copy summary for {commit_label}");
+            (value, summary)
+        }
+        CommitClipboardTarget::Diff => {
+            if commit.diff.lines.is_empty() {
+                return Err("No diff is loaded for the selected commit.".to_string());
+            }
+            let value = commit
+                .diff
+                .lines
+                .iter()
+                .map(|line| line.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let summary = format!("Copy diff for {commit_label}");
+            (value, summary)
+        }
+        CommitClipboardTarget::BrowserUrl => {
+            let Some(detail) = repo_mode.detail.as_ref() else {
+                return Err(
+                    "Load repository details before copying the commit browser URL.".to_string(),
+                );
+            };
+            let Some(value) = selected_commit_browser_url(detail, &commit.oid) else {
+                return Err(
+                    "No browser-compatible remote URL found for the selected commit.".to_string(),
+                );
+            };
+            let summary = format!("Copy browser URL for {commit_label}");
+            (value, summary)
+        }
+    };
+
+    Ok(Some((repo_mode.current_repo_id.clone(), value, summary)))
 }
 
 fn selected_commit_browser_url(
@@ -15803,6 +15927,110 @@ mod tests {
                 PaneId::RepoDetail,
             ))
         );
+    }
+
+    #[test]
+    fn open_commit_copy_options_opens_menu_for_selected_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "older".to_string(),
+                        short_oid: "old1234".to_string(),
+                        summary: "older commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenCommitCopyOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                repo_id,
+                MenuOperation::CommitCopyOptions,
+                0,
+                PaneId::RepoDetail,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_commit_copy_options_selection_queues_shell_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Copy commit attribute",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitCopyOptions,
+                selected_index: 1,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "older-full-hash".to_string(),
+                        short_oid: "old1234".to_string(),
+                        summary: "older commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+        let job_id = JobId::new("shell:repo-1:run-command");
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RunShellCommand(ShellCommandRequest {
+                repo_id: effect_repo_id,
+                command,
+                ..
+            }) if effect_repo_id == &repo_id && command.contains("older-full-hash")
+        )));
     }
 
     #[test]
