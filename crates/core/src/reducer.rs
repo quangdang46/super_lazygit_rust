@@ -1776,6 +1776,19 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             enqueue_shell_job(state, &job, &format!("Copy {clipboard_value}"));
             effects.push(Effect::RunShellCommand(job));
         }
+        Action::OpenSelectedCommitInBrowser => match selected_commit_browser_target(state) {
+            Ok(Some((repo_id, target))) => {
+                let command = open_in_default_app_command(std::ffi::OsStr::new(&target));
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &format!("Open {target}"));
+                effects.push(Effect::RunShellCommand(job));
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
         Action::CopySelectedStatusPath => match selected_repo_shell_target(state, false) {
             Ok(Some((repo_id, path, is_directory, _))) => {
                 let display_path = status_clipboard_path(&path, is_directory);
@@ -1793,7 +1806,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::OpenSelectedStatusPathInDefaultApp => {
             match selected_repo_shell_target(state, true) {
                 Ok(Some((repo_id, path, _, _))) => {
-                    let command = open_in_default_app_command(&path);
+                    let command = open_in_default_app_command(path.as_os_str());
                     let job = shell_job(repo_id, command);
                     enqueue_shell_job(state, &job, &format!("Open {}", path.display()));
                     effects.push(Effect::RunShellCommand(job));
@@ -5421,11 +5434,111 @@ fn clipboard_shell_command(value: &std::ffi::OsStr) -> String {
     )
 }
 
-fn open_in_default_app_command(path: &std::path::Path) -> String {
-    let quoted = shell_quote(path.as_os_str());
+fn open_in_default_app_command(target: &std::ffi::OsStr) -> String {
+    let quoted = shell_quote(target);
     format!(
         "if command -v xdg-open >/dev/null 2>&1; then xdg-open {quoted}; elif command -v open >/dev/null 2>&1; then open {quoted}; else exit 1; fi >/dev/null 2>&1"
     )
+}
+
+fn selected_commit_browser_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(commit) = selected_commit_item(repo_mode) else {
+        return Err("Select a commit before opening it in the browser.".to_string());
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Err("Load repository details before opening a commit in the browser.".to_string());
+    };
+    let Some(target) = selected_commit_browser_url(detail, &commit.oid) else {
+        return Err("No browser-compatible remote URL found for the selected commit.".to_string());
+    };
+    Ok(Some((repo_mode.current_repo_id.clone(), target)))
+}
+
+fn selected_commit_browser_url(
+    detail: &crate::state::RepoDetail,
+    commit_oid: &str,
+) -> Option<String> {
+    detail
+        .remotes
+        .iter()
+        .filter(|remote| remote.name == "origin")
+        .chain(
+            detail
+                .remotes
+                .iter()
+                .filter(|remote| remote.name != "origin"),
+        )
+        .find_map(|remote| {
+            commit_browser_url_for_remote(&remote.fetch_url, commit_oid)
+                .or_else(|| commit_browser_url_for_remote(&remote.push_url, commit_oid))
+        })
+}
+
+fn commit_browser_url_for_remote(remote_url: &str, commit_oid: &str) -> Option<String> {
+    let (host, repo_path) = parse_remote_browser_root(remote_url)?;
+    let commit_segment = if host.contains("gitlab") {
+        "-/commit"
+    } else if host.contains("bitbucket") {
+        "commits"
+    } else {
+        "commit"
+    };
+    Some(format!(
+        "https://{host}/{repo_path}/{commit_segment}/{commit_oid}"
+    ))
+}
+
+fn parse_remote_browser_root(remote_url: &str) -> Option<(String, String)> {
+    let remote_url = remote_url.trim();
+    if remote_url.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = remote_url
+        .strip_prefix("https://")
+        .or_else(|| remote_url.strip_prefix("http://"))
+    {
+        let (authority, path) = rest.split_once('/')?;
+        let host = authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, host)| host)
+            .split(':')
+            .next()?;
+        return Some((host.to_string(), normalize_remote_repo_path(path)?));
+    }
+
+    if let Some(rest) = remote_url.strip_prefix("ssh://") {
+        let rest = rest.rsplit_once('@').map_or(rest, |(_, value)| value);
+        let (authority, path) = rest.split_once('/')?;
+        let host = authority.split(':').next()?;
+        return Some((host.to_string(), normalize_remote_repo_path(path)?));
+    }
+
+    if let Some((authority, path)) = remote_url.split_once(':') {
+        if authority.contains('@') {
+            let host = authority
+                .rsplit_once('@')
+                .map_or(authority, |(_, host)| host);
+            return Some((host.to_string(), normalize_remote_repo_path(path)?));
+        }
+    }
+
+    None
+}
+
+fn normalize_remote_repo_path(path: &str) -> Option<String> {
+    let normalized = path.trim().trim_start_matches('/').trim_end_matches('/');
+    let normalized = normalized.strip_suffix(".git").unwrap_or(normalized);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.to_string())
+    }
 }
 
 fn external_difftool_command(path: &std::path::Path, pane: PaneId) -> String {
@@ -7459,7 +7572,63 @@ mod tests {
             vec![Effect::RunShellCommand(ShellCommandRequest {
                 job_id: JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::open_in_default_app_command(&repo_root.join(selected_path)),
+                command: super::open_in_default_app_command(
+                    repo_root.join(selected_path).as_os_str(),
+                ),
+            })]
+        );
+    }
+
+    #[test]
+    fn open_selected_commit_in_browser_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    remotes: vec![
+                        crate::state::RemoteItem {
+                            name: "origin".to_string(),
+                            fetch_url: "/tmp/origin.git".to_string(),
+                            push_url: "/tmp/origin.git".to_string(),
+                            branch_count: 1,
+                        },
+                        crate::state::RemoteItem {
+                            name: "upstream".to_string(),
+                            fetch_url: "git@github.com:example/repo.git".to_string(),
+                            push_url: "git@github.com:example/repo.git".to_string(),
+                            branch_count: 0,
+                        },
+                    ],
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedCommitInBrowser));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunShellCommand(ShellCommandRequest {
+                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+                repo_id,
+                command: super::open_in_default_app_command(std::ffi::OsStr::new(
+                    "https://github.com/example/repo/commit/abcdef1234567890"
+                )),
             })]
         );
     }

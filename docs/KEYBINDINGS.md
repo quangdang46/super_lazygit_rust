@@ -245,6 +245,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Enter` | Open the selected commit's changed-files view |
 | `Space` | Check out the selected commit in detached-HEAD mode |
 | `Ctrl+O` | Copy the selected commit's short hash to the clipboard |
+| `o` | Open the selected commit in the browser when a browser-compatible remote is configured |
 | `3` | Reset the commits view to the current branch's linear history |
 | `a` | Switch to the all-branches commit graph, newest first |
 | `n` | Open create-branch-from-commit prompt |
