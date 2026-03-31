@@ -4123,7 +4123,7 @@ impl TuiApp {
             let label = match entry.entry_kind {
                 super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed } => format!(
                     "{}{} {}/",
-                    if collapsed { "▸" } else { "▾" },
+                    if collapsed { "▶" } else { "▼" },
                     indent,
                     entry.label
                 ),
@@ -9472,7 +9472,7 @@ fn repo_status_section_lines(
                     super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed } => {
                         format!(
                             "{}{} {}/",
-                            if collapsed { "▸" } else { "▾" },
+                            if collapsed { "▶" } else { "▼" },
                             indent,
                             entry.label
                         )
@@ -11255,8 +11255,8 @@ mod tests {
                 .collect::<Vec<_>>();
 
         assert_eq!(lines[1], "Files: 4  Tree: on  Status: tracked  Filter: /ui");
-        assert!(lines.iter().any(|line| line.contains("▾ src/")));
-        assert!(lines.iter().any(|line| line.contains("▾   ui/")));
+        assert!(lines.iter().any(|line| line.contains("▼ src/")));
+        assert!(lines.iter().any(|line| line.contains("▼   ui/")));
         assert!(lines.iter().any(|line| line.contains("lib.rs")));
         assert!(lines.iter().any(|line| line.contains("mod.rs")));
     }
