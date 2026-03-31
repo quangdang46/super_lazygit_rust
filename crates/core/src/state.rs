@@ -161,6 +161,10 @@ pub enum ConfirmableOperation {
         commit: String,
         summary: String,
     },
+    SetFixupMessageForCommit {
+        commit: String,
+        summary: String,
+    },
     SquashCommit {
         commit: String,
         summary: String,

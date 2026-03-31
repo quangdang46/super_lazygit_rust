@@ -259,6 +259,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `A` | Open amend-selected-commit confirmation |
 | `f` | Open the fixup options menu for `fixup!` and `amend!` commit creation |
 | `F` | Open fixup-selected-commit confirmation |
+| `c` | Fold the selected commit into its parent while keeping the selected commit message (`git rebase fixup -C`) |
 | `g` | Open apply-fixups confirmation for the selected commit |
 | `s` | Open squash-selected-commit confirmation |
 | `d` | Open drop-selected-commit confirmation |

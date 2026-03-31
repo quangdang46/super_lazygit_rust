@@ -929,6 +929,28 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::SetFixupMessageForSelectedCommit => {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err(
+                        "Select an older commit before setting the fixup message.".to_string()
+                    );
+                }
+                Ok(ConfirmableOperation::SetFixupMessageForCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => {
+                    push_warning(state, "Select a commit before setting the fixup message.")
+                }
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::ApplyFixupCommits => {
             match pending_history_commit_operation(state, |_, commit, selected_index| {
                 if selected_index == 0 {
@@ -3573,6 +3595,9 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::FixupCommit { summary, .. } => {
             format!("Fixup {summary}")
         }
+        ConfirmableOperation::SetFixupMessageForCommit { summary, .. } => {
+            format!("Set fixup message from {summary}")
+        }
         ConfirmableOperation::SquashCommit { summary, .. } => {
             format!("Squash {summary}")
         }
@@ -3679,6 +3704,13 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 mode: RebaseStartMode::Fixup,
             },
             "Start fixup autosquash",
+        ),
+        ConfirmableOperation::SetFixupMessageForCommit { commit, .. } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::FixupWithMessage,
+            },
+            "Set fixup message",
         ),
         ConfirmableOperation::SquashCommit { commit, .. } => (
             GitCommand::StartCommitRebase {
@@ -7467,6 +7499,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
             RebaseStartMode::Interactive => "start-interactive-rebase",
             RebaseStartMode::Amend => "start-amend-rebase",
             RebaseStartMode::Fixup => "start-fixup-rebase",
+            RebaseStartMode::FixupWithMessage => "set-fixup-message-rebase",
             RebaseStartMode::ApplyFixups => "apply-fixups-rebase",
             RebaseStartMode::Squash => "start-squash-rebase",
             RebaseStartMode::Drop => "start-drop-rebase",
@@ -13337,6 +13370,45 @@ mod tests {
     }
 
     #[test]
+    fn confirm_pending_operation_queues_set_fixup_message_rebase_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Set fixup message from old1234 older commit",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::SetFixupMessageForCommit {
+                    commit: "older".to_string(),
+                    summary: "old1234 older commit".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:set-fixup-message-rebase");
+
+        assert!(result.state.modal_stack.is_empty());
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::StartCommitRebase {
+                    commit: "older".to_string(),
+                    mode: RebaseStartMode::FixupWithMessage,
+                },
+            })]
+        );
+    }
+
+    #[test]
     fn confirm_pending_operation_queues_move_up_rebase_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -16613,6 +16685,56 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(ConfirmableOperation::ApplyFixupCommits {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn set_fixup_message_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SetFixupMessageForSelectedCommit),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::SetFixupMessageForCommit {
                 commit: "older".to_string(),
                 summary: "old1234 older commit".to_string(),
             })

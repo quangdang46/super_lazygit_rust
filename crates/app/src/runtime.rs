@@ -660,6 +660,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
             super_lazygit_core::RebaseStartMode::Interactive => "start_interactive_rebase",
             super_lazygit_core::RebaseStartMode::Amend => "start_amend_rebase",
             super_lazygit_core::RebaseStartMode::Fixup => "start_fixup_rebase",
+            super_lazygit_core::RebaseStartMode::FixupWithMessage => "set_fixup_message_rebase",
             super_lazygit_core::RebaseStartMode::ApplyFixups => "apply_fixups_rebase",
             super_lazygit_core::RebaseStartMode::Squash => "start_squash_rebase",
             super_lazygit_core::RebaseStartMode::Drop => "start_drop_rebase",

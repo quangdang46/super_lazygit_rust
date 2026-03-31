@@ -720,6 +720,9 @@ impl GitBackend for CliGitBackend {
                     RebaseStartMode::Fixup => {
                         format!("Started fixup autosquash for {short} {subject}")
                     }
+                    RebaseStartMode::FixupWithMessage => {
+                        format!("Set fixup message from {short} {subject}")
+                    }
                     RebaseStartMode::ApplyFixups => {
                         format!("Applied fixup autosquash for {short} {subject}")
                     }
@@ -1226,6 +1229,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
             RebaseStartMode::Interactive => "start_interactive_rebase",
             RebaseStartMode::Amend => "start_amend_rebase",
             RebaseStartMode::Fixup => "start_fixup_rebase",
+            RebaseStartMode::FixupWithMessage => "set_fixup_message_rebase",
             RebaseStartMode::ApplyFixups => "apply_fixups_rebase",
             RebaseStartMode::Squash => "start_squash_rebase",
             RebaseStartMode::Drop => "start_drop_rebase",
@@ -2151,6 +2155,9 @@ fn start_commit_rebase(repo_path: &Path, commit: &str, mode: &RebaseStartMode) -
             git(repo_path, ["commit", "--fixup", commit])?;
             run_scripted_rebase(repo_path, commit, "pick", None, true)
         }
+        RebaseStartMode::FixupWithMessage => {
+            run_scripted_rebase(repo_path, commit, "fixup -C", None, false)
+        }
         RebaseStartMode::ApplyFixups => run_scripted_rebase(repo_path, commit, "pick", None, true),
         RebaseStartMode::Squash => run_scripted_rebase(repo_path, commit, "squash", None, false),
         RebaseStartMode::Drop => run_scripted_rebase(repo_path, commit, "drop", None, false),
@@ -2244,7 +2251,7 @@ fn run_scripted_rebase(
     if autosquash {
         args.push("--autosquash".to_string());
     }
-    if todo_verb == "squash" {
+    if todo_verb == "squash" || todo_verb.starts_with("fixup") {
         let parent = git_stdout(repo_path, ["rev-parse", &format!("{commit}^")])?;
         args.extend(rebase_base_args(repo_path, &parent));
     } else {
@@ -5375,6 +5382,74 @@ mod tests {
             .expect("notes after amend"),
             before_notes
         );
+    }
+
+    #[test]
+    fn cli_backend_sets_fixup_message_from_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:set-fixup-message-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::FixupWithMessage,
+                },
+            })
+            .expect("set fixup message flow should succeed");
+
+        assert!(outcome.summary.contains("Set fixup message"));
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "2"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%s", "-n", "2"])
+                    .expect("log")
+            )
+            .expect("log text"),
+            "add lib\nsecond"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "HEAD~1:history.txt"])
+                    .expect("show history")
+            )
+            .expect("history text"),
+            "one\ntwo"
+        );
+        assert!(stdout_string(
+            repo.git_capture(["show", "HEAD~1:notes.md"])
+                .expect("show notes")
+        )
+        .expect("notes text")
+        .contains("# Notes"));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+        assert!(detail.rebase_state.is_none());
     }
 
     #[test]

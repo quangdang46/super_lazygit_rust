@@ -74,6 +74,7 @@ pub enum Action {
     ResetBisect,
     CreateFixupCommit,
     FixupSelectedCommit,
+    SetFixupMessageForSelectedCommit,
     ApplyFixupCommits,
     SquashSelectedCommit,
     DropSelectedCommit,

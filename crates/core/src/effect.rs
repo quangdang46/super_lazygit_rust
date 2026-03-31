@@ -71,6 +71,7 @@ pub enum RebaseStartMode {
     Interactive,
     Amend,
     Fixup,
+    FixupWithMessage,
     ApplyFixups,
     Squash,
     Drop,

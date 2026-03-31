@@ -1770,6 +1770,17 @@ impl TuiApp {
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
                             && self.binding_matches_action(
+                                "set_fixup_message_for_selected_commit",
+                                raw,
+                                normalized,
+                                &["c"],
+                            )
+                        {
+                            return Some(Action::SetFixupMessageForSelectedCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
                                 "apply_fixup_commits",
                                 raw,
                                 normalized,
@@ -5538,6 +5549,11 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Create a fixup commit for {summary} from the currently staged changes and autosquash it with rebase?"
             )
         }
+        super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit { summary, .. } => {
+            format!(
+                "Fold {summary} into its parent and keep that commit message with git rebase fixup -C?"
+            )
+        }
         super_lazygit_core::ConfirmableOperation::SquashCommit { summary, .. } => {
             format!(
                 "Squash {summary} into its parent commit? Git will rewrite history and keep the default combined message."
@@ -6805,7 +6821,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  r reword  R reword editor  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  c set fixup msg  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  r reword  R reword editor  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8767,6 +8783,54 @@ mod tests {
     }
 
     #[test]
+    fn route_repository_commit_history_c_opens_set_fixup_message_confirmation() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut app = TuiApp::new(state, AppConfig::default());
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "c".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit {
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
+                }
+            )
+        );
+    }
+
+    #[test]
     fn route_repository_commit_history_o_opens_selected_commit_in_browser() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {
@@ -9413,6 +9477,12 @@ mod tests {
             commit: "1234567890abcdef".to_string(),
             summary: "1234567 second".to_string(),
         });
+        let set_fixup_message = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            },
+        );
         let move_up = confirmation_copy(&super_lazygit_core::ConfirmableOperation::MoveCommitUp {
             commit: "1234567890abcdef".to_string(),
             adjacent_commit: "fedcba0987654321".to_string(),
@@ -9432,6 +9502,7 @@ mod tests {
 
         assert!(amend.contains("older-commit amend"));
         assert!(fixup.contains("fixup commit"));
+        assert!(set_fixup_message.contains("fixup -C"));
         assert!(move_up.contains("swap those adjacent commits"));
         assert!(cherry_pick.contains("Cherry-pick 1234567 second"));
         assert!(revert.contains("Revert 1234567 second"));
@@ -14098,6 +14169,7 @@ mod tests {
         assert!(help.contains("Ctrl+O copy hash"));
         assert!(help.contains("o browser"));
         assert!(help.contains("C copy"));
+        assert!(help.contains("c set fixup msg"));
         assert!(help.contains("t revert"));
         assert!(help.contains("Ctrl+L log menu"));
     }
