@@ -20,6 +20,10 @@ use super_lazygit_core::{
 };
 use thiserror::Error;
 
+mod graph;
+
+use crate::graph::{render_commit_graph, GraphCommit};
+
 pub trait GitBackend: Send + Sync + 'static {
     fn kind(&self) -> GitBackendKind;
 
@@ -2842,9 +2846,9 @@ fn read_linear_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHist
 fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
     let args = vec![
         "log",
-        "--graph",
         "--decorate=short",
-        "--format=%x1f%H%x00%h%x00%D%x00%s",
+        "--topo-order",
+        "--format=%H%x00%h%x00%P%x00%D%x00%s",
         "--all",
         "-n",
         "64",
@@ -2852,25 +2856,24 @@ fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
     git_stdout(repo_path, args)
         .map(|output| {
             let mut commits = Vec::new();
-            let mut graph_lines = Vec::new();
+            let mut graph_commits = Vec::new();
+            let mut graph_suffixes = Vec::new();
             for line in output.lines() {
-                let Some((graph_prefix, payload)) = line.split_once('\x1f') else {
-                    continue;
-                };
-                let mut parts = payload.splitn(4, '\0');
+                let mut parts = line.splitn(5, '\0');
                 let Some(oid) = parts.next() else {
                     continue;
                 };
                 let Some(short_oid) = parts.next() else {
                     continue;
                 };
+                let parents = parts
+                    .next()
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
                 let decorations = parts.next().unwrap_or_default().trim();
                 let summary = parts.next().unwrap_or_default();
-                let graph_line = if decorations.is_empty() {
-                    format!("{graph_prefix}{short_oid} {summary}")
-                } else {
-                    format!("{graph_prefix}{short_oid} ({decorations}) {summary}")
-                };
                 let changed_files = read_commit_files(repo_path, oid);
                 let diff = read_commit_diff(repo_path, oid);
                 commits.push(CommitItem {
@@ -2880,8 +2883,26 @@ fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
                     changed_files,
                     diff,
                 });
-                graph_lines.push(graph_line);
+                graph_commits.push(GraphCommit {
+                    oid: oid.to_string(),
+                    parents,
+                });
+                graph_suffixes.push(if decorations.is_empty() {
+                    format!("{short_oid} {summary}")
+                } else {
+                    format!("{short_oid} ({decorations}) {summary}")
+                });
             }
+            let graph_rows = render_commit_graph(&graph_commits);
+            let mut graph_lines = if graph_rows.len() == graph_suffixes.len() {
+                graph_rows
+                    .into_iter()
+                    .zip(graph_suffixes)
+                    .map(|(graph_row, suffix)| format!("{graph_row} {suffix}"))
+                    .collect::<Vec<_>>()
+            } else {
+                graph_suffixes
+            };
             if reverse {
                 commits.reverse();
                 graph_lines.reverse();
@@ -4462,7 +4483,11 @@ mod tests {
         assert!(forward
             .commit_graph_lines
             .iter()
-            .any(|line| line.contains('*')));
+            .any(|line| line.contains('⏣') || line.contains('◯')));
+        assert!(forward
+            .commit_graph_lines
+            .iter()
+            .any(|line| line.contains('│') || line.contains('╮') || line.contains('╯')));
     }
 
     #[test]

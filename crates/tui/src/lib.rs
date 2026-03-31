@@ -6041,8 +6041,21 @@ fn repo_commit_lines(
         Line::from("History:"),
     ];
 
-    let window_start = selected_position.saturating_sub(1);
-    let window_end = (window_start + 3).min(visible_indices.len());
+    let minimum_history_rows = if repo_mode.commit_history_mode.is_graph() {
+        6
+    } else {
+        4
+    };
+    let history_budget = visible_indices
+        .len()
+        .min(viewport_lines.saturating_sub(16).max(minimum_history_rows));
+    let history_budget = history_budget.max(1);
+    let half_history = history_budget / 2;
+    let mut window_start = selected_position.saturating_sub(half_history);
+    let window_end = (window_start + history_budget).min(visible_indices.len());
+    if window_end.saturating_sub(window_start) < history_budget {
+        window_start = window_end.saturating_sub(history_budget);
+    }
     lines.extend(
         visible_indices[window_start..window_end]
             .iter()
@@ -8815,8 +8828,8 @@ mod tests {
                 },
             ],
             commit_graph_lines: vec![
-                "* abcdef1 (HEAD -> main) add lib".to_string(),
-                "| * 1234567 second".to_string(),
+                "⏣─╮ abcdef1 (HEAD -> main) add lib".to_string(),
+                "│ ◯ 1234567 second".to_string(),
             ],
             stashes: vec![
                 super_lazygit_core::StashItem {
@@ -15081,8 +15094,8 @@ mod tests {
     fn render_repo_shell_shows_all_branch_graph_preview() {
         let mut detail = sample_repo_detail();
         detail.commit_graph_lines = vec![
-            "* abcdef1 (HEAD -> main) add lib".to_string(),
-            "| * 1234567 second".to_string(),
+            "⏣─╮ abcdef1 (HEAD -> main) add lib".to_string(),
+            "│ ◯ 1234567 second".to_string(),
         ];
         let mut state = AppState {
             mode: AppMode::Repository,
@@ -15121,7 +15134,7 @@ mod tests {
         let rendered = app.render_to_string();
 
         assert!(rendered.contains("Detail: Commits"));
-        assert!(rendered.contains("* abcdef1 (HEAD -> main) add lib"));
+        assert!(rendered.contains("⏣─╮ abcdef1 (HEAD -> main) add lib"));
         assert!(repo_commit_context_line(
             CommitHistoryMode::Graph { reverse: true },
             None,
@@ -15132,6 +15145,57 @@ mod tests {
         )
         .contains("3 current branch. Ctrl+L log menu"));
         assert!(!rendered.contains("A oldest-first"));
+    }
+
+    #[test]
+    fn render_repo_shell_commit_detail_expands_graph_history_window() {
+        let repo_id = RepoId::new("repo-1");
+        let mut detail = sample_repo_detail();
+        detail.commits = (0..6)
+            .map(|index| super_lazygit_core::CommitItem {
+                oid: format!("oid-{index}"),
+                short_oid: format!("c{index}"),
+                summary: format!("commit {index}"),
+                changed_files: Vec::new(),
+                diff: super_lazygit_core::DiffModel::default(),
+            })
+            .collect();
+        detail.commit_graph_lines = vec![
+            "◯ c0 commit 0".to_string(),
+            "│ ◯ c1 commit 1".to_string(),
+            "│ ◯ c2 commit 2".to_string(),
+            "⏣─╮ c3 commit 3".to_string(),
+            "│ ◯ c4 commit 4".to_string(),
+            "◯─╯ c5 commit 5".to_string(),
+        ];
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                detail: Some(detail),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(3),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(160, 28);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("History:"));
+        assert!(rendered.contains("◯ c0 commit 0"));
+        assert!(rendered.contains("◯─╯ c5 commit 5"));
     }
 
     #[test]
