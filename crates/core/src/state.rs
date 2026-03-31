@@ -217,6 +217,10 @@ pub enum ConfirmableOperation {
         branch_name: String,
         upstream_ref: String,
     },
+    ForceCheckoutRef {
+        target_ref: String,
+        source_label: String,
+    },
     MergeRefIntoCurrent {
         target_ref: String,
         source_label: String,
@@ -267,10 +271,18 @@ pub enum InputPromptOperation {
     CheckoutBranch,
     CreateBranch,
     CreateRemote,
+    ForkRemote {
+        suggested_name: String,
+        remote_url: String,
+    },
     CreateTag,
     CreateTagFromCommit {
         commit: String,
         summary: String,
+    },
+    CreateTagFromRef {
+        target_ref: String,
+        source_label: String,
     },
     CreateBranchFromCommit {
         commit: String,
@@ -341,6 +353,10 @@ pub enum MenuOperation {
     DiffOptions,
     CommitLogOptions,
     CommitCopyOptions,
+    BranchGitFlowOptions,
+    BranchPullRequestOptions,
+    BranchResetOptions,
+    BranchSortOptions,
     TagResetOptions,
     ReflogResetOptions,
     CommitAmendAttributeOptions,
@@ -348,6 +364,9 @@ pub enum MenuOperation {
     BisectOptions,
     BranchUpstreamOptions,
     MergeRebaseOptions,
+    RemoteBranchPullRequestOptions,
+    RemoteBranchResetOptions,
+    RemoteBranchSortOptions,
     IgnoreOptions,
     StatusResetOptions,
     PatchOptions,
@@ -660,6 +679,40 @@ pub enum PreviewMode {
     Hidden,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BranchSortMode {
+    #[default]
+    Natural,
+    Name,
+}
+
+impl BranchSortMode {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Natural => "natural",
+            Self::Name => "name",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemoteBranchSortMode {
+    #[default]
+    Natural,
+    Name,
+}
+
+impl RemoteBranchSortMode {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Natural => "natural",
+            Self::Name => "name",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScanStatus {
     #[default]
@@ -704,8 +757,10 @@ pub struct RepoModeState {
     pub collapsed_status_dirs: BTreeSet<PathBuf>,
     pub commit_box: CommitBoxState,
     pub branches_view: ListViewState,
+    pub branch_sort_mode: BranchSortMode,
     pub remotes_view: ListViewState,
     pub remote_branches_view: ListViewState,
+    pub remote_branch_sort_mode: RemoteBranchSortMode,
     pub tags_view: ListViewState,
     pub commits_view: ListViewState,
     pub commit_files_view: ListViewState,
@@ -772,8 +827,10 @@ impl RepoModeState {
             collapsed_status_dirs: BTreeSet::default(),
             commit_box: CommitBoxState::default(),
             branches_view: ListViewState::default(),
+            branch_sort_mode: BranchSortMode::default(),
             remotes_view: ListViewState::default(),
             remote_branches_view: ListViewState::default(),
+            remote_branch_sort_mode: RemoteBranchSortMode::default(),
             tags_view: ListViewState::default(),
             commits_view: ListViewState::default(),
             commit_files_view: ListViewState::default(),

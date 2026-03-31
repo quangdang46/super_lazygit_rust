@@ -171,9 +171,15 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `R` | Open rename-branch prompt |
 | `d` | Open delete-branch confirmation |
 | `u` | Open the branch-upstream options menu for set/unset/fast-forward flows |
-| `y` | Copy the selected branch name to the clipboard |
+| `y` / `Ctrl+O` | Copy the selected branch name to the clipboard |
+| `o` | Open the branch pull-request options menu |
+| `g` | Open the branch reset options menu |
+| `s` | Open the branch sort options menu |
+| `G` | Open the branch git-flow options menu |
+| `F` | Open force-checkout confirmation for the selected branch |
 | `r` | Open rebase-current-onto-selected-branch confirmation |
 | `M` | Open merge-selected-branch-into-current confirmation |
+| `T` | Open create-tag-from-selected-branch prompt |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
 | `Ctrl+S` | Open the filter-options menu for the branch list |
@@ -196,6 +202,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `e` | Open the edit-remote prompt for the selected remote |
 | `d` | Open remove-remote confirmation |
 | `f` | Open fetch-remote confirmation for the selected remote |
+| `F` | Open the fork-remote prompt for the selected remote (`<name> <url>`) |
 | `w` | Switch to the worktrees subview |
 
 ### Remote branches detail subview
@@ -213,10 +220,14 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Space` | Check out the selected remote branch as a local tracking branch |
 | `n` | Open create-local-branch-from-remote prompt |
 | `d` | Open delete-remote-branch confirmation |
-| `y` | Copy the selected remote branch name to the clipboard |
+| `y` / `Ctrl+O` | Copy the selected remote branch name to the clipboard |
+| `o` | Open the remote-branch pull-request options menu |
+| `g` | Open the remote-branch reset options menu |
+| `s` | Open the remote-branch sort options menu |
 | `u` | Set the current branch upstream to the selected remote branch |
 | `r` | Open rebase-current-onto-selected-remote-branch confirmation |
 | `M` | Open merge-selected-remote-branch-into-current confirmation |
+| `T` | Open create-tag-from-selected-remote-branch prompt |
 | `w` | Switch to the worktrees subview |
 
 ### Tags detail subview

@@ -847,6 +847,10 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["checkout", branch_ref.as_str()])?;
                 format!("Checked out {branch_ref}")
             }
+            GitCommand::ForceCheckoutRef { target_ref } => {
+                git(&repo_path, ["checkout", "-f", target_ref.as_str()])?;
+                format!("Force-checked out {target_ref}")
+            }
             GitCommand::CheckoutRemoteBranch {
                 remote_branch_ref,
                 local_branch_name,
@@ -1275,6 +1279,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
+        GitCommand::ForceCheckoutRef { .. } => "force_checkout_ref",
         GitCommand::CheckoutRemoteBranch { .. } => "checkout_remote_branch",
         GitCommand::CheckoutTag { .. } => "checkout_tag",
         GitCommand::CheckoutCommit { .. } => "checkout_commit",

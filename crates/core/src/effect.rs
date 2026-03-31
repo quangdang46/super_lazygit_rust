@@ -272,6 +272,9 @@ pub enum GitCommand {
     FastForwardCurrentBranchFromUpstream {
         upstream_ref: String,
     },
+    ForceCheckoutRef {
+        target_ref: String,
+    },
     MergeRefIntoCurrent {
         target_ref: String,
     },

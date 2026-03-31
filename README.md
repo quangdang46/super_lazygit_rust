@@ -26,9 +26,9 @@ That means:
 - Fetch, pull, and push flows with confirmation overlays
 - Commit history detail view with compare-target context
 - Status-origin all-branches commit graph view with forward and reverse ordering
-- Branch detail view with checkout, create, rename, delete, and upstream-setting actions
-- Remotes detail view with filtering, remote-branches drill-down, and add/edit/remove/fetch actions
-- Remote-branch detail view with filtering, commit-history drill-down, tracking checkout, local-branch creation, and remote deletion
+- Branch detail view with checkout, create, rename, delete, upstream-setting, force-checkout, git-flow, pull-request, reset, sort, and tag-from-branch actions
+- Remotes detail view with filtering, remote-branches drill-down, add/edit/remove/fetch actions, and fork-remote flow
+- Remote-branch detail view with filtering, commit-history drill-down, tracking checkout, local-branch creation, remote deletion, pull-request, reset, sort, and tag-from-remote-branch actions
 - Tags detail view with filtering, commit-history drill-down, detached checkout, copy/reset-menu affordances, and create/delete/push flows
 - Compare, rebase, stash, reflog, and worktree detail subviews
 - Submodules detail view with filtering, nested repo entry/return flow, copy/options affordances, and add/edit-url/init/update/remove actions

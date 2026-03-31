@@ -734,6 +734,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::FastForwardCurrentBranchFromUpstream { .. } => {
             "fast_forward_current_branch_from_upstream"
         }
+        GitCommand::ForceCheckoutRef { .. } => "force_checkout_ref",
         GitCommand::MergeRefIntoCurrent { .. } => "merge_ref_into_current",
         GitCommand::RebaseCurrentOntoRef { .. } => "rebase_current_onto_ref",
         GitCommand::FetchRemote { .. } => "fetch_remote",

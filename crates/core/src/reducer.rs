@@ -2257,6 +2257,50 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunGitCommand(job));
             }
         }
+        Action::OpenBranchGitFlowOptions => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(state, "Select a branch before opening git-flow options.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::BranchGitFlowOptions);
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenBranchPullRequestOptions => match selected_branch_pull_request_target(state) {
+            Ok(Some((repo_id, _, _))) => {
+                open_menu(state, repo_id, MenuOperation::BranchPullRequestOptions);
+                effects.push(Effect::ScheduleRender);
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::OpenBranchResetOptions => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(state, "Select a branch before opening reset options.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::BranchResetOptions);
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenBranchSortOptions => {
+            let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            else {
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::BranchSortOptions);
+            effects.push(Effect::ScheduleRender);
+        }
         Action::OpenBranchUpstreamOptions => {
             let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_branch_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
@@ -2284,6 +2328,24 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             enqueue_shell_job(state, &job, &format!("Copy {branch_name}"));
             effects.push(Effect::RunShellCommand(job));
         }
+        Action::ForceCheckoutSelectedBranch => match selected_non_head_branch_ref(state) {
+            Ok(Some((repo_id, target_ref))) => {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::ForceCheckoutRef {
+                        source_label: target_ref.clone(),
+                        target_ref,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
         Action::DeleteSelectedBranch => {
             if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_branch_item(repo_mode)
@@ -2370,6 +2432,112 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::OpenSelectedBranchPullRequest => match selected_branch_pull_request_target(state) {
+            Ok(Some((repo_id, url, label))) => {
+                let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &format!("Open pull request for {label}"));
+                effects.push(Effect::RunShellCommand(job));
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::CopySelectedBranchPullRequestUrl => {
+            match selected_branch_pull_request_target(state) {
+                Ok(Some((repo_id, url, label))) => {
+                    let command = clipboard_shell_command(std::ffi::OsStr::new(&url));
+                    let job = shell_job(repo_id, command);
+                    enqueue_shell_job(state, &job, &format!("Copy pull request URL for {label}"));
+                    effects.push(Effect::RunShellCommand(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CreateTagFromSelectedBranch => {
+            let Some((repo_id, target_ref, source_label)) =
+                state.repo_mode.as_ref().and_then(|repo_mode| {
+                    selected_branch_item(repo_mode).map(|branch| {
+                        (
+                            repo_mode.current_repo_id.clone(),
+                            branch.name.clone(),
+                            branch.name.clone(),
+                        )
+                    })
+                })
+            else {
+                push_warning(state, "Select a branch before creating a tag from it.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_input_prompt(
+                state,
+                repo_id,
+                InputPromptOperation::CreateTagFromRef {
+                    target_ref,
+                    source_label,
+                },
+            );
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::SetBranchSortMode(mode) => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.branch_sort_mode = mode;
+                sync_branch_selection(repo_mode);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::RunGitFlowFeatureFinish => {
+            if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) {
+                let command = format!("git flow feature finish {branch_name}");
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(
+                    state,
+                    &job,
+                    &format!("Finish git-flow feature {branch_name}"),
+                );
+                effects.push(Effect::RunShellCommand(job));
+            }
+        }
+        Action::RunGitFlowReleaseFinish => {
+            if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) {
+                let command = format!("git flow release finish {branch_name}");
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(
+                    state,
+                    &job,
+                    &format!("Finish git-flow release {branch_name}"),
+                );
+                effects.push(Effect::RunShellCommand(job));
+            }
+        }
+        Action::RunGitFlowHotfixFinish => {
+            if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) {
+                let command = format!("git flow hotfix finish {branch_name}");
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(
+                    state,
+                    &job,
+                    &format!("Finish git-flow hotfix {branch_name}"),
+                );
+                effects.push(Effect::RunShellCommand(job));
+            }
+        }
         Action::DeleteSelectedRemote => {
             if let Some((repo_id, remote_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_remote_item(repo_mode)
@@ -2426,6 +2594,48 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             let job = shell_job(repo_id, command);
             enqueue_shell_job(state, &job, &format!("Copy {branch_name}"));
             effects.push(Effect::RunShellCommand(job));
+        }
+        Action::OpenRemoteBranchPullRequestOptions => {
+            match selected_remote_branch_pull_request_target(state) {
+                Ok(Some((repo_id, _, _))) => {
+                    open_menu(
+                        state,
+                        repo_id,
+                        MenuOperation::RemoteBranchPullRequestOptions,
+                    );
+                    effects.push(Effect::ScheduleRender);
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::OpenRemoteBranchResetOptions => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_remote_branch_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(
+                    state,
+                    "Select a remote branch before opening reset options.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::RemoteBranchResetOptions);
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::OpenRemoteBranchSortOptions => {
+            let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            else {
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::RemoteBranchSortOptions);
+            effects.push(Effect::ScheduleRender);
         }
         Action::SetCurrentBranchUpstreamToSelectedRemoteBranch => {
             match selected_remote_branch_upstream_target(state) {
@@ -2484,6 +2694,72 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     push_warning(state, message);
                     effects.push(Effect::ScheduleRender);
                 }
+            }
+        }
+        Action::OpenSelectedRemoteBranchPullRequest => {
+            match selected_remote_branch_pull_request_target(state) {
+                Ok(Some((repo_id, url, label))) => {
+                    let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+                    let job = shell_job(repo_id, command);
+                    enqueue_shell_job(state, &job, &format!("Open pull request for {label}"));
+                    effects.push(Effect::RunShellCommand(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CopySelectedRemoteBranchPullRequestUrl => {
+            match selected_remote_branch_pull_request_target(state) {
+                Ok(Some((repo_id, url, label))) => {
+                    let command = clipboard_shell_command(std::ffi::OsStr::new(&url));
+                    let job = shell_job(repo_id, command);
+                    enqueue_shell_job(state, &job, &format!("Copy pull request URL for {label}"));
+                    effects.push(Effect::RunShellCommand(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CreateTagFromSelectedRemoteBranch => {
+            let Some((repo_id, target_ref, source_label)) =
+                state.repo_mode.as_ref().and_then(|repo_mode| {
+                    selected_remote_branch_item(repo_mode).map(|branch| {
+                        (
+                            repo_mode.current_repo_id.clone(),
+                            branch.name.clone(),
+                            branch.name.clone(),
+                        )
+                    })
+                })
+            else {
+                push_warning(
+                    state,
+                    "Select a remote branch before creating a tag from it.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_input_prompt(
+                state,
+                repo_id,
+                InputPromptOperation::CreateTagFromRef {
+                    target_ref,
+                    source_label,
+                },
+            );
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::SetRemoteBranchSortMode(mode) => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.remote_branch_sort_mode = mode;
+                sync_remote_branch_selection(repo_mode);
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::DeleteSelectedTag => {
@@ -3960,6 +4236,9 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
             branch_name,
             upstream_ref,
         } => format!("Fast-forward {branch_name} from {upstream_ref}"),
+        ConfirmableOperation::ForceCheckoutRef { source_label, .. } => {
+            format!("Force checkout {source_label}")
+        }
         ConfirmableOperation::MergeRefIntoCurrent { source_label, .. } => {
             format!("Merge {source_label} into current branch")
         }
@@ -4126,6 +4405,12 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Fast-forward current branch from upstream",
         ),
+        ConfirmableOperation::ForceCheckoutRef { target_ref, .. } => (
+            GitCommand::ForceCheckoutRef {
+                target_ref: target_ref.clone(),
+            },
+            "Force checkout selected ref",
+        ),
         ConfirmableOperation::MergeRefIntoCurrent { target_ref, .. } => (
             GitCommand::MergeRefIntoCurrent {
                 target_ref: target_ref.clone(),
@@ -4238,9 +4523,15 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CheckoutBranch => "Check out branch".to_string(),
         InputPromptOperation::CreateBranch => "Create branch".to_string(),
         InputPromptOperation::CreateRemote => "Add remote".to_string(),
+        InputPromptOperation::ForkRemote { suggested_name, .. } => {
+            format!("Fork remote into {suggested_name}")
+        }
         InputPromptOperation::CreateTag => "Create tag".to_string(),
         InputPromptOperation::CreateTagFromCommit { summary, .. } => {
             format!("New tag name from {summary}")
+        }
+        InputPromptOperation::CreateTagFromRef { source_label, .. } => {
+            format!("New tag name from {source_label}")
         }
         InputPromptOperation::CreateBranchFromCommit { summary, .. } => {
             format!("New branch name from {summary}")
@@ -4295,8 +4586,13 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CheckoutBranch => String::new(),
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::CreateRemote => String::new(),
+        InputPromptOperation::ForkRemote {
+            suggested_name,
+            remote_url,
+        } => format!("{suggested_name} {remote_url}"),
         InputPromptOperation::CreateTag => String::new(),
         InputPromptOperation::CreateTagFromCommit { .. } => String::new(),
+        InputPromptOperation::CreateTagFromRef { .. } => String::new(),
         InputPromptOperation::CreateBranchFromCommit { .. } => String::new(),
         InputPromptOperation::CreateBranchFromRemote { suggested_name, .. } => {
             suggested_name.clone()
@@ -4384,6 +4680,23 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
                 format!("Add remote {remote_name}"),
             )
         }
+        InputPromptOperation::ForkRemote { .. } => {
+            let Some((remote_name, remote_url)) = parse_remote_input(&value) else {
+                push_warning(state, "Enter remote details as: <name> <url>.");
+                state.pending_input_prompt = Some(pending);
+                return None;
+            };
+            (
+                PromptSubmission::Git(git_job(
+                    pending.repo_id.clone(),
+                    GitCommand::AddRemote {
+                        remote_name: remote_name.clone(),
+                        remote_url: remote_url.clone(),
+                    },
+                )),
+                format!("Add fork remote {remote_name}"),
+            )
+        }
         InputPromptOperation::CreateTag => (
             PromptSubmission::Git(git_job(
                 pending.repo_id.clone(),
@@ -4402,6 +4715,19 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
                 },
             )),
             format!("Create tag {value} from {summary}"),
+        ),
+        InputPromptOperation::CreateTagFromRef {
+            target_ref,
+            source_label,
+        } => (
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateTagFromCommit {
+                    tag_name: value.clone(),
+                    commit: target_ref,
+                },
+            )),
+            format!("Create tag {value} from {source_label}"),
         ),
         InputPromptOperation::CreateBranchFromCommit { commit, summary } => (
             PromptSubmission::Git(git_job(
@@ -4673,6 +4999,10 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::DiffOptions => "Diffing options",
         MenuOperation::CommitLogOptions => "Commit log options",
         MenuOperation::CommitCopyOptions => "Copy commit attribute",
+        MenuOperation::BranchGitFlowOptions => "Git-flow options",
+        MenuOperation::BranchPullRequestOptions => "Pull request options",
+        MenuOperation::BranchResetOptions => "Branch reset options",
+        MenuOperation::BranchSortOptions => "Branch sort options",
         MenuOperation::TagResetOptions => "Tag reset options",
         MenuOperation::ReflogResetOptions => "Reflog reset options",
         MenuOperation::CommitAmendAttributeOptions => "Amend commit attributes",
@@ -4680,6 +5010,9 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::BisectOptions => "Bisect options",
         MenuOperation::BranchUpstreamOptions => "Branch upstream options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
+        MenuOperation::RemoteBranchPullRequestOptions => "Remote branch pull request options",
+        MenuOperation::RemoteBranchResetOptions => "Remote branch reset options",
+        MenuOperation::RemoteBranchSortOptions => "Remote branch sort options",
         MenuOperation::IgnoreOptions => "Ignore options",
         MenuOperation::StatusResetOptions => "Reset options",
         MenuOperation::PatchOptions => "Patch options",
@@ -4696,6 +5029,10 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::CommitLogOptions => commit_log_menu_entries(state).len(),
         MenuOperation::CommitCopyOptions => 5,
+        MenuOperation::BranchGitFlowOptions => branch_git_flow_menu_entries(state).len(),
+        MenuOperation::BranchPullRequestOptions => branch_pull_request_menu_entries(state).len(),
+        MenuOperation::BranchResetOptions => branch_reset_menu_entries(state).len(),
+        MenuOperation::BranchSortOptions => branch_sort_menu_entries(state).len(),
         MenuOperation::TagResetOptions => tag_reset_menu_entries(state).len(),
         MenuOperation::ReflogResetOptions => reflog_reset_menu_entries(state).len(),
         MenuOperation::CommitAmendAttributeOptions => 2,
@@ -4703,6 +5040,11 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
         MenuOperation::BranchUpstreamOptions => branch_upstream_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
+        MenuOperation::RemoteBranchPullRequestOptions => {
+            remote_branch_pull_request_menu_entries(state).len()
+        }
+        MenuOperation::RemoteBranchResetOptions => remote_branch_reset_menu_entries(state).len(),
+        MenuOperation::RemoteBranchSortOptions => remote_branch_sort_menu_entries(state).len(),
         MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
         MenuOperation::StatusResetOptions => status_reset_menu_entries(state).len(),
         MenuOperation::PatchOptions => patch_menu_entries(state).len(),
@@ -4736,6 +5078,101 @@ fn branch_upstream_menu_entries(state: &AppState) -> Vec<MenuEntry> {
         MenuEntry {
             label: format!("Fast-forward current branch from upstream ({upstream_label})"),
             action: Action::FastForwardSelectedBranchFromUpstream,
+        },
+    ]
+}
+
+fn branch_git_flow_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_branch_item(repo_mode) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("git flow feature finish {}", branch.name),
+            action: Action::RunGitFlowFeatureFinish,
+        },
+        MenuEntry {
+            label: format!("git flow release finish {}", branch.name),
+            action: Action::RunGitFlowReleaseFinish,
+        },
+        MenuEntry {
+            label: format!("git flow hotfix finish {}", branch.name),
+            action: Action::RunGitFlowHotfixFinish,
+        },
+    ]
+}
+
+fn branch_pull_request_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Ok(Some((_, _, label))) = selected_branch_pull_request_target(state) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("Open pull request for {label}"),
+            action: Action::OpenSelectedBranchPullRequest,
+        },
+        MenuEntry {
+            label: format!("Copy pull request URL for {label}"),
+            action: Action::CopySelectedBranchPullRequestUrl,
+        },
+    ]
+}
+
+fn branch_reset_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_branch_item(repo_mode) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("Soft reset to {}", branch.name),
+            action: Action::SoftResetToSelectedCommit,
+        },
+        MenuEntry {
+            label: format!("Mixed reset to {}", branch.name),
+            action: Action::MixedResetToSelectedCommit,
+        },
+        MenuEntry {
+            label: format!("Hard reset to {}", branch.name),
+            action: Action::HardResetToSelectedCommit,
+        },
+    ]
+}
+
+fn branch_sort_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let current = state
+        .repo_mode
+        .as_ref()
+        .map_or(crate::state::BranchSortMode::Natural, |repo_mode| {
+            repo_mode.branch_sort_mode
+        });
+    vec![
+        MenuEntry {
+            label: format!(
+                "Natural order{}",
+                if current == crate::state::BranchSortMode::Natural {
+                    " (current)"
+                } else {
+                    ""
+                }
+            ),
+            action: Action::SetBranchSortMode(crate::state::BranchSortMode::Natural),
+        },
+        MenuEntry {
+            label: format!(
+                "Sort by branch name{}",
+                if current == crate::state::BranchSortMode::Name {
+                    " (current)"
+                } else {
+                    ""
+                }
+            ),
+            action: Action::SetBranchSortMode(crate::state::BranchSortMode::Name),
         },
     ]
 }
@@ -4787,6 +5224,78 @@ fn reflog_reset_menu_entries(state: &AppState) -> Vec<MenuEntry> {
         MenuEntry {
             label: format!("Hard reset to {target}"),
             action: Action::HardResetToSelectedCommit,
+        },
+    ]
+}
+
+fn remote_branch_pull_request_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Ok(Some((_, _, label))) = selected_remote_branch_pull_request_target(state) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("Open pull request for {label}"),
+            action: Action::OpenSelectedRemoteBranchPullRequest,
+        },
+        MenuEntry {
+            label: format!("Copy pull request URL for {label}"),
+            action: Action::CopySelectedRemoteBranchPullRequestUrl,
+        },
+    ]
+}
+
+fn remote_branch_reset_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_remote_branch_item(repo_mode) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("Soft reset to {}", branch.name),
+            action: Action::SoftResetToSelectedCommit,
+        },
+        MenuEntry {
+            label: format!("Mixed reset to {}", branch.name),
+            action: Action::MixedResetToSelectedCommit,
+        },
+        MenuEntry {
+            label: format!("Hard reset to {}", branch.name),
+            action: Action::HardResetToSelectedCommit,
+        },
+    ]
+}
+
+fn remote_branch_sort_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let current = state
+        .repo_mode
+        .as_ref()
+        .map_or(crate::state::RemoteBranchSortMode::Natural, |repo_mode| {
+            repo_mode.remote_branch_sort_mode
+        });
+    vec![
+        MenuEntry {
+            label: format!(
+                "Natural order{}",
+                if current == crate::state::RemoteBranchSortMode::Natural {
+                    " (current)"
+                } else {
+                    ""
+                }
+            ),
+            action: Action::SetRemoteBranchSortMode(crate::state::RemoteBranchSortMode::Natural),
+        },
+        MenuEntry {
+            label: format!(
+                "Sort by branch name{}",
+                if current == crate::state::RemoteBranchSortMode::Name {
+                    " (current)"
+                } else {
+                    ""
+                }
+            ),
+            action: Action::SetRemoteBranchSortMode(crate::state::RemoteBranchSortMode::Name),
         },
     ]
 }
@@ -5155,6 +5664,78 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
             reduce_action(state, action, effects);
             true
         }
+        MenuOperation::BranchGitFlowOptions => {
+            let entries = branch_git_flow_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::BranchPullRequestOptions => {
+            let entries = branch_pull_request_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::BranchResetOptions => {
+            let entries = branch_reset_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::BranchSortOptions => {
+            let entries = branch_sort_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
         MenuOperation::BranchUpstreamOptions => {
             let entries = branch_upstream_menu_entries(state);
             let Some(action) = entries
@@ -5193,6 +5774,60 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
         }
         MenuOperation::MergeRebaseOptions => {
             let entries = merge_rebase_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::RemoteBranchPullRequestOptions => {
+            let entries = remote_branch_pull_request_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::RemoteBranchResetOptions => {
+            let entries = remote_branch_reset_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::RemoteBranchSortOptions => {
+            let entries = remote_branch_sort_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -6530,6 +7165,24 @@ fn commit_browser_url_for_remote(remote_url: &str, commit_oid: &str) -> Option<S
     ))
 }
 
+fn pull_request_url_for_remote(remote_url: &str, branch_name: &str) -> Option<String> {
+    let (host, repo_path) = parse_remote_browser_root(remote_url)?;
+    let branch_name = url_encode_component(branch_name);
+    if host.contains("gitlab") {
+        return Some(format!(
+            "https://{host}/{repo_path}/-/merge_requests/new?merge_request[source_branch]={branch_name}"
+        ));
+    }
+    if host.contains("bitbucket") {
+        return Some(format!(
+            "https://{host}/{repo_path}/pull-requests/new?source={branch_name}"
+        ));
+    }
+    Some(format!(
+        "https://{host}/{repo_path}/compare/{branch_name}?expand=1"
+    ))
+}
+
 fn parse_remote_browser_root(remote_url: &str) -> Option<(String, String)> {
     let remote_url = remote_url.trim();
     if remote_url.is_empty() {
@@ -6576,6 +7229,19 @@ fn normalize_remote_repo_path(path: &str) -> Option<String> {
     } else {
         Some(normalized.to_string())
     }
+}
+
+fn url_encode_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn external_difftool_command(path: &std::path::Path, pane: PaneId) -> String {
@@ -6811,6 +7477,80 @@ fn selected_remote_branch_item(
         .filter(|index| visible_indices.contains(index))
         .or_else(|| visible_indices.first().copied())?;
     detail.remote_branches.get(selected_index)
+}
+
+fn selected_branch_pull_request_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    let Some(branch) = selected_branch_item(repo_mode) else {
+        return Err("Select a branch before opening pull request options.".to_string());
+    };
+    let Some(url) = detail
+        .remotes
+        .iter()
+        .filter(|remote| remote.name == "origin")
+        .chain(
+            detail
+                .remotes
+                .iter()
+                .filter(|remote| remote.name != "origin"),
+        )
+        .find_map(|remote| {
+            pull_request_url_for_remote(&remote.fetch_url, &branch.name)
+                .or_else(|| pull_request_url_for_remote(&remote.push_url, &branch.name))
+        })
+    else {
+        return Err("No browser-compatible remote URL found for the selected branch.".to_string());
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        url,
+        branch.name.clone(),
+    )))
+}
+
+fn selected_remote_branch_pull_request_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    let Some(branch) = selected_remote_branch_item(repo_mode) else {
+        return Err("Select a remote branch before opening pull request options.".to_string());
+    };
+    let Some(url) = detail
+        .remotes
+        .iter()
+        .filter(|remote| remote.name == branch.remote_name)
+        .chain(
+            detail
+                .remotes
+                .iter()
+                .filter(|remote| remote.name != branch.remote_name),
+        )
+        .find_map(|remote| {
+            pull_request_url_for_remote(&remote.fetch_url, &branch.branch_name)
+                .or_else(|| pull_request_url_for_remote(&remote.push_url, &branch.branch_name))
+        })
+    else {
+        return Err(
+            "No browser-compatible remote URL found for the selected remote branch.".to_string(),
+        );
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        url,
+        branch.name.clone(),
+    )))
 }
 
 fn current_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::BranchItem> {
@@ -7081,6 +7821,26 @@ fn pending_checkoutable_history_target(
     }
 
     match repo_mode.active_subview {
+        crate::state::RepoSubview::Branches => {
+            let Some(branch) = selected_branch_item(repo_mode) else {
+                return Ok(None);
+            };
+            Ok(Some((
+                repo_mode.current_repo_id.clone(),
+                branch.name.clone(),
+                format!("branch {}", branch.name),
+            )))
+        }
+        crate::state::RepoSubview::RemoteBranches => {
+            let Some(branch) = selected_remote_branch_item(repo_mode) else {
+                return Ok(None);
+            };
+            Ok(Some((
+                repo_mode.current_repo_id.clone(),
+                branch.name.clone(),
+                format!("remote branch {}", branch.name),
+            )))
+        }
         crate::state::RepoSubview::Reflog => {
             let Some((_, entry)) = selected_reflog_entry(repo_mode) else {
                 return Ok(None);
@@ -7693,17 +8453,27 @@ fn filtered_branch_indices(repo_mode: &RepoModeState) -> Vec<usize> {
     let Some(detail) = repo_mode.detail.as_ref() else {
         return Vec::new();
     };
-    let Some(query) = repo_mode.branches_filter.active_query() else {
-        return (0..detail.branches.len()).collect();
-    };
-    detail
+    let mut indices: Vec<_> = detail
         .branches
         .iter()
         .enumerate()
         .filter_map(|(index, branch)| {
-            crate::state::branch_matches_filter(branch, &query).then_some(index)
+            repo_mode
+                .branches_filter
+                .active_query()
+                .is_none_or(|query| crate::state::branch_matches_filter(branch, &query))
+                .then_some(index)
         })
-        .collect()
+        .collect();
+    if repo_mode.branch_sort_mode == crate::state::BranchSortMode::Name {
+        indices.sort_by(|left, right| {
+            detail.branches[*left]
+                .name
+                .cmp(&detail.branches[*right].name)
+                .then_with(|| left.cmp(right))
+        });
+    }
+    indices
 }
 
 fn filtered_remote_indices(repo_mode: &RepoModeState) -> Vec<usize> {
@@ -7727,17 +8497,27 @@ fn filtered_remote_branch_indices(repo_mode: &RepoModeState) -> Vec<usize> {
     let Some(detail) = repo_mode.detail.as_ref() else {
         return Vec::new();
     };
-    let Some(query) = repo_mode.remote_branches_filter.active_query() else {
-        return (0..detail.remote_branches.len()).collect();
-    };
-    detail
+    let mut indices: Vec<_> = detail
         .remote_branches
         .iter()
         .enumerate()
         .filter_map(|(index, branch)| {
-            crate::state::remote_branch_matches_filter(branch, &query).then_some(index)
+            repo_mode
+                .remote_branches_filter
+                .active_query()
+                .is_none_or(|query| crate::state::remote_branch_matches_filter(branch, &query))
+                .then_some(index)
         })
-        .collect()
+        .collect();
+    if repo_mode.remote_branch_sort_mode == crate::state::RemoteBranchSortMode::Name {
+        indices.sort_by(|left, right| {
+            detail.remote_branches[*left]
+                .name
+                .cmp(&detail.remote_branches[*right].name)
+                .then_with(|| left.cmp(right))
+        });
+    }
+    indices
 }
 
 fn filtered_tag_indices(repo_mode: &RepoModeState) -> Vec<usize> {
@@ -8227,6 +9007,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CreateBranchFromCommit { .. } => "create-branch-from-commit",
         GitCommand::CreateBranchFromRef { .. } => "create-branch-from-ref",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
+        GitCommand::ForceCheckoutRef { .. } => "force-checkout-ref",
         GitCommand::CheckoutRemoteBranch { .. } => "checkout-remote-branch",
         GitCommand::CheckoutTag { .. } => "checkout-tag",
         GitCommand::CheckoutCommit { .. } => "checkout-commit",

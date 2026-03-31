@@ -1021,9 +1021,54 @@ impl TuiApp {
                             "copy_selected_branch_name",
                             raw,
                             normalized,
-                            &["y"],
+                            &["y", "ctrl+o"],
                         ) {
                             return Some(Action::CopySelectedBranchName);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_branch_pull_request_options",
+                            raw,
+                            normalized,
+                            &["o"],
+                        ) {
+                            return Some(Action::OpenBranchPullRequestOptions);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_branch_reset_options",
+                            raw,
+                            normalized,
+                            &["g"],
+                        ) {
+                            return Some(Action::OpenBranchResetOptions);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_branch_sort_options",
+                            raw,
+                            normalized,
+                            &["s"],
+                        ) {
+                            return Some(Action::OpenBranchSortOptions);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_branch_git_flow_options",
+                            raw,
+                            normalized,
+                            &["G"],
+                        ) {
+                            return Some(Action::OpenBranchGitFlowOptions);
+                        }
+
+                        if self.binding_matches_action(
+                            "force_checkout_selected_branch",
+                            raw,
+                            normalized,
+                            &["F"],
+                        ) {
+                            return Some(Action::ForceCheckoutSelectedBranch);
                         }
 
                         if self.binding_matches_action(
@@ -1042,6 +1087,15 @@ impl TuiApp {
                             &["M"],
                         ) {
                             return Some(Action::MergeSelectedBranchIntoCurrent);
+                        }
+
+                        if self.binding_matches_action(
+                            "create_tag_from_selected_branch",
+                            raw,
+                            normalized,
+                            &["T"],
+                        ) {
+                            return Some(Action::CreateTagFromSelectedBranch);
                         }
                     }
                     RepoSubview::Remotes => {
@@ -1120,6 +1174,28 @@ impl TuiApp {
                         ) {
                             return Some(Action::FetchSelectedRemote);
                         }
+
+                        if self.binding_matches_action(
+                            "open_fork_remote_prompt",
+                            raw,
+                            normalized,
+                            &["F"],
+                        ) {
+                            if let Some(remote) = selected_remote(
+                                repo_mode.detail.as_ref(),
+                                repo_mode.remotes_view.selected_index,
+                            ) {
+                                return Some(Action::OpenInputPrompt {
+                                    operation:
+                                        super_lazygit_core::InputPromptOperation::ForkRemote {
+                                            suggested_name: fork_remote_suggested_name(
+                                                &remote.name,
+                                            ),
+                                            remote_url: remote.fetch_url.clone(),
+                                        },
+                                });
+                            }
+                        }
                     }
                     RepoSubview::RemoteBranches => {
                         if self.binding_matches_action(
@@ -1191,9 +1267,36 @@ impl TuiApp {
                             "copy_selected_remote_branch_name",
                             raw,
                             normalized,
-                            &["y"],
+                            &["y", "ctrl+o"],
                         ) {
                             return Some(Action::CopySelectedRemoteBranchName);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_remote_branch_pull_request_options",
+                            raw,
+                            normalized,
+                            &["o"],
+                        ) {
+                            return Some(Action::OpenRemoteBranchPullRequestOptions);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_remote_branch_reset_options",
+                            raw,
+                            normalized,
+                            &["g"],
+                        ) {
+                            return Some(Action::OpenRemoteBranchResetOptions);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_remote_branch_sort_options",
+                            raw,
+                            normalized,
+                            &["s"],
+                        ) {
+                            return Some(Action::OpenRemoteBranchSortOptions);
                         }
 
                         if self.binding_matches_action(
@@ -1221,6 +1324,15 @@ impl TuiApp {
                             &["M"],
                         ) {
                             return Some(Action::MergeSelectedRemoteBranchIntoCurrent);
+                        }
+
+                        if self.binding_matches_action(
+                            "create_tag_from_selected_remote_branch",
+                            raw,
+                            normalized,
+                            &["T"],
+                        ) {
+                            return Some(Action::CreateTagFromSelectedRemoteBranch);
                         }
                     }
                     RepoSubview::Tags => {
@@ -2979,6 +3091,7 @@ impl TuiApp {
                     repo_mode.comparison_base.as_ref(),
                     repo_mode.comparison_target.as_ref(),
                     repo_mode.comparison_source,
+                    repo_mode.branch_sort_mode,
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
@@ -3005,6 +3118,7 @@ impl TuiApp {
                     repo_mode
                         .subview_filter(RepoSubview::RemoteBranches)
                         .is_some_and(|filter| filter.focused),
+                    repo_mode.remote_branch_sort_mode,
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
@@ -3765,6 +3879,7 @@ fn repo_branch_lines(
     comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
     comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
     comparison_source: Option<RepoSubview>,
+    branch_sort_mode: super_lazygit_core::BranchSortMode,
     is_focused: bool,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -3780,7 +3895,7 @@ fn repo_branch_lines(
         ];
     };
 
-    let visible_indices = visible_branch_indices(detail, filter_query);
+    let visible_indices = visible_branch_indices(detail, filter_query, branch_sort_mode);
     if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
@@ -3841,10 +3956,10 @@ fn repo_branch_lines(
             comparison_target,
             comparison_source,
         )),
-        Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
-        Line::from("Other: - previous. c checkout by name. n create. R rename."),
-        Line::from("       d delete. u upstream menu. y copy. r rebase current."),
-        Line::from("       M merge into current. v compare."),
+        Line::from("Context: Enter commits. Space checkout. F force checkout. 0 main. / filter."),
+        Line::from("Other: w worktrees. - previous. c checkout by name. n create. R rename."),
+        Line::from("       d delete. u upstream. o pull request. g reset. s sort. G git-flow."),
+        Line::from("       y/Ctrl+O copy. r rebase current. M merge current. T tag. v compare."),
         Line::from(""),
     ]);
 
@@ -3862,6 +3977,7 @@ fn repo_remote_branch_lines(
     selected_index: Option<usize>,
     filter_query: &str,
     filter_focused: bool,
+    remote_branch_sort_mode: super_lazygit_core::RemoteBranchSortMode,
     is_focused: bool,
     theme: Theme,
 ) -> Vec<Line<'static>> {
@@ -3877,7 +3993,8 @@ fn repo_remote_branch_lines(
         ];
     };
 
-    let visible_indices = visible_remote_branch_indices(detail, filter_query);
+    let visible_indices =
+        visible_remote_branch_indices(detail, filter_query, remote_branch_sort_mode);
     if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
@@ -3927,8 +4044,9 @@ fn repo_remote_branch_lines(
     }
     lines.extend([
         Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
-        Line::from("Other: n create local branch. d delete remote branch. y copy."),
-        Line::from("       u set upstream. r rebase current. M merge into current."),
+        Line::from("Other: n create local branch. d delete remote branch. o pull request."),
+        Line::from("       g reset. s sort. y/Ctrl+O copy. u set upstream."),
+        Line::from("       r rebase current. M merge current. T tag."),
         Line::from(""),
     ]);
 
@@ -4020,7 +4138,7 @@ fn repo_remote_lines(
     }
     lines.extend([
         Line::from("Context: Enter branches. f fetch. 0 main. / filter. w worktrees."),
-        Line::from("Other: n new remote. e edit remote. d remove remote."),
+        Line::from("Other: n new remote. e edit remote. d remove remote. F fork remote."),
         Line::from(""),
     ]);
 
@@ -4211,6 +4329,14 @@ fn selected_remote(
         .filter(|index| *index < detail.remotes.len())
         .unwrap_or(0);
     detail.remotes.get(selected_index)
+}
+
+fn fork_remote_suggested_name(remote_name: &str) -> String {
+    if remote_name == "origin" {
+        "upstream".to_string()
+    } else {
+        format!("{remote_name}-fork")
+    }
 }
 
 fn selected_remote_branch(
@@ -5027,19 +5153,31 @@ fn repo_commit_file_diff_lines(
     lines
 }
 
-fn visible_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+fn visible_branch_indices(
+    detail: &RepoDetail,
+    filter_query: &str,
+    branch_sort_mode: super_lazygit_core::BranchSortMode,
+) -> Vec<usize> {
     let normalized = super_lazygit_core::normalize_search_text(filter_query);
-    if normalized.is_empty() {
-        return (0..detail.branches.len()).collect();
-    }
-    detail
+    let mut indices: Vec<_> = detail
         .branches
         .iter()
         .enumerate()
         .filter_map(|(index, branch)| {
-            super_lazygit_core::branch_matches_filter(branch, &normalized).then_some(index)
+            (normalized.is_empty()
+                || super_lazygit_core::branch_matches_filter(branch, &normalized))
+            .then_some(index)
         })
-        .collect()
+        .collect();
+    if branch_sort_mode == super_lazygit_core::BranchSortMode::Name {
+        indices.sort_by(|left, right| {
+            detail.branches[*left]
+                .name
+                .cmp(&detail.branches[*right].name)
+                .then_with(|| left.cmp(right))
+        });
+    }
+    indices
 }
 
 fn visible_remote_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
@@ -5057,19 +5195,31 @@ fn visible_remote_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize>
         .collect()
 }
 
-fn visible_remote_branch_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
+fn visible_remote_branch_indices(
+    detail: &RepoDetail,
+    filter_query: &str,
+    remote_branch_sort_mode: super_lazygit_core::RemoteBranchSortMode,
+) -> Vec<usize> {
     let normalized = super_lazygit_core::normalize_search_text(filter_query);
-    if normalized.is_empty() {
-        return (0..detail.remote_branches.len()).collect();
-    }
-    detail
+    let mut indices: Vec<_> = detail
         .remote_branches
         .iter()
         .enumerate()
         .filter_map(|(index, branch)| {
-            super_lazygit_core::remote_branch_matches_filter(branch, &normalized).then_some(index)
+            (normalized.is_empty()
+                || super_lazygit_core::remote_branch_matches_filter(branch, &normalized))
+            .then_some(index)
         })
-        .collect()
+        .collect();
+    if remote_branch_sort_mode == super_lazygit_core::RemoteBranchSortMode::Name {
+        indices.sort_by(|left, right| {
+            detail.remote_branches[*left]
+                .name
+                .cmp(&detail.remote_branches[*right].name)
+                .then_with(|| left.cmp(right))
+        });
+    }
+    indices
 }
 
 fn visible_tag_indices(detail: &RepoDetail, filter_query: &str) -> Vec<usize> {
@@ -5781,6 +5931,12 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         } => format!(
             "Merge {source_label} into the current branch? This runs git merge {target_ref}."
         ),
+        super_lazygit_core::ConfirmableOperation::ForceCheckoutRef {
+            source_label,
+            target_ref,
+        } => format!(
+            "Force-checkout {source_label}? This runs git checkout -f {target_ref} and discards tracked working tree changes in the current checkout."
+        ),
         super_lazygit_core::ConfirmableOperation::RebaseCurrentBranchOntoRef {
             source_label,
             target_ref,
@@ -5873,12 +6029,21 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             "Enter remote details as: <name> <url>. Example: upstream git@github.com:owner/repo.git."
                 .to_string()
         }
+        super_lazygit_core::InputPromptOperation::ForkRemote {
+            suggested_name,
+            remote_url,
+        } => format!(
+            "Enter fork remote details as: <name> <url>. The prompt starts from {suggested_name} {remote_url} so you can keep or adjust both values before adding the remote."
+        ),
         super_lazygit_core::InputPromptOperation::CreateTag => {
             "Enter the new tag name. The tag will be created at the current HEAD.".to_string()
         }
         super_lazygit_core::InputPromptOperation::CreateTagFromCommit { summary, .. } => format!(
             "Enter the new tag name. The tag will be created from {summary}."
         ),
+        super_lazygit_core::InputPromptOperation::CreateTagFromRef { source_label, .. } => {
+            format!("Enter the new tag name. The tag will be created from {source_label}.")
+        }
         super_lazygit_core::InputPromptOperation::CreateBranchFromCommit {
             summary, ..
         } => format!(
@@ -5992,6 +6157,18 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::CommitLogOptions => {
             "Switch the commits panel between current-branch history and the whole-repository graph."
         }
+        super_lazygit_core::MenuOperation::BranchGitFlowOptions => {
+            "Run one of the shipped git-flow finish commands for the selected branch."
+        }
+        super_lazygit_core::MenuOperation::BranchPullRequestOptions => {
+            "Open or copy the browser pull request URL for the selected branch."
+        }
+        super_lazygit_core::MenuOperation::BranchResetOptions => {
+            "Choose how aggressively to reset the current branch to the selected branch ref."
+        }
+        super_lazygit_core::MenuOperation::BranchSortOptions => {
+            "Choose how the branch list should be ordered in this repository view."
+        }
         super_lazygit_core::MenuOperation::CommitCopyOptions => {
             "Choose which selected commit attribute to copy to the clipboard."
         }
@@ -6021,6 +6198,15 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         }
         super_lazygit_core::MenuOperation::StatusResetOptions => {
             "Choose how aggressively to reset the current branch against its configured upstream."
+        }
+        super_lazygit_core::MenuOperation::RemoteBranchPullRequestOptions => {
+            "Open or copy the browser pull request URL for the selected remote branch."
+        }
+        super_lazygit_core::MenuOperation::RemoteBranchResetOptions => {
+            "Choose how aggressively to reset the current branch to the selected remote branch ref."
+        }
+        super_lazygit_core::MenuOperation::RemoteBranchSortOptions => {
+            "Choose how the remote-branch list should be ordered in this repository view."
         }
         super_lazygit_core::MenuOperation::PatchOptions => {
             "Jump directly into the shipped hunk/line patch flows for the current status diff."
@@ -6053,6 +6239,14 @@ fn menu_lines(
         super_lazygit_core::MenuOperation::FilterOptions => filter_menu_lines(state),
         super_lazygit_core::MenuOperation::DiffOptions => diff_menu_lines(state),
         super_lazygit_core::MenuOperation::CommitLogOptions => commit_log_menu_lines(state),
+        super_lazygit_core::MenuOperation::BranchGitFlowOptions => {
+            branch_git_flow_menu_lines(state)
+        }
+        super_lazygit_core::MenuOperation::BranchPullRequestOptions => {
+            branch_pull_request_menu_lines(state)
+        }
+        super_lazygit_core::MenuOperation::BranchResetOptions => branch_reset_menu_lines(state),
+        super_lazygit_core::MenuOperation::BranchSortOptions => branch_sort_menu_lines(state),
         super_lazygit_core::MenuOperation::CommitCopyOptions => vec![
             "Copy short hash".to_string(),
             "Copy full hash".to_string(),
@@ -6090,6 +6284,15 @@ fn menu_lines(
             "Add selected path to .git/info/exclude".to_string(),
         ],
         super_lazygit_core::MenuOperation::StatusResetOptions => status_reset_menu_lines(state),
+        super_lazygit_core::MenuOperation::RemoteBranchPullRequestOptions => {
+            remote_branch_pull_request_menu_lines(state)
+        }
+        super_lazygit_core::MenuOperation::RemoteBranchResetOptions => {
+            remote_branch_reset_menu_lines(state)
+        }
+        super_lazygit_core::MenuOperation::RemoteBranchSortOptions => {
+            remote_branch_sort_menu_lines(state)
+        }
         super_lazygit_core::MenuOperation::PatchOptions => patch_menu_lines(state),
         super_lazygit_core::MenuOperation::SubmoduleOptions => vec![
             "Copy selected submodule".to_string(),
@@ -6353,6 +6556,83 @@ fn commit_log_menu_lines(state: &AppState) -> Vec<String> {
     ]
 }
 
+fn branch_git_flow_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_branch(
+        repo_mode.detail.as_ref(),
+        repo_mode.branches_view.selected_index,
+    ) else {
+        return Vec::new();
+    };
+    vec![
+        format!("git flow feature finish {}", branch.name),
+        format!("git flow release finish {}", branch.name),
+        format!("git flow hotfix finish {}", branch.name),
+    ]
+}
+
+fn branch_pull_request_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_branch(
+        repo_mode.detail.as_ref(),
+        repo_mode.branches_view.selected_index,
+    ) else {
+        return Vec::new();
+    };
+    vec![
+        format!("Open pull request for {}", branch.name),
+        format!("Copy pull request URL for {}", branch.name),
+    ]
+}
+
+fn branch_reset_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_branch(
+        repo_mode.detail.as_ref(),
+        repo_mode.branches_view.selected_index,
+    ) else {
+        return Vec::new();
+    };
+    vec![
+        format!("Soft reset to {}", branch.name),
+        format!("Mixed reset to {}", branch.name),
+        format!("Hard reset to {}", branch.name),
+    ]
+}
+
+fn branch_sort_menu_lines(state: &AppState) -> Vec<String> {
+    let current = state
+        .repo_mode
+        .as_ref()
+        .map_or(super_lazygit_core::BranchSortMode::Natural, |repo_mode| {
+            repo_mode.branch_sort_mode
+        });
+    vec![
+        format!(
+            "Natural order{}",
+            if current == super_lazygit_core::BranchSortMode::Natural {
+                " (current)"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "Sort by branch name{}",
+            if current == super_lazygit_core::BranchSortMode::Name {
+                " (current)"
+            } else {
+                ""
+            }
+        ),
+    ]
+}
+
 fn diff_menu_selected_target(
     repo_mode: &RepoModeState,
 ) -> Option<super_lazygit_core::ComparisonTarget> {
@@ -6434,6 +6714,64 @@ fn merge_rebase_menu_lines(state: &AppState) -> Vec<String> {
     );
 
     entries
+}
+
+fn remote_branch_pull_request_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_remote_branch(
+        repo_mode.detail.as_ref(),
+        repo_mode.remote_branches_view.selected_index,
+    ) else {
+        return Vec::new();
+    };
+    vec![
+        format!("Open pull request for {}", branch.name),
+        format!("Copy pull request URL for {}", branch.name),
+    ]
+}
+
+fn remote_branch_reset_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_remote_branch(
+        repo_mode.detail.as_ref(),
+        repo_mode.remote_branches_view.selected_index,
+    ) else {
+        return Vec::new();
+    };
+    vec![
+        format!("Soft reset to {}", branch.name),
+        format!("Mixed reset to {}", branch.name),
+        format!("Hard reset to {}", branch.name),
+    ]
+}
+
+fn remote_branch_sort_menu_lines(state: &AppState) -> Vec<String> {
+    let current = state.repo_mode.as_ref().map_or(
+        super_lazygit_core::RemoteBranchSortMode::Natural,
+        |repo_mode| repo_mode.remote_branch_sort_mode,
+    );
+    vec![
+        format!(
+            "Natural order{}",
+            if current == super_lazygit_core::RemoteBranchSortMode::Natural {
+                " (current)"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "Sort by branch name{}",
+            if current == super_lazygit_core::RemoteBranchSortMode::Name {
+                " (current)"
+            } else {
+                ""
+            }
+        ),
+    ]
 }
 
 fn bisect_menu_lines(state: &AppState) -> Vec<String> {
@@ -7016,11 +7354,11 @@ fn repo_help_text(state: &AppState) -> String {
                 if repo_mode.active_subview == RepoSubview::Status {
                     "Status diff pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Enter apply hunk  Ctrl+P patch menu  o open config  e edit config  u check updates  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream menu  y copy  r rebase current  M merge into current  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  F force checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  - previous  c create/checkout  R rename  d delete  u upstream menu  o pull request menu  g reset menu  s sort menu  G git-flow menu  y/Ctrl+O copy  r rebase current  M merge into current  T tag  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
-                    "Remotes pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter branches  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Remotes pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter branches  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  F fork remote  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::RemoteBranches {
-                    "Remote branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  n local branch  d delete  y copy  u set upstream  r rebase current  M merge into current  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Remote branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  n local branch  d delete  o pull request menu  g reset menu  s sort menu  y/Ctrl+O copy  u set upstream  r rebase current  M merge into current  T tag  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+O copy tag  g reset menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
@@ -11035,6 +11373,75 @@ mod tests {
             ) if command.contains("feature")
         )));
 
+        let mut copy_alias_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let copied_alias =
+            copy_alias_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "ctrl+o".to_string(),
+            })));
+        assert!(copied_alias.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            ) if command.contains("feature")
+        )));
+
+        let mut pr_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let pr_menu = pr_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert_eq!(pr_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            pr_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::BranchPullRequestOptions)
+        );
+
+        let mut reset_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let reset_menu = reset_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert_eq!(reset_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            reset_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::BranchResetOptions)
+        );
+
+        let mut sort_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let sort_menu = sort_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "s".to_string(),
+        })));
+        assert_eq!(sort_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            sort_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::BranchSortOptions)
+        );
+
+        let mut git_flow_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let git_flow_menu =
+            git_flow_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "G".to_string(),
+            })));
+        assert_eq!(git_flow_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            git_flow_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::BranchGitFlowOptions)
+        );
+
         let mut rebase_app = TuiApp::new(down.state.clone(), AppConfig::default());
         let rebase = rebase_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "r".to_string(),
@@ -11071,6 +11478,43 @@ mod tests {
                     source_label: "feature".to_string(),
                 }
             )
+        );
+
+        let mut force_checkout_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let force_checkout =
+            force_checkout_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "F".to_string(),
+            })));
+        assert_eq!(force_checkout.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            force_checkout
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::ForceCheckoutRef {
+                target_ref: "feature".to_string(),
+                source_label: "feature".to_string(),
+            })
+        );
+
+        let mut tag_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let tag = tag_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "T".to_string(),
+        })));
+        assert_eq!(tag.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            tag.state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CreateTagFromRef {
+                    target_ref: "feature".to_string(),
+                    source_label: "feature".to_string(),
+                },
+                ""
+            ))
         );
 
         let rename = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
@@ -11198,6 +11642,25 @@ mod tests {
             Some(super_lazygit_core::ConfirmableOperation::FetchRemote {
                 remote_name: "upstream".to_string(),
             })
+        );
+
+        let mut fork_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let fork = fork_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "F".to_string(),
+        })));
+        assert_eq!(fork.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            fork.state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::ForkRemote {
+                    suggested_name: "upstream-fork".to_string(),
+                    remote_url: "git@github.com:example/upstream.git".to_string(),
+                },
+                "upstream-fork git@github.com:example/upstream.git"
+            ))
         );
 
         let mut delete_app = TuiApp::new(down.state.clone(), AppConfig::default());
@@ -11373,6 +11836,60 @@ mod tests {
             ) if command.contains("origin/feature")
         )));
 
+        let mut copy_alias_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let copied_alias =
+            copy_alias_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "ctrl+o".to_string(),
+            })));
+        assert!(copied_alias.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            ) if command.contains("origin/feature")
+        )));
+
+        let mut pr_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let pr_menu = pr_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert_eq!(pr_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            pr_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::RemoteBranchPullRequestOptions)
+        );
+
+        let mut reset_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let reset_menu = reset_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert_eq!(reset_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            reset_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::RemoteBranchResetOptions)
+        );
+
+        let mut sort_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let sort_menu = sort_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "s".to_string(),
+        })));
+        assert_eq!(sort_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            sort_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::RemoteBranchSortOptions)
+        );
+
         let mut upstream_app = TuiApp::new(down.state.clone(), AppConfig::default());
         let upstream = upstream_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "u".to_string(),
@@ -11424,6 +11941,25 @@ mod tests {
                     source_label: "origin/feature".to_string(),
                 }
             )
+        );
+
+        let mut tag_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let tag = tag_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "T".to_string(),
+        })));
+        assert_eq!(tag.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            tag.state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| (&prompt.operation, prompt.value.as_str())),
+            Some((
+                &super_lazygit_core::InputPromptOperation::CreateTagFromRef {
+                    target_ref: "origin/feature".to_string(),
+                    source_label: "origin/feature".to_string(),
+                },
+                ""
+            ))
         );
     }
 
@@ -13597,7 +14133,7 @@ mod tests {
             },
         );
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(100, 18);
+        app.resize(140, 18);
 
         let rendered = app.render_to_string();
 
@@ -13662,7 +14198,7 @@ mod tests {
             },
         );
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(100, 18);
+        app.resize(140, 18);
 
         let rendered = app.render_to_string();
 
@@ -13708,7 +14244,7 @@ mod tests {
             },
         );
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(100, 18);
+        app.resize(140, 18);
 
         let rendered = app.render_to_string();
 
@@ -13717,13 +14253,25 @@ mod tests {
         assert!(rendered.contains("Context: Enter commits. Space checkout."));
         assert!(rendered.contains("checkout by name"));
         assert!(rendered.contains("u upstream"));
+        assert!(rendered.contains("F force checkout"));
+        assert!(rendered.contains("o pull request"));
+        assert!(rendered.contains("g reset"));
+        assert!(rendered.contains("s sort"));
+        assert!(rendered.contains("G git-flow"));
+        assert!(rendered.contains("T tag"));
         assert!(rendered.contains("* main"));
         assert!(rendered.contains("feature"));
         let help = repo_help_text(app.state());
+        assert!(help.contains("F force checkout"));
         assert!(help.contains("u upstream menu"));
-        assert!(help.contains("y copy"));
+        assert!(help.contains("o pull request menu"));
+        assert!(help.contains("g reset menu"));
+        assert!(help.contains("s sort menu"));
+        assert!(help.contains("G git-flow menu"));
+        assert!(help.contains("y/Ctrl+O copy"));
         assert!(help.contains("r rebase current"));
         assert!(help.contains("M merge into current"));
+        assert!(help.contains("T tag"));
     }
 
     #[test]
@@ -13827,6 +14375,12 @@ mod tests {
         assert!(rendered.contains("Context: Enter branches. f fetch."));
         assert!(rendered.contains("n new remote"));
         assert!(rendered.contains("upstream  [0 branches]"));
+        let mut help_state = app.state().clone();
+        if let Some(repo_mode) = help_state.repo_mode.as_mut() {
+            repo_mode.remotes_filter.focused = false;
+        }
+        let help = repo_help_text(&help_state);
+        assert!(help.contains("F fork remote"));
     }
 
     #[test]
@@ -13886,10 +14440,50 @@ mod tests {
             repo_mode.remote_branches_filter.focused = false;
         }
         let help = repo_help_text(&help_state);
-        assert!(help.contains("y copy"));
+        assert!(help.contains("o pull request menu"));
+        assert!(help.contains("g reset menu"));
+        assert!(help.contains("s sort menu"));
+        assert!(help.contains("y/Ctrl+O copy"));
         assert!(help.contains("u set upstream"));
         assert!(help.contains("r rebase current"));
         assert!(help.contains("M merge into current"));
+        assert!(help.contains("T tag"));
+    }
+
+    #[test]
+    fn visible_branch_indices_follow_selected_sort_mode() {
+        let detail = sample_repo_detail();
+
+        assert_eq!(
+            visible_branch_indices(&detail, "", super_lazygit_core::BranchSortMode::Natural),
+            vec![0, 1]
+        );
+        assert_eq!(
+            visible_branch_indices(&detail, "", super_lazygit_core::BranchSortMode::Name),
+            vec![1, 0]
+        );
+    }
+
+    #[test]
+    fn visible_remote_branch_indices_follow_selected_sort_mode() {
+        let detail = sample_repo_detail();
+
+        assert_eq!(
+            visible_remote_branch_indices(
+                &detail,
+                "",
+                super_lazygit_core::RemoteBranchSortMode::Natural,
+            ),
+            vec![0, 1]
+        );
+        assert_eq!(
+            visible_remote_branch_indices(
+                &detail,
+                "",
+                super_lazygit_core::RemoteBranchSortMode::Name,
+            ),
+            vec![1, 0]
+        );
     }
 
     #[test]
@@ -14194,6 +14788,20 @@ mod tests {
     }
 
     #[test]
+    fn force_checkout_confirmation_copy_mentions_checkout_f() {
+        let copy = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::ForceCheckoutRef {
+                target_ref: "feature".to_string(),
+                source_label: "feature".to_string(),
+            },
+        );
+
+        assert!(copy.contains("Force-checkout feature?"));
+        assert!(copy.contains("git checkout -f feature"));
+        assert!(copy.contains("discards tracked working tree changes"));
+    }
+
+    #[test]
     fn tag_confirmation_copy_mentions_delete_and_push_commands() {
         let delete = confirmation_copy(&super_lazygit_core::ConfirmableOperation::DeleteTag {
             tag_name: "release-candidate".to_string(),
@@ -14242,6 +14850,25 @@ mod tests {
         assert!(copy.contains("new tag name"));
         assert!(copy.contains("abcdef1 add lib"));
         assert!(copy.contains("created from"));
+    }
+
+    #[test]
+    fn fork_remote_and_ref_tag_prompt_copy_describe_initial_values() {
+        let fork = input_prompt_copy(&super_lazygit_core::InputPromptOperation::ForkRemote {
+            suggested_name: "upstream".to_string(),
+            remote_url: "git@github.com:example/upstream.git".to_string(),
+        });
+        let tag = input_prompt_copy(
+            &super_lazygit_core::InputPromptOperation::CreateTagFromRef {
+                target_ref: "origin/feature".to_string(),
+                source_label: "origin/feature".to_string(),
+            },
+        );
+
+        assert!(fork.contains("<name> <url>"));
+        assert!(fork.contains("upstream git@github.com:example/upstream.git"));
+        assert!(tag.contains("new tag name"));
+        assert!(tag.contains("origin/feature"));
     }
 
     #[test]
