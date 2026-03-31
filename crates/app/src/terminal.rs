@@ -6,8 +6,9 @@ use anyhow::Result;
 use crossterm::{
     cursor::{Hide, Show},
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event as CrosstermEvent, KeyCode,
-        KeyEvent, KeyEventKind, KeyModifiers,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton,
+        MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -61,6 +62,14 @@ pub fn run(runtime: &mut AppRuntime) -> Result<()> {
                 CrosstermEvent::Paste(text) if !text.is_empty() => {
                     runtime.run([Event::Input(InputEvent::Paste(text))]);
                 }
+                CrosstermEvent::Mouse(mouse)
+                    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) =>
+                {
+                    runtime.run([Event::Input(InputEvent::MouseLeft {
+                        column: mouse.column,
+                        row: mouse.row,
+                    })]);
+                }
                 CrosstermEvent::Resize(width, height) => {
                     runtime.run([Event::Input(InputEvent::Resize { width, height })]);
                 }
@@ -104,7 +113,13 @@ impl TerminalSession {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, Hide)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture,
+            Hide
+        )?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         terminal.hide_cursor()?;
@@ -121,6 +136,7 @@ impl Drop for TerminalSession {
             self.terminal.backend_mut(),
             Show,
             DisableBracketedPaste,
+            DisableMouseCapture,
             LeaveAlternateScreen
         );
     }
@@ -159,13 +175,25 @@ pub fn suspend_app_process() -> io::Result<()> {
 fn suspend_terminal() -> io::Result<()> {
     disable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, Show, DisableBracketedPaste, LeaveAlternateScreen)
+    execute!(
+        stdout,
+        Show,
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )
 }
 
 fn resume_terminal() -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, Hide)
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture,
+        Hide
+    )
 }
 
 fn require_success(status: ExitStatus, label: &str) -> io::Result<()> {

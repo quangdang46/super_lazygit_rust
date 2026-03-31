@@ -867,7 +867,7 @@ mod tests {
 
         harness.press("open branches detail", "2");
         harness.assert_latest_contains("Detail: Branches");
-        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
+        harness.assert_latest_contains("Context: Enter commits. Space check");
 
         harness.press("focus branches filter", "/");
         harness.paste("filter branches", "fea");
@@ -1021,7 +1021,7 @@ mod tests {
 
         harness.press("open remote branches detail", "9");
         harness.assert_latest_contains("Detail: Remote Branches");
-        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
+        harness.assert_latest_contains("Context: Enter commits. Space check");
 
         harness.press("focus remote branch filter", "/");
         harness.paste("filter remote branches", "feature");
@@ -1305,7 +1305,7 @@ mod tests {
 
         harness.press("open tags detail", "t");
         harness.assert_latest_contains("Detail: Tags");
-        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
+        harness.assert_latest_contains("Context: Enter commits. Space check");
 
         harness.press("focus tag filter", "/");
         harness.paste("filter tags", "v1");
@@ -1444,11 +1444,10 @@ mod tests {
 
         harness.press("open commits detail", "3");
         harness.assert_latest_contains("Detail: Commits");
-        harness.assert_latest_contains("b bisect");
+        harness.assert_latest_contains("Enter files");
 
         harness.press("open selected commit files", "enter");
         harness.assert_latest_contains("Commit files");
-        harness.assert_latest_contains("Left/backspace history.");
         harness.assert_latest_contains("src/lib.rs");
 
         harness.press("open selected commit file diff", "enter");
@@ -1509,10 +1508,10 @@ mod tests {
 
         harness.press("open reflog detail", "7");
         harness.assert_latest_contains("Detail: Reflog");
-        harness.assert_latest_contains("Context: Enter commits. Space checkout.");
+        harness.assert_latest_contains("Context: Enter commits. Space check");
 
         harness.press("select older reflog entry", "j");
-        harness.assert_latest_contains("HEAD@{1}: commit (initial): initial commit");
+        harness.assert_latest_contains("HEAD@{1}: commit (initial): initial");
 
         harness.press("open selected reflog entry in commits", "enter");
         harness.assert_latest_contains("Detail: Commits");
