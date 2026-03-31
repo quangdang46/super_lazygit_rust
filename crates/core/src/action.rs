@@ -63,6 +63,7 @@ pub enum Action {
     OpenBisectOptions,
     StartInteractiveRebase,
     AmendSelectedCommit,
+    OpenCommitFixupOptions,
     StartBisectBad,
     StartBisectGood,
     MarkBisectBad,

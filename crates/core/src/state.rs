@@ -288,6 +288,12 @@ pub enum InputPromptOperation {
         path: PathBuf,
         current_url: String,
     },
+    CreateAmendCommit {
+        summary: String,
+        original_subject: String,
+        include_file_changes: bool,
+        initial_message: String,
+    },
     RewordCommit {
         commit: String,
         summary: String,
@@ -309,6 +315,7 @@ pub enum MenuOperation {
     FilterOptions,
     DiffOptions,
     CommitLogOptions,
+    CommitFixupOptions,
     BisectOptions,
     MergeRebaseOptions,
     IgnoreOptions,

@@ -663,6 +663,21 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::OpenCommitFixupOptions => {
+            match pending_history_commit_operation(state, |_, _, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before opening fixup options.".to_string());
+                }
+                Ok(())
+            }) {
+                Ok(Some((repo_id, ()))) => {
+                    open_menu(state, repo_id, MenuOperation::CommitFixupOptions)
+                }
+                Ok(None) => push_warning(state, "Select a commit before opening fixup options."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::CopySelectedCommitForCherryPick => {
             let copied_commit =
                 state
@@ -3848,6 +3863,17 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::EditSubmoduleUrl { name, .. } => {
             format!("Edit submodule {name}")
         }
+        InputPromptOperation::CreateAmendCommit {
+            summary,
+            include_file_changes,
+            ..
+        } => {
+            if *include_file_changes {
+                format!("Create amend! commit with changes for {summary}")
+            } else {
+                format!("Create amend! commit without changes for {summary}")
+            }
+        }
         InputPromptOperation::RewordCommit { summary, .. } => format!("Reword {summary}"),
     }
 }
@@ -3876,6 +3902,9 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateSubmodule => String::new(),
         InputPromptOperation::ShellCommand => String::new(),
         InputPromptOperation::EditSubmoduleUrl { current_url, .. } => current_url.clone(),
+        InputPromptOperation::CreateAmendCommit {
+            initial_message, ..
+        } => initial_message.clone(),
         InputPromptOperation::RewordCommit {
             initial_message, ..
         } => initial_message.clone(),
@@ -4106,6 +4135,26 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
             PromptSubmission::Shell(shell_job(pending.repo_id.clone(), value.clone())),
             format!("Run shell command: {value}"),
         ),
+        InputPromptOperation::CreateAmendCommit {
+            summary,
+            original_subject,
+            include_file_changes,
+            ..
+        } => (
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateAmendCommit {
+                    original_subject: original_subject.clone(),
+                    message: value.clone(),
+                    include_file_changes,
+                },
+            )),
+            if include_file_changes {
+                format!("Create amend! commit with changes for {summary}")
+            } else {
+                format!("Create amend! commit without changes for {summary}")
+            },
+        ),
         InputPromptOperation::RewordCommit {
             commit, summary, ..
         } => (
@@ -4170,6 +4219,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::FilterOptions => "Filter options",
         MenuOperation::DiffOptions => "Diffing options",
         MenuOperation::CommitLogOptions => "Commit log options",
+        MenuOperation::CommitFixupOptions => "Fixup options",
         MenuOperation::BisectOptions => "Bisect options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
         MenuOperation::IgnoreOptions => "Ignore options",
@@ -4186,6 +4236,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::FilterOptions => filter_menu_entries(state).len(),
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::CommitLogOptions => commit_log_menu_entries(state).len(),
+        MenuOperation::CommitFixupOptions => 3,
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
         MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
@@ -4298,6 +4349,78 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
                 state.focused_pane = menu.return_focus;
             }
             reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::CommitFixupOptions => {
+            let prompt_operation = match selected_index {
+                0 => None,
+                1 => match pending_history_commit_operation(
+                    state,
+                    |detail, commit, selected_index| {
+                        if selected_index == 0 {
+                            return Err("Select an older commit before creating an amend! commit."
+                                .to_string());
+                        }
+                        if staged_file_count(detail) == 0 {
+                            return Err(
+                                "Stage changes before creating an amend! commit with changes."
+                                    .to_string(),
+                            );
+                        }
+                        Ok(InputPromptOperation::CreateAmendCommit {
+                            summary: format!("{} {}", commit.short_oid, commit.summary),
+                            original_subject: commit.summary.clone(),
+                            include_file_changes: true,
+                            initial_message: commit.summary.clone(),
+                        })
+                    },
+                ) {
+                    Ok(Some((_, operation))) => Some(operation),
+                    Ok(None) => {
+                        push_warning(state, "Select a commit before creating an amend! commit.");
+                        return true;
+                    }
+                    Err(message) => {
+                        push_warning(state, message);
+                        return true;
+                    }
+                },
+                _ => match pending_history_commit_operation(state, |_, commit, selected_index| {
+                    if selected_index == 0 {
+                        return Err(
+                            "Select an older commit before creating an amend! commit.".to_string()
+                        );
+                    }
+                    Ok(InputPromptOperation::CreateAmendCommit {
+                        summary: format!("{} {}", commit.short_oid, commit.summary),
+                        original_subject: commit.summary.clone(),
+                        include_file_changes: false,
+                        initial_message: commit.summary.clone(),
+                    })
+                }) {
+                    Ok(Some((_, operation))) => Some(operation),
+                    Ok(None) => {
+                        push_warning(state, "Select a commit before creating an amend! commit.");
+                        return true;
+                    }
+                    Err(message) => {
+                        push_warning(state, message);
+                        return true;
+                    }
+                },
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            if let Some(operation) = prompt_operation {
+                open_input_prompt(state, menu.repo_id, operation);
+            } else {
+                reduce_action(state, Action::CreateFixupCommit, effects);
+            }
             true
         }
         MenuOperation::CommitLogOptions => {
@@ -7066,6 +7189,16 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CommitStagedNoVerify { .. } => "commit-staged-no-verify",
         GitCommand::CommitStagedWithEditor => "commit-staged-editor",
         GitCommand::AmendHead { .. } => "amend-head",
+        GitCommand::CreateAmendCommit {
+            include_file_changes,
+            ..
+        } => {
+            if *include_file_changes {
+                "create-amend-commit-with-changes"
+            } else {
+                "create-amend-commit-without-changes"
+            }
+        }
         GitCommand::CreateFixupCommit { .. } => "create-fixup-commit",
         GitCommand::RewordCommitWithEditor { .. } => "reword-commit-editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
@@ -15617,6 +15750,254 @@ mod tests {
                 Effect::ScheduleRender,
             ]
         );
+    }
+
+    #[test]
+    fn open_commit_fixup_options_opens_menu_for_selected_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenCommitFixupOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                repo_id,
+                MenuOperation::CommitFixupOptions,
+                0,
+                PaneId::RepoDetail,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_commit_fixup_options_selection_queues_direct_fixup_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Fixup options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitFixupOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("notes.md"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: Some(FileStatusKind::Modified),
+                        unstaged_kind: None,
+                    }],
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+        let job_id = JobId::new("git:repo-1:create-fixup-commit");
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RunGitCommand(GitCommandRequest {
+                repo_id: effect_repo_id,
+                command: GitCommand::CreateFixupCommit { commit },
+                ..
+            }) if effect_repo_id == &repo_id && commit == "older"
+        )));
+    }
+
+    #[test]
+    fn submit_commit_fixup_options_selection_opens_amend_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Fixup options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitFixupOptions,
+                selected_index: 1,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("notes.md"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: Some(FileStatusKind::Modified),
+                        unstaged_kind: None,
+                    }],
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.return_focus
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::CreateAmendCommit {
+                    summary: "old1234 older commit".to_string(),
+                    original_subject: "older commit".to_string(),
+                    include_file_changes: true,
+                    initial_message: "older commit".to_string(),
+                },
+                PaneId::RepoDetail,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_create_amend_commit_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Create amend! commit without changes for old1234 older commit",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: InputPromptOperation::CreateAmendCommit {
+                    summary: "old1234 older commit".to_string(),
+                    original_subject: "older commit".to_string(),
+                    include_file_changes: false,
+                    initial_message: "older commit".to_string(),
+                },
+                value: "rewritten subject".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-amend-commit-without-changes");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RunGitCommand(GitCommandRequest {
+                repo_id: effect_repo_id,
+                command: GitCommand::CreateAmendCommit {
+                    original_subject,
+                    message,
+                    include_file_changes,
+                },
+                ..
+            }) if effect_repo_id == &repo_id
+                && original_subject == "older commit"
+                && message == "rewritten subject"
+                && !include_file_changes
+        )));
     }
 
     #[test]

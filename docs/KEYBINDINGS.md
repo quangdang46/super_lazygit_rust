@@ -256,7 +256,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `b` | Open the bisect options menu for the selected commit or active bisect |
 | `i` | Start interactive rebase from the selected commit |
 | `A` | Open amend-selected-commit confirmation |
-| `f` | Create a fixup commit for the selected commit from the currently staged changes |
+| `f` | Open the fixup options menu for `fixup!` and `amend!` commit creation |
 | `F` | Open fixup-selected-commit confirmation |
 | `g` | Open apply-fixups confirmation for the selected commit |
 | `s` | Open squash-selected-commit confirmation |

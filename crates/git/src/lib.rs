@@ -659,6 +659,30 @@ impl GitBackend for CliGitBackend {
                     .unwrap_or_else(|_| commit.clone());
                 format!("Created fixup commit for {short} {subject}")
             }
+            GitCommand::CreateAmendCommit {
+                original_subject,
+                message,
+                include_file_changes,
+            } => {
+                let amend_subject = format!("amend! {original_subject}");
+                let mut args = vec![
+                    "commit".to_string(),
+                    "-m".to_string(),
+                    amend_subject,
+                    "-m".to_string(),
+                    message.clone(),
+                ];
+                if !*include_file_changes {
+                    args.push("--only".to_string());
+                    args.push("--allow-empty".to_string());
+                }
+                git(&repo_path, args)?;
+                if *include_file_changes {
+                    format!("Created amend! commit with changes for {original_subject}")
+                } else {
+                    format!("Created amend! commit without changes for {original_subject}")
+                }
+            }
             GitCommand::RewordCommitWithEditor { .. } => {
                 return Err(GitError::OperationFailed {
                     message: "interactive reword must run through the app runtime".to_string(),
@@ -1161,6 +1185,16 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::SkipBisect { .. } => "skip_bisect",
         GitCommand::ResetBisect => "reset_bisect",
         GitCommand::CreateFixupCommit { .. } => "create_fixup_commit",
+        GitCommand::CreateAmendCommit {
+            include_file_changes,
+            ..
+        } => {
+            if *include_file_changes {
+                "create_amend_commit_with_changes"
+            } else {
+                "create_amend_commit_without_changes"
+            }
+        }
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             RebaseStartMode::Interactive => "start_interactive_rebase",
@@ -5091,6 +5125,125 @@ mod tests {
         )
         .expect("notes text")
         .contains("fixup line"));
+    }
+
+    #[test]
+    fn cli_backend_creates_amend_commit_with_staged_changes() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.append_file("notes.md", "amend line\n")
+            .expect("append staged amend change");
+        repo.stage("notes.md").expect("stage amend file");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:create-amend-commit-with-changes"),
+                repo_id,
+                command: GitCommand::CreateAmendCommit {
+                    original_subject: "second".to_string(),
+                    message: "replacement subject".to_string(),
+                    include_file_changes: true,
+                },
+            })
+            .expect("create amend! commit with changes should succeed");
+
+        assert!(outcome
+            .summary
+            .contains("Created amend! commit with changes"));
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "4"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%s", "-n", "2"])
+                    .expect("log")
+            )
+            .expect("log text"),
+            "amend! second\nadd lib"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%b", "-n", "1"])
+                    .expect("body log")
+            )
+            .expect("body text"),
+            "replacement subject"
+        );
+        assert!(stdout_string(
+            repo.git_capture(["show", "HEAD:notes.md"])
+                .expect("show notes")
+        )
+        .expect("notes text")
+        .contains("amend line"));
+    }
+
+    #[test]
+    fn cli_backend_creates_amend_commit_without_file_changes() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let before_notes = stdout_string(
+            repo.git_capture(["show", "HEAD:notes.md"])
+                .expect("show notes before amend"),
+        )
+        .expect("notes before amend");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:create-amend-commit-without-changes"),
+                repo_id,
+                command: GitCommand::CreateAmendCommit {
+                    original_subject: "second".to_string(),
+                    message: "message only replacement".to_string(),
+                    include_file_changes: false,
+                },
+            })
+            .expect("create amend! commit without changes should succeed");
+
+        assert!(outcome
+            .summary
+            .contains("Created amend! commit without changes"));
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "4"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%s", "-n", "2"])
+                    .expect("log")
+            )
+            .expect("log text"),
+            "amend! second\nadd lib"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%b", "-n", "1"])
+                    .expect("body log")
+            )
+            .expect("body text"),
+            "message only replacement"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "HEAD:notes.md"])
+                    .expect("show notes after amend"),
+            )
+            .expect("notes after amend"),
+            before_notes
+        );
     }
 
     #[test]

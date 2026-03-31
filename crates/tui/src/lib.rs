@@ -1726,13 +1726,13 @@ impl TuiApp {
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
                             && self.binding_matches_action(
-                                "create_fixup_commit",
+                                "open_commit_fixup_options",
                                 raw,
                                 normalized,
                                 &["f"],
                             )
                         {
-                            return Some(Action::CreateFixupCommit);
+                            return Some(Action::OpenCommitFixupOptions);
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
@@ -4674,7 +4674,7 @@ fn repo_commit_lines(
             detail.commits.len(),
         )),
         Line::from("Actions: Enter files  Space checkout  n branch  T tag  b bisect  i rebase"),
-        Line::from("         A amend  f create-fixup  F fixup  g apply-fixups  s squash  d drop"),
+        Line::from("         A amend  f fixup menu  F fixup  g apply-fixups  s squash  d drop"),
         Line::from("         Ctrl+K/Ctrl+J move  R reword  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"),
         Line::from("History:"),
     ];
@@ -5761,6 +5761,21 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
                 "Enter the new URL for submodule {name}. This updates both .gitmodules and local submodule config."
             )
         }
+        super_lazygit_core::InputPromptOperation::CreateAmendCommit {
+            summary,
+            include_file_changes,
+            ..
+        } => {
+            if *include_file_changes {
+                format!(
+                    "Enter the replacement subject line for the amend! commit targeting {summary}. Staged changes stay attached to the amend! commit."
+                )
+            } else {
+                format!(
+                    "Enter the replacement subject line for the amend! commit targeting {summary}. This creates a message-only amend! commit with no file changes."
+                )
+            }
+        }
         super_lazygit_core::InputPromptOperation::RewordCommit { summary, .. } => {
             format!(
                 "Enter a replacement subject line for {summary}. This rewrites the selected commit message via rebase."
@@ -5782,6 +5797,9 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         }
         super_lazygit_core::MenuOperation::CommitLogOptions => {
             "Switch the commits panel between current-branch history and the whole-repository graph."
+        }
+        super_lazygit_core::MenuOperation::CommitFixupOptions => {
+            "Choose whether to create a fixup! commit or one of the amend! variants for the selected commit."
         }
         super_lazygit_core::MenuOperation::BisectOptions => {
             "Open the shipped bisect flows for the selected commit or the active bisect candidate."
@@ -5823,6 +5841,11 @@ fn menu_lines(
         super_lazygit_core::MenuOperation::FilterOptions => filter_menu_lines(state),
         super_lazygit_core::MenuOperation::DiffOptions => diff_menu_lines(state),
         super_lazygit_core::MenuOperation::CommitLogOptions => commit_log_menu_lines(state),
+        super_lazygit_core::MenuOperation::CommitFixupOptions => vec![
+            "Create fixup! commit".to_string(),
+            "Create amend! commit with staged changes".to_string(),
+            "Create amend! commit without file changes".to_string(),
+        ],
         super_lazygit_core::MenuOperation::BisectOptions => bisect_menu_lines(state),
         super_lazygit_core::MenuOperation::MergeRebaseOptions => merge_rebase_menu_lines(state),
         super_lazygit_core::MenuOperation::IgnoreOptions => vec![
@@ -6634,7 +6657,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; 3 returns to current-branch history, a/A switch the all-branches graph direction, Ctrl+L opens log options, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; 3 returns to current-branch history, a/A switch the all-branches graph direction, Ctrl+L opens log options, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends, f opens fixup options, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V pastes the copied commit, t reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
@@ -6753,7 +6776,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -10164,13 +10187,15 @@ mod tests {
             create_fixup_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
                 key: "f".to_string(),
             })));
-        assert!(create_fixup.effects.iter().any(|effect| matches!(
-            effect,
-            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
-                command: super_lazygit_core::GitCommand::CreateFixupCommit { commit },
-                ..
-            }) if commit == "1234567890abcdef"
-        )));
+        assert_eq!(create_fixup.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            create_fixup
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::CommitFixupOptions)
+        );
 
         let mut fixup_app = TuiApp::new(state.clone(), AppConfig::default());
         let fixup = fixup_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {

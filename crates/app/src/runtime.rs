@@ -635,6 +635,16 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::SkipBisect { .. } => "skip_bisect",
         GitCommand::ResetBisect => "reset_bisect",
         GitCommand::CreateFixupCommit { .. } => "create_fixup_commit",
+        GitCommand::CreateAmendCommit {
+            include_file_changes,
+            ..
+        } => {
+            if *include_file_changes {
+                "create_amend_commit_with_changes"
+            } else {
+                "create_amend_commit_without_changes"
+            }
+        }
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             super_lazygit_core::RebaseStartMode::Interactive => "start_interactive_rebase",

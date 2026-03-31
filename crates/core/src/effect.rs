@@ -117,6 +117,11 @@ pub enum GitCommand {
     CreateFixupCommit {
         commit: String,
     },
+    CreateAmendCommit {
+        original_subject: String,
+        message: String,
+        include_file_changes: bool,
+    },
     RewordCommitWithEditor {
         commit: String,
     },
