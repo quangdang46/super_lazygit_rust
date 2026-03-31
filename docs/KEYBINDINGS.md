@@ -244,6 +244,9 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected commit's changed-files view |
 | `Space` | Check out the selected commit in detached-HEAD mode |
+| `C` | Copy the selected commit for a later cherry-pick paste |
+| `V` | Cherry-pick the copied commit onto the current branch |
+| `Ctrl+R` | Clear the copied commit selection when one is active |
 | `Ctrl+O` | Copy the selected commit's short hash to the clipboard |
 | `o` | Open the selected commit in the browser when a browser-compatible remote is configured |
 | `3` | Reset the commits view to the current branch's linear history |
@@ -262,8 +265,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Ctrl+J` | Open move-selected-commit-down confirmation for the selected commit |
 | `m` | Open the merge/rebase options menu for the selected commit or active rebase |
 | `R` | Reword the selected commit using the configured Git editor |
-| `C` | Open cherry-pick confirmation |
-| `V` | Open revert confirmation |
+| `t` | Open revert confirmation |
 | `S` | Open soft-reset confirmation |
 | `M` | Open mixed-reset confirmation |
 | `H` | Open hard-reset confirmation |

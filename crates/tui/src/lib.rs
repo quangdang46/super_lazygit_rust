@@ -521,6 +521,13 @@ impl TuiApp {
         }
 
         if self.binding_matches_action("open_recent_repos", raw, normalized, &["ctrl+r"]) {
+            if self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                repo_mode.active_subview == RepoSubview::Commits
+                    && repo_mode.commit_subview_mode == CommitSubviewMode::History
+                    && repo_mode.copied_commit.is_some()
+            }) {
+                return Some(Action::ClearCopiedCommitSelection);
+            }
             return Some(Action::OpenRecentRepos);
         }
 
@@ -1608,6 +1615,28 @@ impl TuiApp {
 
                             if repo_mode.commit_subview_mode == CommitSubviewMode::History
                                 && self.binding_matches_action(
+                                    "copy_selected_commit_for_cherry_pick",
+                                    raw,
+                                    normalized,
+                                    &["C"],
+                                )
+                            {
+                                return Some(Action::CopySelectedCommitForCherryPick);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                                && self.binding_matches_action(
+                                    "cherry_pick_copied_commit",
+                                    raw,
+                                    normalized,
+                                    &["V"],
+                                )
+                            {
+                                return Some(Action::CherryPickCopiedCommit);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                                && self.binding_matches_action(
                                     "copy_selected_commit_hash",
                                     raw,
                                     normalized,
@@ -1799,7 +1828,7 @@ impl TuiApp {
                                 "revert_selected_commit",
                                 raw,
                                 normalized,
-                                &["V"],
+                                &["t"],
                             )
                         {
                             return Some(Action::RevertSelectedCommit);
@@ -4635,6 +4664,7 @@ fn repo_commit_lines(
             repo_mode.comparison_source,
         )),
         Line::from(history_operation_state_line(&detail.merge_state)),
+        copied_commit_line(repo_mode, theme).unwrap_or_else(|| Line::from("")),
         Line::from(repo_commit_context_line(
             repo_mode.commit_history_mode,
             repo_mode.commit_history_ref.as_deref(),
@@ -4645,7 +4675,7 @@ fn repo_commit_lines(
         )),
         Line::from("Actions: Enter files  Space checkout  n branch  T tag  b bisect  i rebase"),
         Line::from("         A amend  f create-fixup  F fixup  g apply-fixups  s squash  d drop"),
-        Line::from("         Ctrl+K/Ctrl+J move  R reword  C cherry-pick  V revert  S soft  M mixed  H hard  m menu"),
+        Line::from("         Ctrl+K/Ctrl+J move  R reword  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"),
         Line::from("History:"),
     ];
 
@@ -5037,6 +5067,18 @@ fn repo_commit_context_line(
         line.push_str(&rendered);
     }
     line
+}
+
+fn copied_commit_line(repo_mode: &RepoModeState, theme: Theme) -> Option<Line<'static>> {
+    repo_mode.copied_commit.as_ref().map(|commit| {
+        Line::from(vec![Span::styled(
+            format!(
+                "Copied for cherry-pick: {} {}  V paste  Ctrl+R clear",
+                commit.short_oid, commit.summary
+            ),
+            Style::default().fg(theme.success),
+        )])
+    })
 }
 
 fn repo_compare_lines(
@@ -6711,7 +6753,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  o browser  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8578,6 +8620,88 @@ mod tests {
     }
 
     #[test]
+    fn route_repository_commit_copy_flow_keys() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let base_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut copy_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "C".to_string(),
+        })));
+        assert_eq!(
+            copied
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
+                .map(|commit| commit.short_oid.as_str()),
+            Some("1234567")
+        );
+
+        let mut paste_app = TuiApp::new(copied.state.clone(), AppConfig::default());
+        let pasted = paste_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "V".to_string(),
+        })));
+        assert_eq!(
+            pasted
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::CherryPickCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut revert_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let reverted = revert_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "t".to_string(),
+        })));
+        assert!(matches!(
+            reverted
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::RevertCommit { .. })
+        ));
+
+        let mut clear_app = TuiApp::new(copied.state, AppConfig::default());
+        let cleared = clear_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+r".to_string(),
+        })));
+        assert!(cleared
+            .state
+            .repo_mode
+            .as_ref()
+            .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
+            .is_none());
+    }
+
+    #[test]
     fn route_repository_branch_diff_menu_key() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {
@@ -9984,10 +10108,28 @@ mod tests {
             ..Default::default()
         };
 
-        let mut cherry_pick_app = TuiApp::new(state.clone(), AppConfig::default());
+        let mut copy_app = TuiApp::new(state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "C".to_string(),
+        })));
+        assert_eq!(
+            copied
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
+                .map(|commit| (
+                    commit.oid.as_str(),
+                    commit.short_oid.as_str(),
+                    commit.summary.as_str(),
+                )),
+            Some(("1234567890abcdef", "1234567", "second"))
+        );
+
+        let mut cherry_pick_app = TuiApp::new(copied.state.clone(), AppConfig::default());
         let cherry_pick =
             cherry_pick_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
-                key: "C".to_string(),
+                key: "V".to_string(),
             })));
         assert_eq!(
             cherry_pick
@@ -10158,7 +10300,7 @@ mod tests {
 
         let mut revert_app = TuiApp::new(state, AppConfig::default());
         let revert = revert_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
-            key: "V".to_string(),
+            key: "t".to_string(),
         })));
         assert_eq!(
             revert
@@ -12517,8 +12659,9 @@ mod tests {
         assert!(rendered.contains("A amend"));
         assert!(rendered.contains("F fixup"));
         assert!(rendered.contains("R reword"));
-        assert!(rendered.contains("C cherry-pick"));
-        assert!(rendered.contains("V revert"));
+        assert!(rendered.contains("C copy"));
+        assert!(rendered.contains("V paste copied"));
+        assert!(rendered.contains("t revert"));
         assert!(rendered.contains("S soft"));
         assert!(rendered.contains("A src/lib.rs"));
     }
@@ -12609,7 +12752,7 @@ mod tests {
             },
         );
         let mut app = TuiApp::new(state, AppConfig::default());
-        app.resize(120, 18);
+        app.resize(120, 20);
 
         let rendered = app.render_to_string();
 
@@ -12719,8 +12862,9 @@ mod tests {
         let rendered = app.render_to_string();
 
         assert!(rendered.contains("State: cherry-pick in progress"));
-        assert!(rendered.contains("C cherry-pick"));
-        assert!(rendered.contains("V revert"));
+        assert!(rendered.contains("C copy"));
+        assert!(rendered.contains("V paste copied"));
+        assert!(repo_help_text(app.state()).contains("t revert"));
     }
 
     #[test]
@@ -13744,9 +13888,12 @@ mod tests {
 
         assert!(rendered.contains("Ctrl+O copy hash."));
         assert!(rendered.contains("o browser."));
+        assert!(rendered.contains("C copy"));
         assert!(rendered.contains("3 returns to current-branch history"));
         assert!(repo_help_text(app.state()).contains("Ctrl+O copy hash"));
         assert!(repo_help_text(app.state()).contains("o browser"));
+        assert!(repo_help_text(app.state()).contains("C copy"));
+        assert!(repo_help_text(app.state()).contains("t revert"));
         assert!(repo_help_text(app.state()).contains("Ctrl+L log menu"));
     }
 

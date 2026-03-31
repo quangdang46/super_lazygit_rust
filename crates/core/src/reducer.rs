@@ -663,6 +663,55 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::CopySelectedCommitForCherryPick => {
+            let copied_commit =
+                state
+                    .repo_mode
+                    .as_ref()
+                    .and_then(selected_commit_item)
+                    .map(|commit| crate::state::CopiedCommit {
+                        oid: commit.oid.clone(),
+                        short_oid: commit.short_oid.clone(),
+                        summary: commit.summary.clone(),
+                    });
+            let Some(copied_commit) = copied_commit else {
+                push_warning(state, "Select a commit before copying it for cherry-pick.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.copied_commit = Some(copied_commit);
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::CherryPickCopiedCommit => {
+            let Some((repo_id, operation)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                repo_mode.copied_commit.as_ref().map(|commit| {
+                    (
+                        repo_mode.current_repo_id.clone(),
+                        ConfirmableOperation::CherryPickCommit {
+                            commit: commit.oid.clone(),
+                            summary: format!("{} {}", commit.short_oid, commit.summary),
+                        },
+                    )
+                })
+            }) else {
+                push_warning(
+                    state,
+                    "Copy a commit for cherry-pick before pasting it onto the current branch.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_confirmation_modal(state, repo_id, operation);
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::ClearCopiedCommitSelection => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.copied_commit = None;
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::StartBisectBad => {
             match pending_history_commit_operation(state, |detail, commit, _| {
                 if detail.bisect_state.is_some() {
@@ -7631,6 +7680,112 @@ mod tests {
                 )),
             })]
         );
+    }
+
+    #[test]
+    fn copy_selected_commit_for_cherry_pick_tracks_copied_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::CopySelectedCommitForCherryPick),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
+                .map(|commit| (
+                    commit.oid.as_str(),
+                    commit.short_oid.as_str(),
+                    commit.summary.as_str()
+                )),
+            Some(("abcdef1234567890", "abcdef1", "add lib"))
+        );
+    }
+
+    #[test]
+    fn cherry_pick_copied_commit_opens_confirmation_for_copied_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                copied_commit: Some(crate::state::CopiedCommit {
+                    oid: "copied".to_string(),
+                    short_oid: "copy123".to_string(),
+                    summary: "copied commit".to_string(),
+                }),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CherryPickCopiedCommit));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::CherryPickCommit {
+                commit: "copied".to_string(),
+                summary: "copy123 copied commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn clear_copied_commit_selection_clears_repo_state() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                copied_commit: Some(crate::state::CopiedCommit {
+                    oid: "copied".to_string(),
+                    short_oid: "copy123".to_string(),
+                    summary: "copied commit".to_string(),
+                }),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ClearCopiedCommitSelection));
+
+        assert!(result
+            .state
+            .repo_mode
+            .as_ref()
+            .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
+            .is_none());
     }
 
     #[test]

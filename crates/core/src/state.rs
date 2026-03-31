@@ -695,6 +695,7 @@ pub struct RepoModeState {
     pub comparison_base: Option<ComparisonTarget>,
     pub comparison_target: Option<ComparisonTarget>,
     pub comparison_source: Option<RepoSubview>,
+    pub copied_commit: Option<CopiedCommit>,
     pub detail: Option<RepoDetail>,
 }
 
@@ -762,6 +763,7 @@ impl RepoModeState {
             comparison_base: None,
             comparison_target: None,
             comparison_source: None,
+            copied_commit: None,
             detail: None,
         }
     }
@@ -1465,6 +1467,13 @@ pub struct CommitItem {
     pub summary: String,
     pub changed_files: Vec<CommitFileItem>,
     pub diff: DiffModel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopiedCommit {
+    pub oid: String,
+    pub short_oid: String,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

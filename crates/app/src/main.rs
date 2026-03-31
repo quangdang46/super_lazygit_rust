@@ -1267,7 +1267,7 @@ mod tests {
             "enter from tags should drill into the selected tag history",
         );
 
-        harness.press("return to tags detail", "t");
+        harness.press("return to tags detail", "[");
         harness.press("checkout selected tag", "space");
         assert_eq!(
             command_stdout(&repo, ["rev-parse", "--abbrev-ref", "HEAD"]).expect("detached head"),
