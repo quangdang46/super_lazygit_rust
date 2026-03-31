@@ -1606,6 +1606,17 @@ impl TuiApp {
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
                             && self.binding_matches_action(
+                                "create_fixup_commit",
+                                raw,
+                                normalized,
+                                &["f"],
+                            )
+                        {
+                            return Some(Action::CreateFixupCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
                                 "fixup_selected_commit",
                                 raw,
                                 normalized,
@@ -1613,6 +1624,39 @@ impl TuiApp {
                             )
                         {
                             return Some(Action::FixupSelectedCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "apply_fixup_commits",
+                                raw,
+                                normalized,
+                                &["g"],
+                            )
+                        {
+                            return Some(Action::ApplyFixupCommits);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "squash_selected_commit",
+                                raw,
+                                normalized,
+                                &["s"],
+                            )
+                        {
+                            return Some(Action::SquashSelectedCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "drop_selected_commit",
+                                raw,
+                                normalized,
+                                &["d"],
+                            )
+                        {
+                            return Some(Action::DropSelectedCommit);
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
@@ -5307,9 +5351,24 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Start older-commit amend for {summary}? Git will pause on that commit so you can stage changes, amend it from Status, and continue from Rebase."
             )
         }
+        super_lazygit_core::ConfirmableOperation::ApplyFixupCommits { summary, .. } => {
+            format!(
+                "Apply pending fixup and squash commits for {summary}? Git will rewrite the current branch with autosquash."
+            )
+        }
         super_lazygit_core::ConfirmableOperation::FixupCommit { summary, .. } => {
             format!(
                 "Create a fixup commit for {summary} from the currently staged changes and autosquash it with rebase?"
+            )
+        }
+        super_lazygit_core::ConfirmableOperation::SquashCommit { summary, .. } => {
+            format!(
+                "Squash {summary} into its parent commit? Git will rewrite history and keep the default combined message."
+            )
+        }
+        super_lazygit_core::ConfirmableOperation::DropCommit { summary, .. } => {
+            format!(
+                "Drop {summary} from history? Git will rewrite the current branch and remove that commit."
             )
         }
         super_lazygit_core::ConfirmableOperation::CherryPickCommit { summary, .. } => {
@@ -6325,10 +6384,10 @@ fn default_status_text(state: &AppState) -> String {
                     } else if repo_mode.active_subview == RepoSubview::Remotes {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, i starts a rebase, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                } else if repo_mode.active_subview == RepoSubview::Commits {
+                    "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, i starts a rebase, A amends, F fixups, s squashes, d drops, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::Compare {
+                } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -6445,7 +6504,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -9465,6 +9524,19 @@ mod tests {
             })
         );
 
+        let mut create_fixup_app = TuiApp::new(state.clone(), AppConfig::default());
+        let create_fixup =
+            create_fixup_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "f".to_string(),
+            })));
+        assert!(create_fixup.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::CreateFixupCommit { commit },
+                ..
+            }) if commit == "1234567890abcdef"
+        )));
+
         let mut fixup_app = TuiApp::new(state.clone(), AppConfig::default());
         let fixup = fixup_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "F".to_string(),
@@ -9476,6 +9548,56 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(super_lazygit_core::ConfirmableOperation::FixupCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut apply_fixups_app = TuiApp::new(state.clone(), AppConfig::default());
+        let apply_fixups =
+            apply_fixups_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "g".to_string(),
+            })));
+        assert_eq!(
+            apply_fixups
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::ApplyFixupCommits {
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
+                }
+            )
+        );
+
+        let mut squash_app = TuiApp::new(state.clone(), AppConfig::default());
+        let squash = squash_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "s".to_string(),
+        })));
+        assert_eq!(
+            squash
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::SquashCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut drop_app = TuiApp::new(state.clone(), AppConfig::default());
+        let drop = drop_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "d".to_string(),
+        })));
+        assert_eq!(
+            drop.state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::DropCommit {
                 commit: "1234567890abcdef".to_string(),
                 summary: "1234567 second".to_string(),
             })

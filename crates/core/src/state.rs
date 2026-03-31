@@ -153,7 +153,19 @@ pub enum ConfirmableOperation {
         commit: String,
         summary: String,
     },
+    ApplyFixupCommits {
+        commit: String,
+        summary: String,
+    },
     FixupCommit {
+        commit: String,
+        summary: String,
+    },
+    SquashCommit {
+        commit: String,
+        summary: String,
+    },
+    DropCommit {
         commit: String,
         summary: String,
     },

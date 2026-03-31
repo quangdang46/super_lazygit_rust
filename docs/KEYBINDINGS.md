@@ -248,9 +248,13 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `A` | Switch to the all-branches commit graph, oldest first |
 | `n` | Open create-branch-from-commit prompt |
 | `i` | Start interactive rebase from the selected commit |
-| `m` | Open the merge/rebase options menu for the selected commit or active rebase |
 | `A` | Open amend-selected-commit confirmation |
+| `f` | Create a fixup commit for the selected commit from the currently staged changes |
 | `F` | Open fixup-selected-commit confirmation |
+| `g` | Open apply-fixups confirmation for the selected commit |
+| `s` | Open squash-selected-commit confirmation |
+| `d` | Open drop-selected-commit confirmation |
+| `m` | Open the merge/rebase options menu for the selected commit or active rebase |
 | `R` | Reword the selected commit using the configured Git editor |
 | `C` | Open cherry-pick confirmation |
 | `V` | Open revert confirmation |

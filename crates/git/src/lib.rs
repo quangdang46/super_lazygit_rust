@@ -620,6 +620,14 @@ impl GitBackend for CliGitBackend {
                 }
                 "Amended HEAD commit".to_string()
             }
+            GitCommand::CreateFixupCommit { commit } => {
+                git(&repo_path, ["commit", "--fixup", commit])?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!("Created fixup commit for {short} {subject}")
+            }
             GitCommand::RewordCommitWithEditor { .. } => {
                 return Err(GitError::OperationFailed {
                     message: "interactive reword must run through the app runtime".to_string(),
@@ -640,6 +648,15 @@ impl GitBackend for CliGitBackend {
                     }
                     RebaseStartMode::Fixup => {
                         format!("Started fixup autosquash for {short} {subject}")
+                    }
+                    RebaseStartMode::ApplyFixups => {
+                        format!("Applied fixup autosquash for {short} {subject}")
+                    }
+                    RebaseStartMode::Squash => {
+                        format!("Squashed {short} {subject} into its parent")
+                    }
+                    RebaseStartMode::Drop => {
+                        format!("Dropped {short} {subject} from history")
                     }
                     RebaseStartMode::Reword { .. } => {
                         format!("Reworded {short} {subject}")
@@ -1098,11 +1115,15 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CommitStagedNoVerify { .. } => "commit_staged_no_verify",
         GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::CreateFixupCommit { .. } => "create_fixup_commit",
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             RebaseStartMode::Interactive => "start_interactive_rebase",
             RebaseStartMode::Amend => "start_amend_rebase",
             RebaseStartMode::Fixup => "start_fixup_rebase",
+            RebaseStartMode::ApplyFixups => "apply_fixups_rebase",
+            RebaseStartMode::Squash => "start_squash_rebase",
+            RebaseStartMode::Drop => "start_drop_rebase",
             RebaseStartMode::Reword { .. } => "start_reword_rebase",
         },
         GitCommand::CherryPickCommit { .. } => "cherry_pick_commit",
@@ -2022,6 +2043,9 @@ fn start_commit_rebase(repo_path: &Path, commit: &str, mode: &RebaseStartMode) -
             git(repo_path, ["commit", "--fixup", commit])?;
             run_scripted_rebase(repo_path, commit, "pick", None, true)
         }
+        RebaseStartMode::ApplyFixups => run_scripted_rebase(repo_path, commit, "pick", None, true),
+        RebaseStartMode::Squash => run_scripted_rebase(repo_path, commit, "squash", None, false),
+        RebaseStartMode::Drop => run_scripted_rebase(repo_path, commit, "drop", None, false),
         RebaseStartMode::Reword { message } => {
             run_scripted_rebase(repo_path, commit, "reword", Some(message.as_str()), false)
         }
@@ -2041,7 +2065,7 @@ fn run_scripted_rebase(
         "#!/bin/sh\nset -eu\n:\n".to_string()
     } else {
         format!(
-            "#!/bin/sh\nset -eu\nfile=\"$1\"\ntmp=\"$1.tmp\"\nawk 'BEGIN{{done=0}} {{ if (!done && $1 == \"pick\") {{ sub(/^pick /, \"{todo_verb} \"); done=1 }} print }}' \"$file\" > \"$tmp\"\nmv \"$tmp\" \"$file\"\n"
+            "#!/bin/sh\nset -eu\nfile=\"$1\"\ntmp=\"$1.tmp\"\nawk 'BEGIN{{done=0}} {{ if (!done && $1 == \"pick\" && index(\"{commit}\", $2) == 1) {{ sub(/^pick /, \"{todo_verb} \"); done=1 }} print }}' \"$file\" > \"$tmp\"\nmv \"$tmp\" \"$file\"\n"
         )
     };
     write_executable_script(&sequence_editor, &sequence_script)?;
@@ -2064,7 +2088,12 @@ fn run_scripted_rebase(
     if autosquash {
         args.push("--autosquash".to_string());
     }
-    args.extend(rebase_base_args(repo_path, commit));
+    if todo_verb == "squash" {
+        let parent = git_stdout(repo_path, ["rev-parse", &format!("{commit}^")])?;
+        args.extend(rebase_base_args(repo_path, &parent));
+    } else {
+        args.extend(rebase_base_args(repo_path, commit));
+    }
 
     git_with_env(repo_path, args.iter().map(String::as_str), &envs)
 }
@@ -4706,6 +4735,220 @@ mod tests {
             .expect("detail should load");
 
         assert_eq!(detail.merge_state, MergeState::None);
+    }
+
+    #[test]
+    fn cli_backend_creates_fixup_commit_for_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.append_file("notes.md", "fixup line\n")
+            .expect("append staged fixup");
+        repo.stage("notes.md").expect("stage fixup file");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:create-fixup-commit"),
+                repo_id,
+                command: GitCommand::CreateFixupCommit { commit: target },
+            })
+            .expect("create fixup should succeed");
+
+        assert!(outcome.summary.contains("Created fixup commit"));
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "4"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%s", "-n", "2"])
+                    .expect("log")
+            )
+            .expect("log text"),
+            "fixup! second\nadd lib"
+        );
+        assert!(stdout_string(
+            repo.git_capture(["show", "HEAD:notes.md"])
+                .expect("show notes")
+        )
+        .expect("notes text")
+        .contains("fixup line"));
+    }
+
+    #[test]
+    fn cli_backend_applies_existing_fixup_commits_with_autosquash() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.append_file("notes.md", "fixup line\n")
+            .expect("append staged fixup");
+        repo.stage("notes.md").expect("stage fixup file");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:create-fixup-commit"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateFixupCommit {
+                    commit: target.clone(),
+                },
+            })
+            .expect("create fixup should succeed");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:apply-fixups-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::ApplyFixups,
+                },
+            })
+            .expect("apply fixups should succeed");
+
+        assert!(outcome.summary.contains("Applied fixup autosquash"));
+        assert_eq!(repo.status_porcelain().expect("status"), "");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "3"
+        );
+        assert!(!stdout_string(
+            repo.git_capture(["log", "--format=%s", "-n", "3"])
+                .expect("log")
+        )
+        .expect("log text")
+        .contains("fixup!"));
+        assert!(stdout_string(
+            repo.git_capture(["show", "HEAD~1:notes.md"])
+                .expect("show notes")
+        )
+        .expect("notes text")
+        .contains("fixup line"));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert_eq!(detail.merge_state, MergeState::None);
+    }
+
+    #[test]
+    fn cli_backend_squashes_selected_commit_into_parent() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-squash-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::Squash,
+                },
+            })
+            .expect("squash flow should succeed");
+
+        assert!(outcome.summary.contains("Squashed"));
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "2"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%s", "-n", "2"])
+                    .expect("log")
+            )
+            .expect("log text"),
+            "add lib\ninitial"
+        );
+        assert!(stdout_string(
+            repo.git_capture(["show", "HEAD~1:history.txt"])
+                .expect("show history")
+        )
+        .expect("history text")
+        .contains("two"));
+        assert!(stdout_string(
+            repo.git_capture(["show", "HEAD~1:notes.md"])
+                .expect("show notes")
+        )
+        .expect("notes text")
+        .contains("# Notes"));
+    }
+
+    #[test]
+    fn cli_backend_drops_selected_commit_from_history() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-drop-rebase"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::Drop,
+                },
+            })
+            .expect("drop flow should succeed");
+
+        assert!(outcome.summary.contains("Dropped"));
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["rev-list", "--count", "HEAD"])
+                    .expect("commit count")
+            )
+            .expect("count"),
+            "2"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["log", "--format=%s", "-n", "2"])
+                    .expect("log")
+            )
+            .expect("log text"),
+            "add lib\ninitial"
+        );
+        let err = repo
+            .git_capture(["show", "HEAD~1:notes.md"])
+            .expect_err("dropped commit should remove notes file");
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "HEAD~1:history.txt"])
+                    .expect("show history")
+            )
+            .expect("history text"),
+            "one"
+        );
     }
 
     #[test]

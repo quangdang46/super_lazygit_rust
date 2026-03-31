@@ -71,6 +71,9 @@ pub enum RebaseStartMode {
     Interactive,
     Amend,
     Fixup,
+    ApplyFixups,
+    Squash,
+    Drop,
     Reword { message: String },
 }
 
@@ -96,6 +99,9 @@ pub enum GitCommand {
     CommitStagedWithEditor,
     AmendHead {
         message: Option<String>,
+    },
+    CreateFixupCommit {
+        commit: String,
     },
     RewordCommitWithEditor {
         commit: String,

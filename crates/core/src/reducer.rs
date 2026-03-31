@@ -628,6 +628,34 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::CreateFixupCommit => {
+            match pending_history_commit_operation(state, |detail, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before creating a fixup.".to_string());
+                }
+                if staged_file_count(detail) == 0 {
+                    return Err("Stage changes before creating a fixup commit.".to_string());
+                }
+                Ok((
+                    commit.oid.clone(),
+                    format!("{} {}", commit.short_oid, commit.summary),
+                ))
+            }) {
+                Ok(Some((repo_id, (commit, summary)))) => {
+                    let job = git_job(
+                        repo_id,
+                        GitCommand::CreateFixupCommit {
+                            commit: commit.clone(),
+                        },
+                    );
+                    enqueue_git_job(state, &job, &format!("Create fixup commit for {summary}"));
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => push_warning(state, "Select a commit before creating a fixup."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::FixupSelectedCommit => {
             match pending_history_commit_operation(state, |detail, commit, selected_index| {
                 if selected_index == 0 {
@@ -645,6 +673,60 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     open_confirmation_modal(state, repo_id, operation)
                 }
                 Ok(None) => push_warning(state, "Select a commit before starting fixup."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::ApplyFixupCommits => {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before applying fixups.".to_string());
+                }
+                Ok(ConfirmableOperation::ApplyFixupCommits {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before applying fixups."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::SquashSelectedCommit => {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before starting squash.".to_string());
+                }
+                Ok(ConfirmableOperation::SquashCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before starting squash."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::DropSelectedCommit => {
+            match pending_history_commit_operation(state, |_, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err("Select an older commit before dropping it.".to_string());
+                }
+                Ok(ConfirmableOperation::DropCommit {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before dropping it."),
                 Err(message) => push_warning(state, message),
             }
             effects.push(Effect::ScheduleRender);
@@ -3131,8 +3213,17 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::AmendCommit { summary, .. } => {
             format!("Amend {summary}")
         }
+        ConfirmableOperation::ApplyFixupCommits { summary, .. } => {
+            format!("Apply fixup commits for {summary}")
+        }
         ConfirmableOperation::FixupCommit { summary, .. } => {
             format!("Fixup {summary}")
+        }
+        ConfirmableOperation::SquashCommit { summary, .. } => {
+            format!("Squash {summary}")
+        }
+        ConfirmableOperation::DropCommit { summary, .. } => {
+            format!("Drop {summary}")
         }
         ConfirmableOperation::CherryPickCommit { summary, .. } => {
             format!("Cherry-pick {summary}")
@@ -3207,12 +3298,33 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Start older-commit amend",
         ),
+        ConfirmableOperation::ApplyFixupCommits { commit, .. } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::ApplyFixups,
+            },
+            "Apply fixup autosquash",
+        ),
         ConfirmableOperation::FixupCommit { commit, .. } => (
             GitCommand::StartCommitRebase {
                 commit,
                 mode: RebaseStartMode::Fixup,
             },
             "Start fixup autosquash",
+        ),
+        ConfirmableOperation::SquashCommit { commit, .. } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::Squash,
+            },
+            "Start squash rebase",
+        ),
+        ConfirmableOperation::DropCommit { commit, .. } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::Drop,
+            },
+            "Drop selected commit",
         ),
         ConfirmableOperation::CherryPickCommit { commit, .. } => (
             GitCommand::CherryPickCommit { commit },
@@ -4110,8 +4222,24 @@ fn merge_rebase_menu_entries(state: &AppState) -> Vec<MenuEntry> {
                     action: Action::AmendSelectedCommit,
                 },
                 MenuEntry {
+                    label: "Create fixup commit for selected commit".to_string(),
+                    action: Action::CreateFixupCommit,
+                },
+                MenuEntry {
                     label: "Fixup onto selected commit".to_string(),
                     action: Action::FixupSelectedCommit,
+                },
+                MenuEntry {
+                    label: "Apply pending fixup/squash commits".to_string(),
+                    action: Action::ApplyFixupCommits,
+                },
+                MenuEntry {
+                    label: "Squash selected commit into its parent".to_string(),
+                    action: Action::SquashSelectedCommit,
+                },
+                MenuEntry {
+                    label: "Drop selected commit".to_string(),
+                    action: Action::DropSelectedCommit,
                 },
                 MenuEntry {
                     label: "Reword selected commit".to_string(),
@@ -6270,11 +6398,15 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::CommitStagedNoVerify { .. } => "commit-staged-no-verify",
         GitCommand::CommitStagedWithEditor => "commit-staged-editor",
         GitCommand::AmendHead { .. } => "amend-head",
+        GitCommand::CreateFixupCommit { .. } => "create-fixup-commit",
         GitCommand::RewordCommitWithEditor { .. } => "reword-commit-editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             RebaseStartMode::Interactive => "start-interactive-rebase",
             RebaseStartMode::Amend => "start-amend-rebase",
             RebaseStartMode::Fixup => "start-fixup-rebase",
+            RebaseStartMode::ApplyFixups => "apply-fixups-rebase",
+            RebaseStartMode::Squash => "start-squash-rebase",
+            RebaseStartMode::Drop => "start-drop-rebase",
             RebaseStartMode::Reword { .. } => "start-reword-rebase",
         },
         GitCommand::CherryPickCommit { .. } => "cherry-pick-commit",
@@ -13781,6 +13913,383 @@ mod tests {
                 .back()
                 .map(|notification| notification.text.as_str()),
             Some("Stage changes before starting fixup.")
+        );
+    }
+
+    #[test]
+    fn create_fixup_commit_requires_staged_changes() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CreateFixupCommit));
+
+        assert!(result.state.background_jobs.is_empty());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Stage changes before creating a fixup commit.")
+        );
+    }
+
+    #[test]
+    fn create_fixup_commit_queues_git_job_for_selected_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("notes.md"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: Some(FileStatusKind::Modified),
+                        unstaged_kind: None,
+                    }],
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CreateFixupCommit));
+        let job_id = JobId::new("git:repo-1:create-fixup-commit");
+
+        assert_eq!(
+            result.state.background_jobs.get(&job_id).map(|job| (
+                job.kind,
+                job.target_repo.clone(),
+                job.state.clone()
+            )),
+            Some((
+                BackgroundJobKind::GitCommand,
+                Some(repo_id.clone()),
+                BackgroundJobState::Queued
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Create fixup commit for old1234 older commit".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::RunGitCommand(GitCommandRequest {
+                    job_id,
+                    repo_id,
+                    command: GitCommand::CreateFixupCommit {
+                        commit: "older".to_string(),
+                    },
+                }),
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_fixup_commits_requires_older_commit_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "head".to_string(),
+                        short_oid: "head".to_string(),
+                        summary: "HEAD".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ApplyFixupCommits));
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select an older commit before applying fixups.")
+        );
+    }
+
+    #[test]
+    fn apply_fixup_commits_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ApplyFixupCommits));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::ApplyFixupCommits {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn squash_selected_commit_requires_older_commit_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "head".to_string(),
+                        short_oid: "head".to_string(),
+                        summary: "HEAD".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SquashSelectedCommit));
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select an older commit before starting squash.")
+        );
+    }
+
+    #[test]
+    fn squash_selected_commit_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SquashSelectedCommit));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::SquashCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn drop_selected_commit_requires_older_commit_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "head".to_string(),
+                        short_oid: "head".to_string(),
+                        summary: "HEAD".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DropSelectedCommit));
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select an older commit before dropping it.")
+        );
+    }
+
+    #[test]
+    fn drop_selected_commit_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DropSelectedCommit));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::DropCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
         );
     }
 
