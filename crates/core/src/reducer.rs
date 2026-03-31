@@ -1755,10 +1755,31 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         },
+        Action::CopySelectedCommitHash => {
+            let Some((repo_id, clipboard_value)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_commit_item(repo_mode).map(|commit| {
+                    let clipboard_value = if commit.short_oid.is_empty() {
+                        commit.oid.clone()
+                    } else {
+                        commit.short_oid.clone()
+                    };
+                    (repo_mode.current_repo_id.clone(), clipboard_value)
+                })
+            }) else {
+                push_warning(state, "Select a commit before copying its hash.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            let command = clipboard_shell_command(std::ffi::OsStr::new(&clipboard_value));
+            let job = shell_job(repo_id, command);
+            enqueue_shell_job(state, &job, &format!("Copy {clipboard_value}"));
+            effects.push(Effect::RunShellCommand(job));
+        }
         Action::CopySelectedStatusPath => match selected_repo_shell_target(state, false) {
             Ok(Some((repo_id, path, is_directory, _))) => {
                 let display_path = status_clipboard_path(&path, is_directory);
-                let command = clipboard_shell_command(&display_path);
+                let command = clipboard_shell_command(display_path.as_os_str());
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, &format!("Copy {}", display_path.display()));
                 effects.push(Effect::RunShellCommand(job));
@@ -5393,8 +5414,8 @@ fn status_clipboard_path(path: &std::path::Path, is_directory: bool) -> std::pat
     display_path
 }
 
-fn clipboard_shell_command(path: &std::path::Path) -> String {
-    let quoted = shell_quote(path.as_os_str());
+fn clipboard_shell_command(value: &std::ffi::OsStr) -> String {
+    let quoted = shell_quote(value);
     format!(
         "printf '%s' {quoted} | if command -v wl-copy >/dev/null 2>&1; then wl-copy; elif command -v xclip >/dev/null 2>&1; then xclip -selection clipboard; elif command -v pbcopy >/dev/null 2>&1; then pbcopy; else exit 1; fi"
     )
@@ -7336,7 +7357,45 @@ mod tests {
             vec![Effect::RunShellCommand(ShellCommandRequest {
                 job_id: JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::clipboard_shell_command(&repo_root.join(selected_path)),
+                command: super::clipboard_shell_command(repo_root.join(selected_path).as_os_str()),
+            })]
+        );
+    }
+
+    #[test]
+    fn copy_selected_commit_hash_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CopySelectedCommitHash));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunShellCommand(ShellCommandRequest {
+                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+                repo_id,
+                command: super::clipboard_shell_command(std::ffi::OsStr::new("abcdef1")),
             })]
         );
     }

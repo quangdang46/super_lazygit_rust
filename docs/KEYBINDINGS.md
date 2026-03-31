@@ -244,6 +244,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `[` / `]` | Move to the previous or next detail tab |
 | `Enter` | Open the selected commit's changed-files view |
 | `Space` | Check out the selected commit in detached-HEAD mode |
+| `Ctrl+O` | Copy the selected commit's short hash to the clipboard |
 | `3` | Reset the commits view to the current branch's linear history |
 | `a` | Switch to the all-branches commit graph, newest first |
 | `n` | Open create-branch-from-commit prompt |

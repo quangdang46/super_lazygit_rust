@@ -1605,6 +1605,17 @@ impl TuiApp {
                             {
                                 return Some(Action::OpenSelectedStatusPathInExternalDiffTool);
                             }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                                && self.binding_matches_action(
+                                    "copy_selected_commit_hash",
+                                    raw,
+                                    normalized,
+                                    &["ctrl+o"],
+                                )
+                            {
+                                return Some(Action::CopySelectedCommitHash);
+                            }
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
@@ -4995,13 +5006,13 @@ fn repo_commit_context_line(
     total_count: usize,
 ) -> String {
     let mut line = if commit_history_mode.is_graph() {
-        "Context: Enter files. 3 current branch. a/A graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
+        "Context: Enter files. Ctrl+O copy hash. 3 current branch. a/A graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
             .to_string()
     } else if commit_history_ref.is_some() {
-        "Context: Enter files. 3 current branch. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
+        "Context: Enter files. Ctrl+O copy hash. 3 current branch. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees."
             .to_string()
     } else {
-        "Context: Enter files. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees.".to_string()
+        "Context: Enter files. Ctrl+O copy hash. a graph. Ctrl+L log menu. 0 main. / filter. w worktrees.".to_string()
     };
     if let Some(filter_line) =
         repo_filter_summary_line(filter_query, filter_focused, visible_count, total_count)
@@ -6689,7 +6700,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  3 current branch  a graph  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8474,6 +8485,44 @@ mod tests {
             key: "ctrl+t".to_string(),
         })));
         assert!(difftool
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
+    }
+
+    #[test]
+    fn route_repository_commit_history_ctrl_o_copies_selected_hash() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut app = TuiApp::new(state, AppConfig::default());
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+o".to_string(),
+        })));
+
+        assert!(result
             .effects
             .iter()
             .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
@@ -13644,8 +13693,9 @@ mod tests {
 
         let rendered = app.render_to_string();
 
-        assert!(rendered.contains("Context: Enter files. 3 current branch."));
+        assert!(rendered.contains("Ctrl+O copy hash."));
         assert!(rendered.contains("3 returns to current-branch history"));
+        assert!(repo_help_text(app.state()).contains("Ctrl+O copy hash"));
         assert!(repo_help_text(app.state()).contains("Ctrl+L log menu"));
     }
 
