@@ -247,6 +247,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `a` | Switch to the all-branches commit graph, newest first |
 | `A` | Switch to the all-branches commit graph, oldest first |
 | `n` | Open create-branch-from-commit prompt |
+| `T` | Open create-tag-from-commit prompt |
 | `i` | Start interactive rebase from the selected commit |
 | `A` | Open amend-selected-commit confirmation |
 | `f` | Create a fixup commit for the selected commit from the currently staged changes |
@@ -361,6 +362,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Enter` | Open the selected reflog target in the all-branches commit history view |
 | `Space` | Check out the selected reflog target in detached HEAD |
 | `n` | Open create-branch-from-commit prompt for the selected reflog target |
+| `T` | Open create-tag-from-commit prompt for the selected reflog target |
 | `C` | Open cherry-pick confirmation for the selected reflog target |
 | `S` | Open soft-reset confirmation using the selected reflog selector |
 | `M` | Open mixed-reset confirmation using the selected reflog selector |

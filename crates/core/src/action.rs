@@ -57,6 +57,7 @@ pub enum Action {
     CheckoutSelectedCommit,
     CheckoutSelectedCommitFile,
     CreateBranchFromSelectedCommit,
+    CreateTagFromSelectedCommit,
     StartInteractiveRebase,
     AmendSelectedCommit,
     CreateFixupCommit,

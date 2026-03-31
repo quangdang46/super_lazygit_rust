@@ -587,6 +587,24 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 }
             }
         }
+        Action::CreateTagFromSelectedCommit => match pending_checkoutable_history_target(state) {
+            Ok(Some((repo_id, commit, summary))) => {
+                open_input_prompt(
+                    state,
+                    repo_id,
+                    InputPromptOperation::CreateTagFromCommit { commit, summary },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+            Ok(None) => {
+                push_warning(state, "Select a commit before creating a tag.");
+                effects.push(Effect::ScheduleRender);
+            }
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
         Action::StartInteractiveRebase => {
             match pending_history_commit_operation(state, |_, commit, selected_index| {
                 if selected_index == 0 {
@@ -3463,6 +3481,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranch => "Create branch".to_string(),
         InputPromptOperation::CreateRemote => "Add remote".to_string(),
         InputPromptOperation::CreateTag => "Create tag".to_string(),
+        InputPromptOperation::CreateTagFromCommit { summary, .. } => {
+            format!("New tag name from {summary}")
+        }
         InputPromptOperation::CreateBranchFromCommit { summary, .. } => {
             format!("New branch name from {summary}")
         }
@@ -3503,6 +3524,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::CreateRemote => String::new(),
         InputPromptOperation::CreateTag => String::new(),
+        InputPromptOperation::CreateTagFromCommit { .. } => String::new(),
         InputPromptOperation::CreateBranchFromCommit { .. } => String::new(),
         InputPromptOperation::CreateBranchFromRemote { suggested_name, .. } => {
             suggested_name.clone()
@@ -3594,6 +3616,16 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
                 },
             )),
             format!("Create tag {value}"),
+        ),
+        InputPromptOperation::CreateTagFromCommit { commit, summary } => (
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::CreateTagFromCommit {
+                    tag_name: value.clone(),
+                    commit,
+                },
+            )),
+            format!("Create tag {value} from {summary}"),
         ),
         InputPromptOperation::CreateBranchFromCommit { commit, summary } => (
             PromptSubmission::Git(git_job(
@@ -6422,6 +6454,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::SkipRebase => "skip-rebase",
         GitCommand::CreateBranch { .. } => "create-branch",
         GitCommand::CreateTag { .. } => "create-tag",
+        GitCommand::CreateTagFromCommit { .. } => "create-tag-from-commit",
         GitCommand::CreateBranchFromCommit { .. } => "create-branch-from-commit",
         GitCommand::CreateBranchFromRef { .. } => "create-branch-from-ref",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
@@ -10972,6 +11005,56 @@ mod tests {
     }
 
     #[test]
+    fn submit_create_tag_from_commit_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "New tag name from abcdef1 add lib",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateTagFromCommit {
+                    commit: "abcdef1234567890".to_string(),
+                    summary: "abcdef1 add lib".to_string(),
+                },
+                value: "release-candidate".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-tag-from-commit");
+
+        assert!(result.state.pending_input_prompt.is_none());
+        assert!(result.state.modal_stack.is_empty());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateTagFromCommit {
+                    tag_name: "release-candidate".to_string(),
+                    commit: "abcdef1234567890".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
     fn submit_stash_rename_prompt_queues_git_job_and_allows_empty_messages() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -13865,6 +13948,54 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(ConfirmableOperation::AmendCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn create_tag_from_selected_commit_opens_prompt_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CreateTagFromSelectedCommit));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(InputPromptOperation::CreateTagFromCommit {
                 commit: "older".to_string(),
                 summary: "old1234 older commit".to_string(),
             })

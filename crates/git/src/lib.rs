@@ -729,6 +729,10 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["tag", tag_name.as_str()])?;
                 format!("Created tag {tag_name}")
             }
+            GitCommand::CreateTagFromCommit { tag_name, commit } => {
+                git(&repo_path, ["tag", tag_name.as_str(), commit.as_str()])?;
+                format!("Created tag {tag_name} at {commit}")
+            }
             GitCommand::CreateBranchFromCommit {
                 branch_name,
                 commit,
@@ -1140,6 +1144,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::AddRemote { .. } => "add_remote",
         GitCommand::CreateTag { .. } => "create_tag",
+        GitCommand::CreateTagFromCommit { .. } => "create_tag_from_commit",
         GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
         GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
@@ -5859,6 +5864,41 @@ mod tests {
             "refs/tags/release-candidate",
         ])
         .expect("local tag should be deleted");
+    }
+
+    #[test]
+    fn cli_backend_creates_tag_from_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target_commit = repo.rev_parse("HEAD~1").expect("target commit");
+        let head_commit = repo.rev_parse("HEAD").expect("head commit");
+
+        let created = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-tag-from-commit"),
+                repo_id,
+                command: GitCommand::CreateTagFromCommit {
+                    tag_name: "release-prev".to_string(),
+                    commit: target_commit.clone(),
+                },
+            })
+            .expect("create tag from commit should succeed");
+
+        assert_eq!(
+            created.summary,
+            format!("Created tag release-prev at {target_commit}")
+        );
+        assert_eq!(
+            repo.rev_parse("refs/tags/release-prev^{commit}")
+                .expect("tag target"),
+            target_commit
+        );
+        assert_ne!(
+            repo.rev_parse("refs/tags/release-prev^{commit}")
+                .expect("tag target"),
+            head_commit
+        );
     }
 
     #[test]

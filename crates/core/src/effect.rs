@@ -136,6 +136,10 @@ pub enum GitCommand {
     CreateTag {
         tag_name: String,
     },
+    CreateTagFromCommit {
+        tag_name: String,
+        commit: String,
+    },
     CreateBranchFromCommit {
         branch_name: String,
         commit: String,

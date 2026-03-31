@@ -1584,6 +1584,17 @@ impl TuiApp {
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
                             && self.binding_matches_action(
+                                "open_create_tag_from_commit_prompt",
+                                raw,
+                                normalized,
+                                &["T"],
+                            )
+                        {
+                            return Some(Action::CreateTagFromSelectedCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
                                 "start_interactive_rebase",
                                 raw,
                                 normalized,
@@ -1971,6 +1982,15 @@ impl TuiApp {
                             &["n"],
                         ) {
                             return Some(Action::CreateBranchFromSelectedCommit);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_create_tag_from_commit_prompt",
+                            raw,
+                            normalized,
+                            &["T"],
+                        ) {
+                            return Some(Action::CreateTagFromSelectedCommit);
                         }
 
                         if self.binding_matches_action(
@@ -5500,6 +5520,9 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         super_lazygit_core::InputPromptOperation::CreateTag => {
             "Enter the new tag name. The tag will be created at the current HEAD.".to_string()
         }
+        super_lazygit_core::InputPromptOperation::CreateTagFromCommit { summary, .. } => format!(
+            "Enter the new tag name. The tag will be created from {summary}."
+        ),
         super_lazygit_core::InputPromptOperation::CreateBranchFromCommit {
             summary, ..
         } => format!(
@@ -6385,7 +6408,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, i starts a rebase, A amends, F fixups, s squashes, d drops, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                    "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, n branches off the selected commit, T tags it, i starts a rebase, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
@@ -6405,7 +6428,7 @@ fn default_status_text(state: &AppState) -> String {
                             }
                         }
                     } else if repo_mode.active_subview == RepoSubview::Reflog {
-                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, n branches off it, C cherry-picks, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and u preserves the explicit restore flow."
+                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, n branches off it, T tags it, C cherry-picks, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and u preserves the explicit restore flow."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Worktrees {
                         "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, b opens submodules, and n/o/d manage the selected worktree."
@@ -9370,6 +9393,41 @@ mod tests {
     }
 
     #[test]
+    fn repo_mode_commit_detail_shift_t_opens_tag_from_commit_prompt() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "T".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::InputPromptOperation::CreateTagFromCommit {
+                    commit: "abcdef1234567890".to_string(),
+                    summary: "abcdef1 add lib".to_string(),
+                }
+            )
+        );
+    }
+
+    #[test]
     fn repo_mode_commit_detail_routes_interactive_rebase_start() {
         let state = AppState {
             mode: AppMode::Repository,
@@ -10985,6 +11043,23 @@ mod tests {
                 .map(|prompt| &prompt.operation),
             Some(
                 &super_lazygit_core::InputPromptOperation::CreateBranchFromCommit {
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 commit: add repo-mode stash flows".to_string(),
+                }
+            )
+        );
+
+        let mut tag_app = TuiApp::new(state.clone(), AppConfig::default());
+        let tag = tag_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "T".to_string(),
+        })));
+        assert_eq!(
+            tag.state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| &prompt.operation),
+            Some(
+                &super_lazygit_core::InputPromptOperation::CreateTagFromCommit {
                     commit: "1234567890abcdef".to_string(),
                     summary: "1234567 commit: add repo-mode stash flows".to_string(),
                 }
@@ -12771,6 +12846,20 @@ mod tests {
 
         assert!(copy.contains("new tag name"));
         assert!(copy.contains("created at the current HEAD"));
+    }
+
+    #[test]
+    fn create_tag_from_commit_prompt_copy_mentions_selected_commit() {
+        let copy = input_prompt_copy(
+            &super_lazygit_core::InputPromptOperation::CreateTagFromCommit {
+                commit: "abcdef1234567890".to_string(),
+                summary: "abcdef1 add lib".to_string(),
+            },
+        );
+
+        assert!(copy.contains("new tag name"));
+        assert!(copy.contains("abcdef1 add lib"));
+        assert!(copy.contains("created from"));
     }
 
     #[test]

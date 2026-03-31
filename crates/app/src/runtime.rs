@@ -658,6 +658,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::CreateBranch { .. } => "create_branch",
         GitCommand::AddRemote { .. } => "add_remote",
         GitCommand::CreateTag { .. } => "create_tag",
+        GitCommand::CreateTagFromCommit { .. } => "create_tag_from_commit",
         GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
         GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",

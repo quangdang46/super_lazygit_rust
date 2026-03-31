@@ -235,6 +235,10 @@ pub enum InputPromptOperation {
     CreateBranch,
     CreateRemote,
     CreateTag,
+    CreateTagFromCommit {
+        commit: String,
+        summary: String,
+    },
     CreateBranchFromCommit {
         commit: String,
         summary: String,
