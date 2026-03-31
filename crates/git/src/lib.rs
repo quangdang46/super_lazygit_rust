@@ -10,12 +10,13 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget, Diagnostics,
-    DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus,
-    FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeState, PatchApplicationMode,
-    RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteItem,
-    RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode,
-    SubmoduleItem, TagItem, Timestamp, WatcherFreshness, WorktreeItem,
+    BisectState, BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget,
+    Diagnostics, DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel,
+    DiffPresentation, FileStatus, FileStatusKind, GitCommand, GitCommandRequest, HeadKind,
+    MergeState, PatchApplicationMode, RebaseKind, RebaseStartMode, RebaseState, ReflogItem,
+    RemoteBranchItem, RemoteItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode,
+    SelectedHunk, StashItem, StashMode, SubmoduleItem, TagItem, Timestamp, WatcherFreshness,
+    WorktreeItem,
 };
 use thiserror::Error;
 
@@ -541,6 +542,7 @@ impl GitBackend for CliGitBackend {
             tags: read_tags(&repo_path),
             commits: commit_history.commits,
             commit_graph_lines: commit_history.graph_lines,
+            bisect_state: read_bisect_state(&repo_path),
             rebase_state: read_rebase_state(&repo_path),
             stashes: read_stashes(&repo_path),
             reflog_items: read_reflog(&repo_path),
@@ -619,6 +621,35 @@ impl GitBackend for CliGitBackend {
                     None => git(&repo_path, ["commit", "--amend", "--no-edit"])?,
                 }
                 "Amended HEAD commit".to_string()
+            }
+            GitCommand::StartBisect { commit, term } => {
+                git(&repo_path, ["bisect", "start"])?;
+                git(&repo_path, ["bisect", term.as_str(), commit])?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!("Started bisect by marking {short} {subject} as {term}")
+            }
+            GitCommand::MarkBisect { commit, term } => {
+                git(&repo_path, ["bisect", term.as_str(), commit])?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!("Marked {short} {subject} as {term} for bisect")
+            }
+            GitCommand::SkipBisect { commit } => {
+                git(&repo_path, ["bisect", "skip", commit])?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!("Skipped {short} {subject} during bisect")
+            }
+            GitCommand::ResetBisect => {
+                git(&repo_path, ["bisect", "reset"])?;
+                "Reset active bisect".to_string()
             }
             GitCommand::CreateFixupCommit { commit } => {
                 git(&repo_path, ["commit", "--fixup", commit])?;
@@ -1125,6 +1156,10 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CommitStagedNoVerify { .. } => "commit_staged_no_verify",
         GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::StartBisect { .. } => "start_bisect",
+        GitCommand::MarkBisect { .. } => "mark_bisect",
+        GitCommand::SkipBisect { .. } => "skip_bisect",
+        GitCommand::ResetBisect => "reset_bisect",
         GitCommand::CreateFixupCommit { .. } => "create_fixup_commit",
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
@@ -3041,6 +3076,50 @@ fn read_rebase_state(repo_path: &Path) -> Option<RebaseState> {
     })
 }
 
+fn read_bisect_state(repo_path: &Path) -> Option<BisectState> {
+    if !git_path_exists(repo_path, "BISECT_LOG") {
+        return None;
+    }
+
+    let (bad_term, good_term) = resolve_git_path(repo_path, "BISECT_TERMS")
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|contents| {
+            let mut terms = contents
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToString::to_string);
+            (
+                terms.next().unwrap_or_else(|| "bad".to_string()),
+                terms.next().unwrap_or_else(|| "good".to_string()),
+            )
+        })
+        .unwrap_or_else(|| ("bad".to_string(), "good".to_string()));
+
+    let current_commit = if git_path_exists(repo_path, "refs/bisect/bad")
+        && resolve_git_path(repo_path, "refs/bisect")
+            .and_then(|path| fs::read_dir(path).ok())
+            .is_some_and(|entries| {
+                entries
+                    .flatten()
+                    .any(|entry| entry.file_name().to_string_lossy().starts_with("good-"))
+            }) {
+        git_stdout(repo_path, ["rev-parse", "HEAD"]).ok()
+    } else {
+        None
+    };
+    let current_summary = current_commit
+        .as_deref()
+        .and_then(|commit| git_stdout(repo_path, ["show", "-s", "--format=%s", commit]).ok());
+
+    Some(BisectState {
+        bad_term,
+        good_term,
+        current_commit,
+        current_summary,
+    })
+}
+
 fn read_merge_state(repo_path: &Path) -> MergeState {
     if git_path_exists(repo_path, "MERGE_HEAD") {
         MergeState::MergeInProgress
@@ -4521,6 +4600,126 @@ mod tests {
             .file_tree
             .iter()
             .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
+    fn cli_backend_reads_bisect_in_progress_state() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.git(["bisect", "start"]).expect("start bisect");
+        repo.git(["bisect", "bad", "HEAD"]).expect("mark bad");
+        repo.git(["bisect", "good", "HEAD~2"]).expect("mark good");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .map(|state| state.bad_term.as_str()),
+            Some("bad")
+        );
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .map(|state| state.good_term.as_str()),
+            Some("good")
+        );
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .and_then(|state| state.current_summary.as_deref()),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn cli_backend_runs_bisect_start_mark_and_reset_commands() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let bad_commit = repo.rev_parse("HEAD").expect("bad commit");
+        let good_commit = repo.rev_parse("HEAD~2").expect("good commit");
+
+        let started = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:start-bisect"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::StartBisect {
+                    commit: bad_commit,
+                    term: "bad".to_string(),
+                },
+            })
+            .expect("start bisect succeeds");
+        assert!(started.summary.contains("Started bisect"));
+
+        let marked = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:mark-bisect"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::MarkBisect {
+                    commit: good_commit,
+                    term: "good".to_string(),
+                },
+            })
+            .expect("mark bisect succeeds");
+        assert!(marked.summary.contains("Marked"));
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: repo_id.clone(),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .and_then(|state| state.current_summary.as_deref()),
+            Some("second")
+        );
+
+        let reset = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:reset-bisect"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::ResetBisect,
+            })
+            .expect("reset bisect succeeds");
+        assert_eq!(reset.summary, "Reset active bisect");
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+        assert!(detail.bisect_state.is_none());
     }
 
     #[test]

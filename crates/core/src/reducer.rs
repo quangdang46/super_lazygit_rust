@@ -605,6 +605,23 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         },
+        Action::OpenBisectOptions => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if bisect_menu_entries(state).is_empty() {
+                    push_warning(
+                        state,
+                        "Bisect options are only available from commit history when a commit is selected.",
+                    );
+                } else {
+                    open_menu(state, repo_id, MenuOperation::BisectOptions);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::StartInteractiveRebase => {
             match pending_history_commit_operation(state, |_, commit, selected_index| {
                 if selected_index == 0 {
@@ -644,6 +661,136 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 Ok(None) => push_warning(state, "Select a commit before starting amend."),
                 Err(message) => push_warning(state, message),
             }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::StartBisectBad => {
+            match pending_history_commit_operation(state, |detail, commit, _| {
+                if detail.bisect_state.is_some() {
+                    return Err("A bisect is already in progress.".to_string());
+                }
+                Ok((
+                    GitCommand::StartBisect {
+                        commit: commit.oid.clone(),
+                        term: "bad".to_string(),
+                    },
+                    format!(
+                        "Start bisect by marking {} {} as bad",
+                        commit.short_oid, commit.summary
+                    ),
+                ))
+            }) {
+                Ok(Some((repo_id, (command, summary)))) => {
+                    let job = git_job(repo_id, command);
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => push_warning(state, "Select a commit before starting bisect."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::StartBisectGood => {
+            match pending_history_commit_operation(state, |detail, commit, _| {
+                if detail.bisect_state.is_some() {
+                    return Err("A bisect is already in progress.".to_string());
+                }
+                Ok((
+                    GitCommand::StartBisect {
+                        commit: commit.oid.clone(),
+                        term: "good".to_string(),
+                    },
+                    format!(
+                        "Start bisect by marking {} {} as good",
+                        commit.short_oid, commit.summary
+                    ),
+                ))
+            }) {
+                Ok(Some((repo_id, (command, summary)))) => {
+                    let job = git_job(repo_id, command);
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => push_warning(state, "Select a commit before starting bisect."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::MarkBisectBad => {
+            match pending_bisect_target(state, |detail, commit, summary| {
+                let term = detail
+                    .bisect_state
+                    .as_ref()
+                    .map(|state| state.bad_term.clone())
+                    .unwrap_or_else(|| "bad".to_string());
+                Ok((
+                    GitCommand::MarkBisect { commit, term },
+                    format!("Mark {summary} as bad for bisect"),
+                ))
+            }) {
+                Ok(Some((repo_id, (command, summary)))) => {
+                    let job = git_job(repo_id, command);
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => push_warning(state, "Select a commit before marking bisect state."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::MarkBisectGood => {
+            match pending_bisect_target(state, |detail, commit, summary| {
+                let term = detail
+                    .bisect_state
+                    .as_ref()
+                    .map(|state| state.good_term.clone())
+                    .unwrap_or_else(|| "good".to_string());
+                Ok((
+                    GitCommand::MarkBisect { commit, term },
+                    format!("Mark {summary} as good for bisect"),
+                ))
+            }) {
+                Ok(Some((repo_id, (command, summary)))) => {
+                    let job = git_job(repo_id, command);
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => push_warning(state, "Select a commit before marking bisect state."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::SkipBisect => {
+            match pending_bisect_target(state, |_, commit, summary| {
+                Ok((
+                    GitCommand::SkipBisect { commit },
+                    format!("Skip {summary} during bisect"),
+                ))
+            }) {
+                Ok(Some((repo_id, (command, summary)))) => {
+                    let job = git_job(repo_id, command);
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => push_warning(state, "Select a commit before skipping bisect state."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::ResetBisect => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                repo_mode
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.bisect_state.as_ref())
+                    .map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(state, "No bisect is currently in progress.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            let job = git_job(repo_id, GitCommand::ResetBisect);
+            enqueue_git_job(state, &job, "Reset active bisect");
+            effects.push(Effect::RunGitCommand(job));
             effects.push(Effect::ScheduleRender);
         }
         Action::CreateFixupCommit => {
@@ -3916,6 +4063,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::StashOptions => "Stash options",
         MenuOperation::FilterOptions => "Filter options",
         MenuOperation::DiffOptions => "Diffing options",
+        MenuOperation::BisectOptions => "Bisect options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
         MenuOperation::IgnoreOptions => "Ignore options",
         MenuOperation::StatusResetOptions => "Reset options",
@@ -3930,6 +4078,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::StashOptions => 5,
         MenuOperation::FilterOptions => filter_menu_entries(state).len(),
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
+        MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
         MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
         MenuOperation::StatusResetOptions => status_reset_menu_entries(state).len(),
@@ -4027,6 +4176,24 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
         }
         MenuOperation::DiffOptions => {
             let entries = diff_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::BisectOptions => {
+            let entries = bisect_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -4384,6 +4551,63 @@ fn merge_rebase_menu_entries(state: &AppState) -> Vec<MenuEntry> {
     }
 
     entries
+}
+
+fn bisect_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    if repo_mode.active_subview != crate::state::RepoSubview::Commits
+        || repo_mode.commit_subview_mode != crate::state::CommitSubviewMode::History
+    {
+        return Vec::new();
+    }
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+    if history_action_block_reason(&detail.merge_state).is_some() {
+        return Vec::new();
+    }
+    if selected_commit_entry(repo_mode).is_none() {
+        return Vec::new();
+    }
+
+    if let Some(bisect) = detail.bisect_state.as_ref() {
+        let target_label = if bisect.current_commit.is_some() {
+            "current bisect commit"
+        } else {
+            "selected commit"
+        };
+        vec![
+            MenuEntry {
+                label: format!("Mark {target_label} as {}", bisect.bad_term),
+                action: Action::MarkBisectBad,
+            },
+            MenuEntry {
+                label: format!("Mark {target_label} as {}", bisect.good_term),
+                action: Action::MarkBisectGood,
+            },
+            MenuEntry {
+                label: format!("Skip {target_label}"),
+                action: Action::SkipBisect,
+            },
+            MenuEntry {
+                label: "Reset active bisect".to_string(),
+                action: Action::ResetBisect,
+            },
+        ]
+    } else {
+        vec![
+            MenuEntry {
+                label: "Start bisect by marking selected commit as bad".to_string(),
+                action: Action::StartBisectBad,
+            },
+            MenuEntry {
+                label: "Start bisect by marking selected commit as good".to_string(),
+                action: Action::StartBisectGood,
+            },
+        ]
+    }
 }
 
 fn ignore_menu_entries(state: &AppState) -> Vec<MenuEntry> {
@@ -5586,6 +5810,52 @@ where
     )))
 }
 
+fn pending_bisect_target<T, F>(
+    state: &AppState,
+    build: F,
+) -> Result<Option<(crate::state::RepoId, T)>, String>
+where
+    F: FnOnce(&crate::state::RepoDetail, String, String) -> Result<T, String>,
+{
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(message) = history_action_block_reason(&detail.merge_state) {
+        return Err(message.to_string());
+    }
+    let Some(bisect_state) = detail.bisect_state.as_ref() else {
+        return Err("No bisect is currently in progress.".to_string());
+    };
+
+    let target = if let Some(current_commit) = bisect_state.current_commit.clone() {
+        let summary = bisect_state
+            .current_summary
+            .as_ref()
+            .map(|summary| format!("{} {}", short_oid_label(&current_commit), summary))
+            .unwrap_or_else(|| short_oid_label(&current_commit));
+        Some((current_commit, summary))
+    } else {
+        selected_commit_entry(repo_mode).map(|(_, commit)| {
+            (
+                commit.oid.clone(),
+                format!("{} {}", commit.short_oid, commit.summary),
+            )
+        })
+    };
+
+    let Some((commit, summary)) = target else {
+        return Ok(None);
+    };
+
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        build(detail, commit, summary)?,
+    )))
+}
+
 fn history_action_block_reason(merge_state: &MergeState) -> Option<&'static str> {
     match merge_state {
         MergeState::None => None,
@@ -5594,6 +5864,10 @@ fn history_action_block_reason(merge_state: &MergeState) -> Option<&'static str>
         MergeState::CherryPickInProgress => Some("A cherry-pick is already in progress."),
         MergeState::RevertInProgress => Some("A revert is already in progress."),
     }
+}
+
+fn short_oid_label(oid: &str) -> String {
+    oid.chars().take(7).collect()
 }
 
 fn open_reset_confirmation(state: &mut AppState, mode: ResetMode) -> Result<bool, String> {
@@ -6563,6 +6837,10 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::ContinueRebase => "continue-rebase",
         GitCommand::AbortRebase => "abort-rebase",
         GitCommand::SkipRebase => "skip-rebase",
+        GitCommand::StartBisect { .. } => "start-bisect",
+        GitCommand::MarkBisect { .. } => "mark-bisect",
+        GitCommand::SkipBisect { .. } => "skip-bisect",
+        GitCommand::ResetBisect => "reset-bisect",
         GitCommand::CreateBranch { .. } => "create-branch",
         GitCommand::CreateTag { .. } => "create-tag",
         GitCommand::CreateTagFromCommit { .. } => "create-tag-from-commit",
@@ -9925,6 +10203,54 @@ mod tests {
     }
 
     #[test]
+    fn open_bisect_options_opens_menu_from_commit_history() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head123".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old456".to_string(),
+                            summary: "Older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenBisectOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((repo_id, MenuOperation::BisectOptions, 0, PaneId::RepoDetail))
+        );
+    }
+
+    #[test]
     fn submit_merge_rebase_options_selection_dispatches_selected_action() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -9982,6 +10308,126 @@ mod tests {
                 summary: "old456 Older commit".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn submit_bisect_options_selection_dispatches_start_and_mark_actions() {
+        let repo_id = RepoId::new("repo-1");
+        let start_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Bisect options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::BisectOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head123".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old456".to_string(),
+                            summary: "Older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let start_result = reduce(start_state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(start_result.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                Effect::RunGitCommand(GitCommandRequest {
+                    repo_id: effect_repo_id,
+                    command: GitCommand::StartBisect { commit, term },
+                    ..
+                }) if effect_repo_id == &repo_id && commit == "older" && term == "bad"
+            )
+        }));
+        assert!(start_result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ScheduleRender)));
+
+        let mark_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Bisect options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::BisectOptions,
+                selected_index: 1,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head123".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old456".to_string(),
+                            summary: "Older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    bisect_state: Some(crate::state::BisectState {
+                        bad_term: "bad".to_string(),
+                        good_term: "good".to_string(),
+                        current_commit: Some("candidate".to_string()),
+                        current_summary: Some("candidate123 Candidate commit".to_string()),
+                    }),
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let mark_result = reduce(mark_state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(mark_result.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                Effect::RunGitCommand(GitCommandRequest {
+                    repo_id: effect_repo_id,
+                    command: GitCommand::MarkBisect { commit, term },
+                    ..
+                }) if effect_repo_id == &repo_id && commit == "candidate" && term == "good"
+            )
+        }));
+        assert!(mark_result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ScheduleRender)));
     }
 
     #[test]

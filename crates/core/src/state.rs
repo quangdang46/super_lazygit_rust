@@ -308,6 +308,7 @@ pub enum MenuOperation {
     StashOptions,
     FilterOptions,
     DiffOptions,
+    BisectOptions,
     MergeRebaseOptions,
     IgnoreOptions,
     StatusResetOptions,
@@ -1073,6 +1074,7 @@ pub struct RepoDetail {
     pub tags: Vec<TagItem>,
     pub commits: Vec<CommitItem>,
     pub commit_graph_lines: Vec<String>,
+    pub bisect_state: Option<BisectState>,
     pub rebase_state: Option<RebaseState>,
     pub stashes: Vec<StashItem>,
     pub reflog_items: Vec<ReflogItem>,
@@ -1087,6 +1089,14 @@ pub enum RebaseKind {
     #[default]
     Interactive,
     Apply,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BisectState {
+    pub bad_term: String,
+    pub good_term: String,
+    pub current_commit: Option<String>,
+    pub current_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

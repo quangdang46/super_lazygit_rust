@@ -53,7 +53,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `6` | Switch detail pane to `Stash` |
 | `7` | Switch detail pane to `Reflog` |
 | `8` | Switch detail pane to `Worktrees` |
-| `b` | Switch detail pane to `Submodules` |
+| `b` outside commit history | Switch detail pane to `Submodules` |
 | `m` in most `Repo detail` contexts | Switch detail pane to `Remotes` |
 | `9` | Switch detail pane to `Remote Branches` |
 | `t` | Switch detail pane to `Tags` |
@@ -101,7 +101,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `[` / `]` | Move to the previous or next detail tab |
 | `/` | Focus the current subview filter when that subview supports filtering |
 | `w` | Jump directly to the `Worktrees` subview |
-| `b` | Jump directly to the `Submodules` subview |
+| `b` outside commit history | Jump directly to the `Submodules` subview |
 
 ### Working tree and staged panes
 
@@ -247,6 +247,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `a` | Switch to the all-branches commit graph, newest first |
 | `n` | Open create-branch-from-commit prompt |
 | `T` | Open create-tag-from-commit prompt |
+| `b` | Open the bisect options menu for the selected commit or active bisect |
 | `i` | Start interactive rebase from the selected commit |
 | `A` | Open amend-selected-commit confirmation |
 | `f` | Create a fixup commit for the selected commit from the currently staged changes |

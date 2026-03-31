@@ -1354,7 +1354,7 @@ mod tests {
 
         harness.press("open commits detail", "3");
         harness.assert_latest_contains("Detail: Commits");
-        harness.assert_latest_contains("Actions: Enter files  Space checkout  n branch  i rebase");
+        harness.assert_latest_contains("b bisect");
 
         harness.press("open selected commit files", "enter");
         harness.assert_latest_contains("Commit files");

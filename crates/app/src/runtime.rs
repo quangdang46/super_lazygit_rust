@@ -630,6 +630,10 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::CommitStagedNoVerify { .. } => "commit_staged_no_verify",
         GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
+        GitCommand::StartBisect { .. } => "start_bisect",
+        GitCommand::MarkBisect { .. } => "mark_bisect",
+        GitCommand::SkipBisect { .. } => "skip_bisect",
+        GitCommand::ResetBisect => "reset_bisect",
         GitCommand::CreateFixupCommit { .. } => "create_fixup_commit",
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {

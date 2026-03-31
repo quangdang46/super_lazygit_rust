@@ -102,6 +102,18 @@ pub enum GitCommand {
     AmendHead {
         message: Option<String>,
     },
+    StartBisect {
+        commit: String,
+        term: String,
+    },
+    MarkBisect {
+        commit: String,
+        term: String,
+    },
+    SkipBisect {
+        commit: String,
+    },
+    ResetBisect,
     CreateFixupCommit {
         commit: String,
     },

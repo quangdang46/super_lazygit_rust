@@ -1642,6 +1642,17 @@ impl TuiApp {
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
                             && self.binding_matches_action(
+                                "open_bisect_options",
+                                raw,
+                                normalized,
+                                &["b"],
+                            )
+                        {
+                            return Some(Action::OpenBisectOptions);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
                                 "amend_selected_commit",
                                 raw,
                                 normalized,
@@ -4598,9 +4609,9 @@ fn repo_commit_lines(
             visible_indices.len(),
             detail.commits.len(),
         )),
-        Line::from("Actions: Enter files  Space checkout  n branch  i rebase"),
-        Line::from("         A amend  F fixup  s squash  d drop  Ctrl+K/Ctrl+J move"),
-        Line::from("         R reword  C cherry-pick  V revert  S soft  M mixed  H hard"),
+        Line::from("Actions: Enter files  Space checkout  n branch  T tag  b bisect  i rebase"),
+        Line::from("         A amend  f create-fixup  F fixup  g apply-fixups  s squash  d drop"),
+        Line::from("         Ctrl+K/Ctrl+J move  R reword  C cherry-pick  V revert  S soft  M mixed  H hard  m menu"),
         Line::from("History:"),
     ];
 
@@ -5688,6 +5699,9 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::DiffOptions => {
             "Open the shipped comparison flows for the current branch, commit, or compare context."
         }
+        super_lazygit_core::MenuOperation::BisectOptions => {
+            "Open the shipped bisect flows for the selected commit or the active bisect candidate."
+        }
         super_lazygit_core::MenuOperation::MergeRebaseOptions => {
             "Open the shipped merge/rebase flows that make sense in the current repository context."
         }
@@ -5724,6 +5738,7 @@ fn menu_lines(
         ],
         super_lazygit_core::MenuOperation::FilterOptions => filter_menu_lines(state),
         super_lazygit_core::MenuOperation::DiffOptions => diff_menu_lines(state),
+        super_lazygit_core::MenuOperation::BisectOptions => bisect_menu_lines(state),
         super_lazygit_core::MenuOperation::MergeRebaseOptions => merge_rebase_menu_lines(state),
         super_lazygit_core::MenuOperation::IgnoreOptions => vec![
             "Add selected path to .gitignore".to_string(),
@@ -6027,7 +6042,11 @@ fn merge_rebase_menu_lines(state: &AppState) -> Vec<String> {
         entries.extend([
             "Interactive rebase from selected commit".to_string(),
             "Amend older commit at selection".to_string(),
+            "Create fixup commit for selected commit".to_string(),
             "Fixup onto selected commit".to_string(),
+            "Apply pending fixup/squash commits".to_string(),
+            "Squash selected commit into its parent".to_string(),
+            "Drop selected commit".to_string(),
             "Move selected commit up".to_string(),
             "Move selected commit down".to_string(),
             "Reword selected commit".to_string(),
@@ -6044,6 +6063,33 @@ fn merge_rebase_menu_lines(state: &AppState) -> Vec<String> {
     );
 
     entries
+}
+
+fn bisect_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+    if let Some(bisect) = detail.bisect_state.as_ref() {
+        let target_label = if bisect.current_commit.is_some() {
+            "current bisect commit"
+        } else {
+            "selected commit"
+        };
+        vec![
+            format!("Mark {target_label} as {}", bisect.bad_term),
+            format!("Mark {target_label} as {}", bisect.good_term),
+            format!("Skip {target_label}"),
+            "Reset active bisect".to_string(),
+        ]
+    } else {
+        vec![
+            "Start bisect by marking selected commit as bad".to_string(),
+            "Start bisect by marking selected commit as good".to_string(),
+        ]
+    }
 }
 
 fn status_reset_menu_lines(state: &AppState) -> Vec<String> {
@@ -6485,7 +6531,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, n branches off the selected commit, T tags it, i starts a rebase, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
@@ -6604,7 +6650,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  a graph  n branch  T tag  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  a graph  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8582,7 +8628,7 @@ mod tests {
     }
 
     #[test]
-    fn render_menu_modal_shows_filter_diff_merge_rebase_and_patch_entries() {
+    fn render_menu_modal_shows_filter_diff_bisect_merge_rebase_and_patch_entries() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let mut merge_state = AppState {
             mode: AppMode::Repository,
@@ -8643,6 +8689,27 @@ mod tests {
 
         merge_state.modal_stack = vec![super_lazygit_core::Modal::new(
             super_lazygit_core::ModalKind::Menu,
+            "Bisect options",
+        )];
+        merge_state.pending_menu = Some(super_lazygit_core::PendingMenu {
+            repo_id: repo_id.clone(),
+            operation: super_lazygit_core::MenuOperation::BisectOptions,
+            selected_index: 0,
+            return_focus: PaneId::RepoDetail,
+        });
+        merge_state.repo_mode = Some(RepoModeState {
+            current_repo_id: repo_id.clone(),
+            active_subview: RepoSubview::Commits,
+            detail: Some(sample_repo_detail()),
+            ..RepoModeState::new(repo_id.clone())
+        });
+        let mut bisect_app = TuiApp::new(merge_state.clone(), AppConfig::default());
+        let bisect_render = bisect_app.render_to_string();
+        assert!(bisect_render.contains("Start bisect by marking selected commit as bad"));
+        assert!(bisect_render.contains("Start bisect by marking selected commit as good"));
+
+        merge_state.modal_stack = vec![super_lazygit_core::Modal::new(
+            super_lazygit_core::ModalKind::Menu,
             "Merge / rebase options",
         )];
         merge_state.pending_menu = Some(super_lazygit_core::PendingMenu {
@@ -8660,6 +8727,10 @@ mod tests {
         let mut merge_app = TuiApp::new(merge_state.clone(), AppConfig::default());
         let merge_render = merge_app.render_to_string();
         assert!(merge_render.contains("Interactive rebase from selected commit"));
+        assert!(merge_render.contains("Create fixup commit for selected commit"));
+        assert!(merge_render.contains("Apply pending fixup/squash commits"));
+        assert!(merge_render.contains("Squash selected commit into its parent"));
+        assert!(merge_render.contains("Drop selected commit"));
 
         merge_state.modal_stack = vec![super_lazygit_core::Modal::new(
             super_lazygit_core::ModalKind::Menu,
@@ -13371,6 +13442,49 @@ mod tests {
                 .as_ref()
                 .map(|repo_mode| repo_mode.parent_repo_ids.clone()),
             Some(vec![repo_id])
+        );
+    }
+
+    #[test]
+    fn route_repository_commit_history_b_opens_bisect_menu() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "b".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::BisectOptions)
         );
     }
 
