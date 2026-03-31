@@ -251,7 +251,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `y` | Open the copy-commit menu for hash, summary, diff, and browser URL clipboard targets |
 | `o` | Open the selected commit in the browser when a browser-compatible remote is configured |
 | `3` | Reset the commits view to the current branch's linear history |
-| `a` | Switch to the all-branches commit graph, newest first |
+| `a` | Open the amend-attributes menu for reset-author and co-author trailer rewrites on the selected commit |
 | `n` | Open create-branch-from-commit prompt |
 | `T` | Open create-tag-from-commit prompt |
 | `b` | Open the bisect options menu for the selected commit or active bisect |

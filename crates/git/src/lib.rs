@@ -683,6 +683,22 @@ impl GitBackend for CliGitBackend {
                     format!("Created amend! commit without changes for {original_subject}")
                 }
             }
+            GitCommand::AmendCommitAttributes {
+                commit,
+                reset_author,
+                co_author,
+            } => {
+                amend_commit_attributes(&repo_path, commit, *reset_author, co_author.as_deref())?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                if *reset_author {
+                    format!("Reset author for {short} {subject}")
+                } else {
+                    format!("Set co-author for {short} {subject}")
+                }
+            }
             GitCommand::RewordCommitWithEditor { .. } => {
                 return Err(GitError::OperationFailed {
                     message: "interactive reword must run through the app runtime".to_string(),
@@ -1195,6 +1211,16 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
                 "create_amend_commit_without_changes"
             }
         }
+        GitCommand::AmendCommitAttributes {
+            reset_author,
+            co_author,
+            ..
+        } => match (*reset_author, co_author.is_some()) {
+            (true, true) => "amend_commit_author_and_co_author",
+            (true, false) => "amend_commit_reset_author",
+            (false, true) => "amend_commit_set_co_author",
+            (false, false) => "amend_commit_attributes",
+        },
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             RebaseStartMode::Interactive => "start_interactive_rebase",
@@ -2138,6 +2164,48 @@ fn start_commit_rebase(repo_path: &Path, commit: &str, mode: &RebaseStartMode) -
             run_scripted_rebase(repo_path, commit, "reword", Some(message.as_str()), false)
         }
     }
+}
+
+fn amend_commit_attributes(
+    repo_path: &Path,
+    commit: &str,
+    reset_author: bool,
+    co_author: Option<&str>,
+) -> GitResult<()> {
+    let resolved_commit = git_stdout(repo_path, ["rev-parse", commit])?;
+    let head_commit = git_stdout(repo_path, ["rev-parse", "HEAD"])?;
+    if resolved_commit == head_commit {
+        amend_current_commit_attributes(repo_path, reset_author, co_author)?;
+    } else {
+        run_scripted_rebase(repo_path, &resolved_commit, "edit", None, false)?;
+        amend_current_commit_attributes(repo_path, reset_author, co_author)?;
+        git_with_env(
+            repo_path,
+            ["rebase", "--continue"],
+            &[("GIT_EDITOR", OsStr::new(":"))],
+        )?;
+    }
+    Ok(())
+}
+
+fn amend_current_commit_attributes(
+    repo_path: &Path,
+    reset_author: bool,
+    co_author: Option<&str>,
+) -> GitResult<()> {
+    let mut args = vec![
+        "commit".to_string(),
+        "--amend".to_string(),
+        "--no-edit".to_string(),
+    ];
+    if reset_author {
+        args.push("--reset-author".to_string());
+    }
+    if let Some(co_author) = co_author {
+        args.push("--trailer".to_string());
+        args.push(co_author.to_string());
+    }
+    git(repo_path, args)
 }
 
 fn run_scripted_rebase(
@@ -4953,6 +5021,69 @@ mod tests {
                 .and_then(|state| state.current_commit.as_deref()),
             Some(target.as_str())
         );
+    }
+
+    #[test]
+    fn cli_backend_resets_author_for_selected_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.git(["config", "user.name", "Reset Author"])
+            .expect("set user name");
+        repo.git(["config", "user.email", "reset@example.com"])
+            .expect("set user email");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:amend-commit-reset-author"),
+                repo_id,
+                command: GitCommand::AmendCommitAttributes {
+                    commit: target,
+                    reset_author: true,
+                    co_author: None,
+                },
+            })
+            .expect("reset author should succeed");
+
+        assert!(outcome.summary.contains("Reset author"));
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "-s", "--format=%an <%ae>", "HEAD~1"])
+                    .expect("author")
+            )
+            .expect("author text"),
+            "Reset Author <reset@example.com>"
+        );
+    }
+
+    #[test]
+    fn cli_backend_sets_co_author_for_head_commit() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD").expect("target commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:amend-commit-set-co-author"),
+                repo_id,
+                command: GitCommand::AmendCommitAttributes {
+                    commit: target,
+                    reset_author: false,
+                    co_author: Some("Co-authored-by: Pair Dev <pair@example.com>".to_string()),
+                },
+            })
+            .expect("set co-author should succeed");
+
+        assert!(outcome.summary.contains("Set co-author"));
+        let body = stdout_string(
+            repo.git_capture(["show", "-s", "--format=%B", "HEAD"])
+                .expect("body"),
+        )
+        .expect("body text");
+        assert!(body.contains("Co-authored-by: Pair Dev <pair@example.com>"));
     }
 
     #[test]

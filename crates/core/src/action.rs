@@ -60,6 +60,7 @@ pub enum Action {
     CreateTagFromSelectedCommit,
     CopySelectedCommitHash,
     OpenCommitCopyOptions,
+    OpenCommitAmendAttributeOptions,
     OpenSelectedCommitInBrowser,
     OpenBisectOptions,
     StartInteractiveRebase,

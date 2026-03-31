@@ -294,6 +294,10 @@ pub enum InputPromptOperation {
         include_file_changes: bool,
         initial_message: String,
     },
+    SetCommitCoAuthor {
+        commit: String,
+        summary: String,
+    },
     RewordCommit {
         commit: String,
         summary: String,
@@ -316,6 +320,7 @@ pub enum MenuOperation {
     DiffOptions,
     CommitLogOptions,
     CommitCopyOptions,
+    CommitAmendAttributeOptions,
     CommitFixupOptions,
     BisectOptions,
     MergeRebaseOptions,

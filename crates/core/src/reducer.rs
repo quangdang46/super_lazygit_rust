@@ -688,6 +688,19 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::OpenCommitAmendAttributeOptions => {
+            match pending_history_commit_operation(state, |_, _, _| Ok(())) {
+                Ok(Some((repo_id, ()))) => {
+                    open_menu(state, repo_id, MenuOperation::CommitAmendAttributeOptions)
+                }
+                Ok(None) => push_warning(
+                    state,
+                    "Select a commit before opening amend attribute options.",
+                ),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::CopySelectedCommitForCherryPick => {
             let copied_commit =
                 state
@@ -3884,6 +3897,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
                 format!("Create amend! commit without changes for {summary}")
             }
         }
+        InputPromptOperation::SetCommitCoAuthor { summary, .. } => {
+            format!("Set co-author for {summary}")
+        }
         InputPromptOperation::RewordCommit { summary, .. } => format!("Reword {summary}"),
     }
 }
@@ -3915,6 +3931,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateAmendCommit {
             initial_message, ..
         } => initial_message.clone(),
+        InputPromptOperation::SetCommitCoAuthor { .. } => String::new(),
         InputPromptOperation::RewordCommit {
             initial_message, ..
         } => initial_message.clone(),
@@ -4165,6 +4182,27 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
                 format!("Create amend! commit without changes for {summary}")
             },
         ),
+        InputPromptOperation::SetCommitCoAuthor {
+            ref commit,
+            ref summary,
+        } => {
+            let Some(co_author) = parse_commit_co_author_input(&value) else {
+                push_warning(state, "Enter the co-author as: Name <email@example.com>.");
+                state.pending_input_prompt = Some(pending);
+                return None;
+            };
+            (
+                PromptSubmission::Git(git_job(
+                    pending.repo_id.clone(),
+                    GitCommand::AmendCommitAttributes {
+                        commit: commit.clone(),
+                        reset_author: false,
+                        co_author: Some(co_author),
+                    },
+                )),
+                format!("Set co-author for {summary}"),
+            )
+        }
         InputPromptOperation::RewordCommit {
             commit, summary, ..
         } => (
@@ -4217,6 +4255,25 @@ fn parse_remote_input(value: &str) -> Option<(String, String)> {
     Some((remote_name.to_string(), remote_url.to_string()))
 }
 
+fn parse_commit_co_author_input(value: &str) -> Option<String> {
+    let value = value.trim();
+    let value = value
+        .strip_prefix("Co-authored-by:")
+        .map(str::trim)
+        .unwrap_or(value);
+    let start = value.rfind('<')?;
+    let end = value.rfind('>')?;
+    if start == 0 || end <= start + 1 || end != value.len() - 1 {
+        return None;
+    }
+    let name = value[..start].trim();
+    let email = value[start + 1..end].trim();
+    if name.is_empty() || email.is_empty() {
+        return None;
+    }
+    Some(format!("Co-authored-by: {name} <{email}>"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MenuEntry {
     label: String,
@@ -4230,6 +4287,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::DiffOptions => "Diffing options",
         MenuOperation::CommitLogOptions => "Commit log options",
         MenuOperation::CommitCopyOptions => "Copy commit attribute",
+        MenuOperation::CommitAmendAttributeOptions => "Amend commit attributes",
         MenuOperation::CommitFixupOptions => "Fixup options",
         MenuOperation::BisectOptions => "Bisect options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
@@ -4248,6 +4306,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::CommitLogOptions => commit_log_menu_entries(state).len(),
         MenuOperation::CommitCopyOptions => 5,
+        MenuOperation::CommitAmendAttributeOptions => 2,
         MenuOperation::CommitFixupOptions => 3,
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
@@ -4462,6 +4521,75 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
                     push_warning(state, message);
                     effects.push(Effect::ScheduleRender);
                 }
+            }
+            true
+        }
+        MenuOperation::CommitAmendAttributeOptions => {
+            let direct_job = if selected_index == 0 {
+                match pending_history_commit_operation(state, |_, commit, _| {
+                    Ok((
+                        commit.oid.clone(),
+                        format!("{} {}", commit.short_oid, commit.summary),
+                    ))
+                }) {
+                    Ok(Some((repo_id, (commit, summary)))) => Some((repo_id, commit, summary)),
+                    Ok(None) => {
+                        push_warning(
+                            state,
+                            "Select a commit before resetting its author metadata.",
+                        );
+                        return true;
+                    }
+                    Err(message) => {
+                        push_warning(state, message);
+                        return true;
+                    }
+                }
+            } else {
+                None
+            };
+            let prompt_operation = if selected_index == 1 {
+                match pending_history_commit_operation(state, |_, commit, _| {
+                    Ok(InputPromptOperation::SetCommitCoAuthor {
+                        commit: commit.oid.clone(),
+                        summary: format!("{} {}", commit.short_oid, commit.summary),
+                    })
+                }) {
+                    Ok(Some((_, operation))) => Some(operation),
+                    Ok(None) => {
+                        push_warning(state, "Select a commit before setting a co-author.");
+                        return true;
+                    }
+                    Err(message) => {
+                        push_warning(state, message);
+                        return true;
+                    }
+                }
+            } else {
+                None
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            if let Some(operation) = prompt_operation {
+                open_input_prompt(state, menu.repo_id, operation);
+                return true;
+            }
+            if let Some((repo_id, commit, summary)) = direct_job {
+                let job = git_job(
+                    repo_id,
+                    GitCommand::AmendCommitAttributes {
+                        commit,
+                        reset_author: true,
+                        co_author: None,
+                    },
+                );
+                enqueue_git_job(state, &job, &format!("Reset author for {summary}"));
+                effects.push(Effect::RunGitCommand(job));
             }
             true
         }
@@ -7323,6 +7451,16 @@ fn job_suffix(command: &GitCommand) -> &'static str {
                 "create-amend-commit-without-changes"
             }
         }
+        GitCommand::AmendCommitAttributes {
+            reset_author,
+            co_author,
+            ..
+        } => match (*reset_author, co_author.is_some()) {
+            (true, true) => "amend-commit-author-and-co-author",
+            (true, false) => "amend-commit-reset-author",
+            (false, true) => "amend-commit-set-co-author",
+            (false, false) => "amend-commit-attributes",
+        },
         GitCommand::CreateFixupCommit { .. } => "create-fixup-commit",
         GitCommand::RewordCommitWithEditor { .. } => "reword-commit-editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
@@ -15975,6 +16113,54 @@ mod tests {
     }
 
     #[test]
+    fn open_commit_amend_attribute_options_opens_menu_for_selected_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "older".to_string(),
+                        short_oid: "old1234".to_string(),
+                        summary: "older commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::OpenCommitAmendAttributeOptions),
+        );
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                repo_id,
+                MenuOperation::CommitAmendAttributeOptions,
+                0,
+                PaneId::RepoDetail,
+            ))
+        );
+    }
+
+    #[test]
     fn submit_commit_copy_options_selection_queues_shell_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -16031,6 +16217,127 @@ mod tests {
                 ..
             }) if effect_repo_id == &repo_id && command.contains("older-full-hash")
         )));
+    }
+
+    #[test]
+    fn submit_commit_amend_attribute_selection_queues_reset_author_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Amend commit attributes",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitAmendAttributeOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "older-full-hash".to_string(),
+                        short_oid: "old1234".to_string(),
+                        summary: "older commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+        let job_id = JobId::new("git:repo-1:amend-commit-reset-author");
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RunGitCommand(GitCommandRequest {
+                repo_id: effect_repo_id,
+                command: GitCommand::AmendCommitAttributes {
+                    commit,
+                    reset_author: true,
+                    co_author: None,
+                },
+                ..
+            }) if effect_repo_id == &repo_id && commit == "older-full-hash"
+        )));
+    }
+
+    #[test]
+    fn submit_commit_amend_attribute_selection_opens_coauthor_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Amend commit attributes",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitAmendAttributeOptions,
+                selected_index: 1,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "older-full-hash".to_string(),
+                        short_oid: "old1234".to_string(),
+                        summary: "older commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_input_prompt.as_ref().map(|prompt| (
+                prompt.repo_id.clone(),
+                prompt.operation.clone(),
+                prompt.return_focus
+            )),
+            Some((
+                repo_id,
+                InputPromptOperation::SetCommitCoAuthor {
+                    commit: "older-full-hash".to_string(),
+                    summary: "old1234 older commit".to_string(),
+                },
+                PaneId::RepoDetail,
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]

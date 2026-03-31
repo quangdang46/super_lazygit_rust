@@ -645,6 +645,16 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
                 "create_amend_commit_without_changes"
             }
         }
+        GitCommand::AmendCommitAttributes {
+            reset_author,
+            co_author,
+            ..
+        } => match (*reset_author, co_author.is_some()) {
+            (true, true) => "amend_commit_author_and_co_author",
+            (true, false) => "amend_commit_reset_author",
+            (false, true) => "amend_commit_set_co_author",
+            (false, false) => "amend_commit_attributes",
+        },
         GitCommand::RewordCommitWithEditor { .. } => "reword_commit_with_editor",
         GitCommand::StartCommitRebase { mode, .. } => match mode {
             super_lazygit_core::RebaseStartMode::Interactive => "start_interactive_rebase",

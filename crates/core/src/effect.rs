@@ -122,6 +122,11 @@ pub enum GitCommand {
         message: String,
         include_file_changes: bool,
     },
+    AmendCommitAttributes {
+        commit: String,
+        reset_author: bool,
+        co_author: Option<String>,
+    },
     RewordCommitWithEditor {
         commit: String,
     },
