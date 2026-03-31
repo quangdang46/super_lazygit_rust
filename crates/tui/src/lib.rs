@@ -10,10 +10,10 @@ use ratatui::{
 };
 use super_lazygit_config::AppConfig;
 use super_lazygit_core::{
-    reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitHistoryMode,
-    CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind, DiffPresentation, Event,
-    InputEvent, InputPromptOperation, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId,
-    RepoModeState, RepoSubview, RepoSummary, ScreenMode, StashSubviewMode,
+    reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitFilesMode,
+    CommitHistoryMode, CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind,
+    DiffPresentation, Event, InputEvent, InputPromptOperation, KeyPress, PaneId, ReduceResult,
+    RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, ScreenMode, StashSubviewMode,
 };
 
 #[derive(Debug)]
@@ -1299,77 +1299,198 @@ impl TuiApp {
                         }
                     }
                     RepoSubview::Commits => {
-                        if self.binding_matches_action(
-                            "select_next_commit",
-                            raw,
-                            normalized,
-                            &["j", "down"],
-                        ) {
-                            return Some(Action::SelectNextCommit);
-                        }
+                        let commit_file_diff_active = repo_mode.commit_subview_mode
+                            == CommitSubviewMode::Files
+                            && repo_mode.commit_files_mode == CommitFilesMode::Diff;
 
-                        if self.binding_matches_action(
-                            "select_previous_commit",
-                            raw,
-                            normalized,
-                            &["k", "up"],
-                        ) {
-                            return Some(Action::SelectPreviousCommit);
-                        }
-
-                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
-                            && self.binding_matches_action(
-                                "open_selected_commit_files",
+                        if commit_file_diff_active {
+                            if self.binding_matches_action(
+                                "select_next_diff_line",
                                 raw,
                                 normalized,
-                                &["enter"],
-                            )
-                        {
-                            return Some(Action::OpenSelectedCommitFiles);
-                        }
+                                &["J"],
+                            ) {
+                                return Some(Action::SelectNextDiffLine);
+                            }
 
-                        if repo_mode.commit_subview_mode == CommitSubviewMode::Files
-                            && self.binding_matches_action(
+                            if self.binding_matches_action(
+                                "select_previous_diff_line",
+                                raw,
+                                normalized,
+                                &["K"],
+                            ) {
+                                return Some(Action::SelectPreviousDiffLine);
+                            }
+
+                            if self.binding_matches_action(
+                                "select_next_diff_hunk",
+                                raw,
+                                normalized,
+                                &["j"],
+                            ) {
+                                return Some(Action::SelectNextDiffHunk);
+                            }
+
+                            if self.binding_matches_action(
+                                "select_previous_diff_hunk",
+                                raw,
+                                normalized,
+                                &["k"],
+                            ) {
+                                return Some(Action::SelectPreviousDiffHunk);
+                            }
+
+                            if self.binding_matches_action(
+                                "toggle_diff_line_anchor",
+                                raw,
+                                normalized,
+                                &["v"],
+                            ) {
+                                return Some(Action::ToggleDiffLineAnchor);
+                            }
+
+                            if self.binding_matches_action(
+                                "scroll_repo_detail_down",
+                                raw,
+                                normalized,
+                                &["down"],
+                            ) {
+                                return Some(Action::ScrollRepoDetailDown);
+                            }
+
+                            if self.binding_matches_action(
+                                "scroll_repo_detail_up",
+                                raw,
+                                normalized,
+                                &["up"],
+                            ) {
+                                return Some(Action::ScrollRepoDetailUp);
+                            }
+
+                            if self.binding_matches_action(
                                 "close_selected_commit_files",
                                 raw,
                                 normalized,
                                 &["enter"],
-                            )
-                        {
-                            return Some(Action::CloseSelectedCommitFiles);
-                        }
+                            ) {
+                                return Some(Action::CloseSelectedCommitFiles);
+                            }
 
-                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
-                            && self.binding_matches_action(
-                                "checkout_selected_commit",
-                                raw,
-                                normalized,
-                                &["space"],
-                            )
-                        {
-                            return Some(Action::CheckoutSelectedCommit);
-                        }
-
-                        if repo_mode.commit_subview_mode == CommitSubviewMode::Files
-                            && self.binding_matches_action(
+                            if self.binding_matches_action(
                                 "checkout_selected_commit_file",
                                 raw,
                                 normalized,
                                 &["space"],
-                            )
-                        {
-                            return Some(Action::CheckoutSelectedCommitFile);
-                        }
+                            ) {
+                                return Some(Action::CheckoutSelectedCommitFile);
+                            }
 
-                        if repo_mode.commit_subview_mode == CommitSubviewMode::Files
-                            && self.binding_matches_action(
+                            if self.binding_matches_action(
                                 "open_in_editor",
                                 raw,
                                 normalized,
                                 &["e"],
-                            )
-                        {
-                            return Some(Action::OpenInEditor);
+                            ) {
+                                return Some(Action::OpenInEditor);
+                            }
+                        } else {
+                            if self.binding_matches_action(
+                                "select_next_commit",
+                                raw,
+                                normalized,
+                                &["j", "down"],
+                            ) {
+                                return Some(Action::SelectNextCommit);
+                            }
+
+                            if self.binding_matches_action(
+                                "select_previous_commit",
+                                raw,
+                                normalized,
+                                &["k", "up"],
+                            ) {
+                                return Some(Action::SelectPreviousCommit);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                                && self.binding_matches_action(
+                                    "open_selected_commit_files",
+                                    raw,
+                                    normalized,
+                                    &["enter"],
+                                )
+                            {
+                                return Some(Action::OpenSelectedCommitFiles);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && repo_mode.commit_files_mode == CommitFilesMode::List
+                                && self.binding_matches_action(
+                                    "open_selected_commit_files",
+                                    raw,
+                                    normalized,
+                                    &["enter"],
+                                )
+                            {
+                                return Some(Action::OpenSelectedCommitFiles);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && repo_mode.commit_files_mode == CommitFilesMode::Diff
+                                && self.binding_matches_action(
+                                    "close_selected_commit_files",
+                                    raw,
+                                    normalized,
+                                    &["enter", "backspace", "left"],
+                                )
+                            {
+                                return Some(Action::CloseSelectedCommitFiles);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && repo_mode.commit_files_mode == CommitFilesMode::List
+                                && self.binding_matches_action(
+                                    "close_selected_commit_files",
+                                    raw,
+                                    normalized,
+                                    &["backspace", "left"],
+                                )
+                            {
+                                return Some(Action::CloseSelectedCommitFiles);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                                && self.binding_matches_action(
+                                    "checkout_selected_commit",
+                                    raw,
+                                    normalized,
+                                    &["space"],
+                                )
+                            {
+                                return Some(Action::CheckoutSelectedCommit);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && self.binding_matches_action(
+                                    "checkout_selected_commit_file",
+                                    raw,
+                                    normalized,
+                                    &["space"],
+                                )
+                            {
+                                return Some(Action::CheckoutSelectedCommitFile);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && self.binding_matches_action(
+                                    "open_in_editor",
+                                    raw,
+                                    normalized,
+                                    &["e"],
+                                )
+                            {
+                                return Some(Action::OpenInEditor);
+                            }
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
@@ -2456,22 +2577,9 @@ impl TuiApp {
                     self.state.focused_pane == PaneId::RepoDetail,
                     theme,
                 ),
-                RepoSubview::Commits => repo_commit_lines(
-                    repo_mode.detail.as_ref(),
-                    repo_mode.commits_view.selected_index,
-                    repo_mode.commit_files_view.selected_index,
-                    repo_mode.commits_filter.query.as_str(),
-                    repo_mode.commits_filter.focused,
-                    repo_mode.commit_files_filter.query.as_str(),
-                    repo_mode.commit_files_filter.focused,
-                    repo_mode.commit_history_mode,
-                    repo_mode.commit_subview_mode,
-                    repo_mode.comparison_base.as_ref(),
-                    repo_mode.comparison_target.as_ref(),
-                    repo_mode.comparison_source,
-                    usize::from(area.height.saturating_sub(2)),
-                    theme,
-                ),
+                RepoSubview::Commits => {
+                    repo_commit_lines(repo_mode, usize::from(area.height.saturating_sub(2)), theme)
+                }
                 RepoSubview::Compare => repo_compare_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.comparison_base.as_ref(),
@@ -4179,27 +4287,15 @@ fn repo_submodule_lines(
     lines
 }
 
-#[allow(clippy::too_many_arguments)]
 fn repo_commit_lines(
-    detail: Option<&RepoDetail>,
-    selected_commit_index: Option<usize>,
-    selected_file_index: Option<usize>,
-    commit_filter_query: &str,
-    commit_filter_focused: bool,
-    file_filter_query: &str,
-    file_filter_focused: bool,
-    commit_history_mode: CommitHistoryMode,
-    subview_mode: CommitSubviewMode,
-    comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
-    comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
-    comparison_source: Option<RepoSubview>,
+    repo_mode: &RepoModeState,
     viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
-    let Some(detail) = detail else {
+    let Some(detail) = repo_mode.detail.as_ref() else {
         return vec![
             Line::from(vec![Span::styled(
-                if commit_history_mode.is_graph() {
+                if repo_mode.commit_history_mode.is_graph() {
                     "Commit graph"
                 } else {
                     "Commit history"
@@ -4212,11 +4308,11 @@ fn repo_commit_lines(
         ];
     };
 
-    let visible_indices = visible_commit_indices(detail, commit_filter_query);
+    let visible_indices = visible_commit_indices(detail, repo_mode.commits_filter.query.as_str());
     if visible_indices.is_empty() {
         return vec![
             Line::from(vec![Span::styled(
-                if commit_history_mode.is_graph() {
+                if repo_mode.commit_history_mode.is_graph() {
                     "Commit graph"
                 } else {
                     "Commit history"
@@ -4226,8 +4322,8 @@ fn repo_commit_lines(
                     .add_modifier(Modifier::BOLD),
             )]),
             repo_filter_summary_line(
-                commit_filter_query,
-                commit_filter_focused,
+                repo_mode.commits_filter.query.as_str(),
+                repo_mode.commits_filter.focused,
                 0,
                 detail.commits.len(),
             )
@@ -4235,12 +4331,14 @@ fn repo_commit_lines(
             Line::from(if detail.commits.is_empty() {
                 "No commits available for this repository.".to_string()
             } else {
-                format!("No commits match /{}.", commit_filter_query)
+                format!("No commits match /{}.", repo_mode.commits_filter.query)
             }),
         ];
     }
 
-    let selected_index = selected_commit_index
+    let selected_index = repo_mode
+        .commits_view
+        .selected_index
         .filter(|index| visible_indices.contains(index))
         .unwrap_or(visible_indices[0]);
     let selected = &detail.commits[selected_index];
@@ -4249,18 +4347,15 @@ fn repo_commit_lines(
         .position(|index| *index == selected_index)
         .unwrap_or(0);
 
-    if subview_mode == CommitSubviewMode::Files {
-        return repo_commit_file_lines(
-            selected,
-            selected_file_index,
-            file_filter_query,
-            file_filter_focused,
-            comparison_base,
-            comparison_target,
-            comparison_source,
-            viewport_lines,
-            theme,
-        );
+    if repo_mode.commit_subview_mode == CommitSubviewMode::Files {
+        return match repo_mode.commit_files_mode {
+            CommitFilesMode::List => {
+                repo_commit_file_list_lines(repo_mode, selected, viewport_lines, theme)
+            }
+            CommitFilesMode::Diff => {
+                repo_commit_file_diff_lines(repo_mode, selected, viewport_lines, theme)
+            }
+        };
     }
 
     let mut lines = vec![
@@ -4278,15 +4373,15 @@ fn repo_commit_lines(
         )]),
         Line::from(comparison_status_line(
             RepoSubview::Commits,
-            comparison_base,
-            comparison_target,
-            comparison_source,
+            repo_mode.comparison_base.as_ref(),
+            repo_mode.comparison_target.as_ref(),
+            repo_mode.comparison_source,
         )),
         Line::from(history_operation_state_line(&detail.merge_state)),
         Line::from(repo_commit_context_line(
-            commit_history_mode,
-            commit_filter_query,
-            commit_filter_focused,
+            repo_mode.commit_history_mode,
+            repo_mode.commits_filter.query.as_str(),
+            repo_mode.commits_filter.focused,
             visible_indices.len(),
             detail.commits.len(),
         )),
@@ -4304,7 +4399,7 @@ fn repo_commit_lines(
             .map(|index| {
                 let commit = &detail.commits[*index];
                 let prefix = if *index == selected_index { ">" } else { " " };
-                let row = if commit_history_mode.is_graph() {
+                let row = if repo_mode.commit_history_mode.is_graph() {
                     detail
                         .commit_graph_lines
                         .get(*index)
@@ -4356,17 +4451,14 @@ fn repo_commit_lines(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn repo_commit_file_lines(
+fn repo_commit_file_list_lines(
+    repo_mode: &RepoModeState,
     selected_commit: &super_lazygit_core::CommitItem,
-    selected_file_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
-    comparison_base: Option<&super_lazygit_core::ComparisonTarget>,
-    comparison_target: Option<&super_lazygit_core::ComparisonTarget>,
-    comparison_source: Option<RepoSubview>,
     viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
+    let filter_query = repo_mode.commit_files_filter.query.as_str();
+    let filter_focused = repo_mode.commit_files_filter.focused;
     let visible_indices = visible_commit_file_indices(selected_commit, filter_query);
     let mut lines = vec![
         Line::from(vec![Span::styled(
@@ -4380,9 +4472,9 @@ fn repo_commit_file_lines(
         )]),
         Line::from(comparison_status_line(
             RepoSubview::Commits,
-            comparison_base,
-            comparison_target,
-            comparison_source,
+            repo_mode.comparison_base.as_ref(),
+            repo_mode.comparison_target.as_ref(),
+            repo_mode.comparison_source,
         )),
     ];
     if let Some(filter_line) = repo_filter_summary_line(
@@ -4394,9 +4486,8 @@ fn repo_commit_file_lines(
         lines.push(filter_line);
     }
     lines.extend([
-        Line::from("Context: Enter history. Space checkout file. e open editor."),
-        Line::from("Other: 0 main. / filter. w worktrees."),
-        Line::from("Scope: tree/custom-patch parity is tracked separately."),
+        Line::from("Context: Enter file diff. Left/backspace history. Space checkout file."),
+        Line::from("Editor: e open editor. Other: 0 main. / filter. w worktrees."),
         Line::from(""),
     ]);
 
@@ -4410,7 +4501,9 @@ fn repo_commit_file_lines(
         return lines;
     }
 
-    let selected_index = selected_file_index
+    let selected_index = repo_mode
+        .commit_files_view
+        .selected_index
         .filter(|index| visible_indices.contains(index))
         .unwrap_or(visible_indices[0]);
     for index in visible_indices {
@@ -4423,6 +4516,61 @@ fn repo_commit_file_lines(
         )));
     }
 
+    lines.truncate(viewport_lines.max(1));
+    lines
+}
+
+fn repo_commit_file_diff_lines(
+    repo_mode: &RepoModeState,
+    selected_commit: &super_lazygit_core::CommitItem,
+    viewport_lines: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let visible_indices = visible_commit_file_indices(
+        selected_commit,
+        repo_mode.commit_files_filter.query.as_str(),
+    );
+    let selected_index = repo_mode
+        .commit_files_view
+        .selected_index
+        .filter(|index| visible_indices.contains(index))
+        .unwrap_or(visible_indices.first().copied().unwrap_or(0));
+    let selected_file = selected_commit.changed_files.get(selected_index);
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            format!(
+                "Commit file diff  {}  {}",
+                selected_commit.short_oid, selected_commit.summary
+            ),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(comparison_status_line(
+            RepoSubview::Commits,
+            repo_mode.comparison_base.as_ref(),
+            repo_mode.comparison_target.as_ref(),
+            repo_mode.comparison_source,
+        )),
+        Line::from(format!(
+            "File: {}",
+            selected_file
+                .map(|file| file.path.display().to_string())
+                .unwrap_or_else(|| "No file selected".to_string())
+        )),
+        Line::from("Context: Enter files. Space checkout file. e open editor."),
+        Line::from("Inspect: j/k hunks. J/K changed lines. v anchor."),
+        Line::from(""),
+    ];
+
+    let remaining = viewport_lines.saturating_sub(lines.len()).max(1);
+    lines.extend(repo_diff_lines(
+        Some(repo_mode),
+        repo_mode.detail.as_ref(),
+        repo_mode.diff_scroll,
+        remaining,
+        theme,
+    ));
     lines.truncate(viewport_lines.max(1));
     lines
 }
@@ -8503,13 +8651,21 @@ mod tests {
                 .state
                 .repo_mode
                 .as_ref()
+                .map(|repo_mode| repo_mode.commit_files_mode),
+            Some(CommitFilesMode::List)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
                 .and_then(|repo_mode| repo_mode.commit_files_view.selected_index),
             Some(0)
         );
     }
 
     #[test]
-    fn repo_mode_commit_file_detail_enter_returns_to_history() {
+    fn repo_mode_commit_file_list_enter_opens_file_diff() {
         let state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
@@ -8517,6 +8673,7 @@ mod tests {
                 current_repo_id: RepoId::new("repo-1"),
                 active_subview: RepoSubview::Commits,
                 commit_subview_mode: CommitSubviewMode::Files,
+                commit_files_mode: CommitFilesMode::List,
                 detail: Some(sample_repo_detail()),
                 commit_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
@@ -8536,8 +8693,61 @@ mod tests {
                 .state
                 .repo_mode
                 .as_ref()
-                .map(|repo_mode| repo_mode.commit_subview_mode),
-            Some(CommitSubviewMode::History)
+                .map(|repo_mode| (repo_mode.commit_subview_mode, repo_mode.commit_files_mode)),
+            Some((CommitSubviewMode::Files, CommitFilesMode::Diff))
+        );
+        assert_eq!(
+            result.effects,
+            vec![
+                super_lazygit_core::Effect::LoadRepoDiff {
+                    repo_id: RepoId::new("repo-1"),
+                    comparison_target: Some(super_lazygit_core::ComparisonTarget::Commit(
+                        "abcdef1234567890^!".to_string(),
+                    )),
+                    compare_with: None,
+                    selected_path: Some(PathBuf::from("src/lib.rs")),
+                    diff_presentation: DiffPresentation::Comparison,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: super_lazygit_core::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold:
+                        super_lazygit_core::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+                },
+                super_lazygit_core::Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn repo_mode_commit_file_diff_enter_returns_to_file_list() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: CommitSubviewMode::Files,
+                commit_files_mode: CommitFilesMode::Diff,
+                detail: Some(sample_repo_detail()),
+                commit_files_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| (repo_mode.commit_subview_mode, repo_mode.commit_files_mode)),
+            Some((CommitSubviewMode::Files, CommitFilesMode::List))
         );
     }
 
@@ -11224,9 +11434,67 @@ mod tests {
         let rendered = app.render_to_string();
 
         assert!(rendered.contains("Commit files  abcdef1  add lib"));
-        assert!(rendered.contains("Context: Enter history. Space checkout file. e open editor."));
-        assert!(rendered.contains("Other: 0 main. / filter. w worktrees."));
+        assert!(rendered.contains("Left/backspace history."));
+        assert!(rendered.contains("Editor: e open editor."));
         assert!(rendered.contains("> A src/lib.rs"));
+    }
+
+    #[test]
+    fn render_repo_shell_shows_commit_file_diff_view() {
+        let mut detail = sample_repo_detail();
+        detail.diff = DiffModel {
+            selected_path: Some(PathBuf::from("src/lib.rs")),
+            presentation: DiffPresentation::Comparison,
+            lines: detail.commits[0].diff.lines.clone(),
+            hunks: detail.commits[0].diff.hunks.clone(),
+            selected_hunk: detail.commits[0].diff.selected_hunk,
+            hunk_count: detail.commits[0].diff.hunk_count,
+        };
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: CommitSubviewMode::Files,
+                commit_files_mode: CommitFilesMode::Diff,
+                detail: Some(detail),
+                commit_files_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(120, 20);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Commit file diff  abcdef1  add lib"));
+        assert!(rendered.contains("File: src/lib.rs"));
+        assert!(rendered.contains("Context: Enter files. Space checkout file. e open editor."));
+        assert!(rendered.contains("Inspect: j/k hunks. J/K changed lines. v anchor."));
+        assert!(rendered.contains("Path: src/lib.rs (comparison)"));
     }
 
     #[test]

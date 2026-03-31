@@ -619,6 +619,7 @@ pub struct RepoModeState {
     pub parent_repo_ids: Vec<RepoId>,
     pub active_subview: RepoSubview,
     pub commit_subview_mode: CommitSubviewMode,
+    pub commit_files_mode: CommitFilesMode,
     pub stash_subview_mode: StashSubviewMode,
     pub commit_history_mode: CommitHistoryMode,
     pub main_focus: PaneId,
@@ -681,6 +682,7 @@ impl RepoModeState {
             parent_repo_ids,
             active_subview: RepoSubview::default(),
             commit_subview_mode: CommitSubviewMode::default(),
+            commit_files_mode: CommitFilesMode::default(),
             stash_subview_mode: StashSubviewMode::default(),
             commit_history_mode: CommitHistoryMode::default(),
             main_focus: PaneId::RepoUnstaged,
@@ -776,6 +778,13 @@ pub enum CommitSubviewMode {
     #[default]
     History,
     Files,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitFilesMode {
+    #[default]
+    List,
+    Diff,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1542,9 +1551,10 @@ pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &st
 #[cfg(test)]
 mod tests {
     use super::{
-        workspace_attention_score, ListViewState, OperationProgress, RemoteSummary, RepoId,
-        RepoModeState, RepoSubview, RepoSummary, Timestamp, WorkspaceFilterMode, WorkspaceSortMode,
-        WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        workspace_attention_score, CommitFilesMode, ListViewState, OperationProgress,
+        RemoteSummary, RepoId, RepoModeState, RepoSubview, RepoSummary, Timestamp,
+        WorkspaceFilterMode, WorkspaceSortMode, WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES,
+        DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -1649,6 +1659,7 @@ mod tests {
 
         assert_eq!(state.current_repo_id, RepoId::new("repo-a"));
         assert_eq!(state.active_subview, RepoSubview::Status);
+        assert_eq!(state.commit_files_mode, CommitFilesMode::List);
         assert_eq!(state.diff_scroll, 0);
         assert_eq!(state.diff_line_cursor, None);
         assert_eq!(state.diff_line_anchor, None);

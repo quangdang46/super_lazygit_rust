@@ -1358,11 +1358,18 @@ mod tests {
 
         harness.press("open selected commit files", "enter");
         harness.assert_latest_contains("Commit files");
-        harness
-            .assert_latest_contains("Context: Enter history. Space checkout file. e open editor.");
+        harness.assert_latest_contains("Left/backspace history.");
         harness.assert_latest_contains("src/lib.rs");
 
-        harness.press("return to commit history", "enter");
+        harness.press("open selected commit file diff", "enter");
+        harness.assert_latest_contains("Commit file diff");
+        harness.assert_latest_contains("File: src/lib.rs");
+        harness.assert_latest_contains("Path: src/lib.rs (comparison)");
+
+        harness.press("return to commit files list", "enter");
+        harness.assert_latest_contains("Commit files");
+
+        harness.press("return to commit history", "backspace");
         harness.assert_latest_contains("Detail: Commits");
 
         harness.press("select older commit", "j");

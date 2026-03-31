@@ -6,10 +6,10 @@ use crate::effect::{
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
-    CommitHistoryMode, ComparisonTarget, ConfirmableOperation, DiffLineKind, DiffPresentation,
-    InputPromptOperation, JobId, MenuOperation, MergeState, MessageLevel, Notification,
-    OperationProgress, PaneId, PendingInputPrompt, PendingMenu, RepoModeState, ResetMode,
-    ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
+    CommitFilesMode, CommitHistoryMode, ComparisonTarget, ConfirmableOperation, DiffLineKind,
+    DiffPresentation, InputPromptOperation, JobId, MenuOperation, MergeState, MessageLevel,
+    Notification, OperationProgress, PaneId, PendingInputPrompt, PendingMenu, RepoModeState,
+    ResetMode, ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
     MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
     RENAME_SIMILARITY_THRESHOLD_STEP,
 };
@@ -446,22 +446,68 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::OpenSelectedCommitFiles => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
-                if selected_commit_item(repo_mode).is_some() {
-                    repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::Files;
-                    sync_commit_file_selection(repo_mode);
-                    state.focused_pane = PaneId::RepoDetail;
-                    effects.push(Effect::ScheduleRender);
-                } else {
-                    push_warning(state, "Select a commit before opening changed files.");
-                    effects.push(Effect::ScheduleRender);
+                match repo_mode.commit_subview_mode {
+                    crate::state::CommitSubviewMode::History => {
+                        if selected_commit_item(repo_mode).is_some() {
+                            repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::Files;
+                            repo_mode.commit_files_mode = CommitFilesMode::List;
+                            repo_mode.commit_files_filter.focused = false;
+                            sync_commit_file_selection(repo_mode);
+                            state.focused_pane = PaneId::RepoDetail;
+                            effects.push(Effect::ScheduleRender);
+                        } else {
+                            push_warning(state, "Select a commit before opening changed files.");
+                            effects.push(Effect::ScheduleRender);
+                        }
+                    }
+                    crate::state::CommitSubviewMode::Files => {
+                        let Some((selected_path, effect)) =
+                            load_selected_commit_file_diff_effect(repo_mode)
+                        else {
+                            push_warning(
+                                state,
+                                "Select a changed file before opening its commit diff.",
+                            );
+                            effects.push(Effect::ScheduleRender);
+                            return;
+                        };
+
+                        repo_mode.commit_files_mode = CommitFilesMode::Diff;
+                        repo_mode.commit_files_filter.focused = false;
+                        repo_mode.diff_line_cursor = None;
+                        repo_mode.diff_line_anchor = None;
+                        repo_mode.diff_scroll = 0;
+                        if let Some(detail) = repo_mode.detail.as_mut() {
+                            detail.diff = crate::state::DiffModel {
+                                selected_path: Some(selected_path),
+                                presentation: DiffPresentation::Comparison,
+                                ..crate::state::DiffModel::default()
+                            };
+                        }
+                        state.focused_pane = PaneId::RepoDetail;
+                        effects.push(effect);
+                        effects.push(Effect::ScheduleRender);
+                    }
                 }
             }
         }
         Action::CloseSelectedCommitFiles => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::Files {
-                    repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                    match repo_mode.commit_files_mode {
+                        CommitFilesMode::Diff => {
+                            repo_mode.commit_files_mode = CommitFilesMode::List;
+                        }
+                        CommitFilesMode::List => {
+                            repo_mode.commit_subview_mode =
+                                crate::state::CommitSubviewMode::History;
+                            repo_mode.commit_files_mode = CommitFilesMode::List;
+                        }
+                    }
                     repo_mode.commit_files_filter.focused = false;
+                    repo_mode.diff_line_cursor = None;
+                    repo_mode.diff_line_anchor = None;
+                    repo_mode.diff_scroll = 0;
                     state.focused_pane = PaneId::RepoDetail;
                     effects.push(Effect::ScheduleRender);
                 }
@@ -2378,7 +2424,10 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
         crate::state::RepoSubview::Commits => {
             let action = match repo_mode.commit_subview_mode {
                 crate::state::CommitSubviewMode::History => Action::OpenSelectedCommitFiles,
-                crate::state::CommitSubviewMode::Files => Action::CloseSelectedCommitFiles,
+                crate::state::CommitSubviewMode::Files => match repo_mode.commit_files_mode {
+                    CommitFilesMode::List => Action::OpenSelectedCommitFiles,
+                    CommitFilesMode::Diff => Action::CloseSelectedCommitFiles,
+                },
             };
             reduce_action(state, action, effects);
         }
@@ -2599,12 +2648,13 @@ fn select_repo_list_edge(
 }
 
 fn step_diff_hunk_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
+    let commit_file_diff_active = commit_file_diff_detail_active(repo_mode);
     let Some(detail) = repo_mode.detail.as_mut() else {
         return false;
     };
 
     let diff = &mut detail.diff;
-    if diff.presentation == DiffPresentation::Comparison {
+    if diff.presentation == DiffPresentation::Comparison && !commit_file_diff_active {
         return false;
     }
     let len = diff.hunks.len();
@@ -4094,6 +4144,12 @@ fn sync_commit_file_selection(repo_mode: &mut RepoModeState) {
         });
 }
 
+fn commit_file_diff_detail_active(repo_mode: &RepoModeState) -> bool {
+    repo_mode.active_subview == crate::state::RepoSubview::Commits
+        && repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::Files
+        && repo_mode.commit_files_mode == CommitFilesMode::Diff
+}
+
 fn sync_stash_selection(repo_mode: &mut RepoModeState) {
     if repo_mode.detail.is_none() {
         repo_mode.stash_view.selected_index = None;
@@ -4641,6 +4697,27 @@ fn selected_commit_file_item(repo_mode: &RepoModeState) -> Option<&crate::state:
         .filter(|index| visible_indices.contains(index))
         .or_else(|| visible_indices.first().copied())?;
     commit.changed_files.get(selected_index)
+}
+
+fn load_selected_commit_file_diff_effect(
+    repo_mode: &RepoModeState,
+) -> Option<(std::path::PathBuf, Effect)> {
+    let commit = selected_commit_item(repo_mode)?;
+    let file = selected_commit_file_item(repo_mode)?;
+    let selected_path = file.path.clone();
+    Some((
+        selected_path.clone(),
+        Effect::LoadRepoDiff {
+            repo_id: repo_mode.current_repo_id.clone(),
+            comparison_target: Some(ComparisonTarget::Commit(format!("{}^!", commit.oid))),
+            compare_with: None,
+            selected_path: Some(selected_path),
+            diff_presentation: DiffPresentation::Comparison,
+            ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
+            diff_context_lines: repo_mode.diff_context_lines,
+            rename_similarity_threshold: repo_mode.rename_similarity_threshold,
+        },
+    ))
 }
 
 fn selected_commit_file_checkout_target(
@@ -5541,6 +5618,9 @@ fn active_diff_reload_effect(state: &AppState) -> Option<Effect> {
             if repo_mode.comparison_base.is_some() && repo_mode.comparison_target.is_some() =>
         {
             Some(load_comparison_diff_effect(repo_mode))
+        }
+        crate::state::RepoSubview::Commits if commit_file_diff_detail_active(repo_mode) => {
+            load_selected_commit_file_diff_effect(repo_mode).map(|(_, effect)| effect)
         }
         crate::state::RepoSubview::Status | crate::state::RepoSubview::Commits => Some(
             load_repo_detail_effect(state, repo_mode.current_repo_id.clone()),
@@ -13268,8 +13348,151 @@ mod tests {
                 .state
                 .repo_mode
                 .as_ref()
+                .map(|repo_mode| repo_mode.commit_files_mode),
+            Some(crate::state::CommitFilesMode::List)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
                 .and_then(|repo_mode| repo_mode.commit_files_view.selected_index),
             Some(0)
+        );
+    }
+
+    #[test]
+    fn open_selected_commit_files_from_file_list_loads_commit_scoped_file_diff() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                commit_files_mode: crate::state::CommitFilesMode::List,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: std::path::PathBuf::from("src/lib.rs"),
+                            kind: FileStatusKind::Modified,
+                        }],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commit_files_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedCommitFiles));
+
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadRepoDiff {
+                    repo_id: repo_id.clone(),
+                    comparison_target: Some(crate::state::ComparisonTarget::Commit(
+                        "abcdef1234567890^!".to_string()
+                    )),
+                    compare_with: None,
+                    selected_path: Some(std::path::PathBuf::from("src/lib.rs")),
+                    diff_presentation: DiffPresentation::Comparison,
+                    ignore_whitespace_in_diff: false,
+                    diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
+                    rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+        assert_eq!(
+            result.state.repo_mode.as_ref().map(|repo_mode| {
+                (
+                    repo_mode.commit_subview_mode,
+                    repo_mode.commit_files_mode,
+                    repo_mode
+                        .detail
+                        .as_ref()
+                        .and_then(|detail| detail.diff.selected_path.clone()),
+                )
+            }),
+            Some((
+                crate::state::CommitSubviewMode::Files,
+                crate::state::CommitFilesMode::Diff,
+                Some(std::path::PathBuf::from("src/lib.rs")),
+            ))
+        );
+    }
+
+    #[test]
+    fn close_selected_commit_files_from_diff_returns_to_file_list() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                commit_files_mode: crate::state::CommitFilesMode::Diff,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CloseSelectedCommitFiles));
+
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| (repo_mode.commit_subview_mode, repo_mode.commit_files_mode)),
+            Some((
+                crate::state::CommitSubviewMode::Files,
+                crate::state::CommitFilesMode::List
+            ))
+        );
+    }
+
+    #[test]
+    fn close_selected_commit_files_from_file_list_returns_to_history() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                commit_files_mode: crate::state::CommitFilesMode::List,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CloseSelectedCommitFiles));
+
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| (repo_mode.commit_subview_mode, repo_mode.commit_files_mode)),
+            Some((
+                crate::state::CommitSubviewMode::History,
+                crate::state::CommitFilesMode::List
+            ))
         );
     }
 
