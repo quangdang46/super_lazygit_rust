@@ -394,7 +394,7 @@ impl TuiApp {
         if matches!(self.state.mode, AppMode::Repository)
             && self.binding_matches_action("leave_repo_mode", raw, &normalized, &["esc"])
         {
-            return Some(Action::LeaveRepoMode);
+            return Some(self.repo_escape_action());
         }
 
         match self.state.mode {
@@ -2269,6 +2269,24 @@ impl TuiApp {
             PaneId::RepoStaged => PaneId::RepoUnstaged,
             _ => PaneId::RepoDetail,
         }
+    }
+
+    fn repo_escape_action(&self) -> Action {
+        if self.repo_subview_filter_focused() {
+            return Action::CancelRepoSubviewFilter;
+        }
+
+        if self.state.focused_pane == PaneId::RepoDetail
+            && self
+                .state
+                .repo_mode
+                .as_ref()
+                .is_some_and(|repo_mode| repo_mode.active_subview == RepoSubview::Status)
+        {
+            return Action::FocusRepoMainPane;
+        }
+
+        Action::LeaveRepoMode
     }
 
     fn repo_focus_left_action(&self) -> Option<Action> {
@@ -5034,10 +5052,7 @@ fn repo_diff_lines(
             scroll + 1,
             end
         )),
-        Line::from(format!(
-            "Line select: J/K cursor  v range  L apply lines  Enter whole hunk  Range: {}",
-            selected_diff_range_label(repo_mode, &detail.diff)
-        )),
+        Line::from(diff_action_help_line(repo_mode, detail)),
     ];
 
     lines.extend(
@@ -5385,6 +5400,27 @@ fn history_operation_state_line(merge_state: &super_lazygit_core::MergeState) ->
             "State: cherry-pick in progress".to_string()
         }
         super_lazygit_core::MergeState::RevertInProgress => "State: revert in progress".to_string(),
+    }
+}
+
+fn diff_action_help_line(repo_mode: Option<&RepoModeState>, detail: &RepoDetail) -> String {
+    let range = selected_diff_range_label(repo_mode, &detail.diff);
+    match detail.diff.presentation {
+        DiffPresentation::Unstaged => format!(
+            "Line select: J/K cursor  v range  L stage lines  Enter/Space stage hunk  Mode: {}  Range: {}",
+            if detail.merge_state == super_lazygit_core::MergeState::None {
+                "working tree staging"
+            } else {
+                "merge resolution"
+            },
+            range
+        ),
+        DiffPresentation::Staged => format!(
+            "Line select: J/K cursor  v range  L unstage lines  Enter/Space unstage hunk  Mode: staged changes  Range: {range}"
+        ),
+        DiffPresentation::Comparison => {
+            format!("Read-only diff: j/k hunks  Down/Up scroll  Mode: comparison  Range: {range}")
+        }
     }
 }
 
@@ -6282,8 +6318,7 @@ fn default_status_text(state: &AppState) -> String {
                 || "Repository shell ready.".to_string(),
                 |repo_mode| {
                     if repo_mode.active_subview == RepoSubview::Status {
-                        "Status diff focus; Enter/Space applies the current hunk, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, a/A open the all-branches graph, 0 returns to the main pane, w opens worktrees, b opens submodules, D discards the current file, and X nukes the working tree."
-                            .to_string()
+                        status_detail_focus_help(repo_mode)
                     } else if repo_mode.active_subview == RepoSubview::Branches {
                         "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
                             .to_string()
@@ -6328,9 +6363,34 @@ fn default_status_text(state: &AppState) -> String {
                 },
             ),
             _ => "Repository shell ready.".to_string(),
-        }
+            }
         }
     }
+}
+
+fn status_detail_focus_help(repo_mode: &RepoModeState) -> String {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return "Repository shell ready.".to_string();
+    };
+
+    let action_copy = match detail.diff.presentation {
+        DiffPresentation::Unstaged if detail.merge_state == super_lazygit_core::MergeState::None => {
+            "Enter/Space stages the current hunk and L stages the selected line range"
+        }
+        DiffPresentation::Unstaged => {
+            "Enter/Space stages the current hunk for merge resolution and L stages the selected line range"
+        }
+        DiffPresentation::Staged => {
+            "Enter/Space unstages the current hunk and L unstages the selected line range"
+        }
+        DiffPresentation::Comparison => {
+            "the current diff is read-only while j/k change hunks and Down/Up scroll"
+        }
+    };
+
+    format!(
+        "Status diff focus; {action_copy}, Ctrl+W toggles whitespace, {{/}} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, a/A open the all-branches graph, Esc or 0 returns to the main pane, w opens worktrees, b opens submodules, D discards the current file, and X nukes the working tree."
+    )
 }
 
 fn repo_help_text(state: &AppState) -> String {
@@ -7336,6 +7396,94 @@ mod tests {
         assert_eq!(returned.state.workspace.search_query, "beta");
         assert!(!returned.state.workspace.search_focused);
         assert!(returned.state.repo_mode.is_none());
+    }
+
+    #[test]
+    fn route_repository_status_detail_escape_returns_to_last_main_pane() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Status,
+                main_focus: PaneId::RepoStaged,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let escaped = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "esc".to_string(),
+        })));
+
+        assert_eq!(escaped.state.mode, AppMode::Repository);
+        assert_eq!(escaped.state.focused_pane, PaneId::RepoStaged);
+        assert!(escaped.state.repo_mode.is_some());
+    }
+
+    #[test]
+    fn route_repository_filter_escape_cancels_filter_before_leaving_repo_mode() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                status_filter: super_lazygit_core::RepoSubviewFilterState {
+                    query: "tracked".to_string(),
+                    focused: true,
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let escaped = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "esc".to_string(),
+        })));
+
+        assert_eq!(escaped.state.mode, AppMode::Repository);
+        assert_eq!(escaped.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            escaped
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.status_filter.query.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            escaped
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.status_filter.focused),
+            Some(false)
+        );
     }
 
     #[test]
@@ -11536,6 +11684,63 @@ mod tests {
         assert!(rendered.contains("Repository shell"));
         assert!(rendered.contains("Watch: unknown"));
         assert!(rendered.contains("Screen: normal"));
+    }
+
+    #[test]
+    fn diff_action_help_line_tracks_stage_unstage_and_read_only_modes() {
+        let repo_mode = RepoModeState::new(RepoId::new("repo-1"));
+        let mut detail = sample_repo_detail();
+
+        assert!(diff_action_help_line(Some(&repo_mode), &detail).contains("Enter/Space stage hunk"));
+        assert!(
+            diff_action_help_line(Some(&repo_mode), &detail).contains("Mode: working tree staging")
+        );
+
+        detail.merge_state = super_lazygit_core::MergeState::MergeInProgress;
+        assert!(diff_action_help_line(Some(&repo_mode), &detail).contains("Mode: merge resolution"));
+
+        detail.diff.presentation = DiffPresentation::Staged;
+        assert!(
+            diff_action_help_line(Some(&repo_mode), &detail).contains("Enter/Space unstage hunk")
+        );
+        assert!(diff_action_help_line(Some(&repo_mode), &detail).contains("Mode: staged changes"));
+
+        detail.diff.presentation = DiffPresentation::Comparison;
+        assert!(diff_action_help_line(Some(&repo_mode), &detail).contains("Read-only diff"));
+        assert!(diff_action_help_line(Some(&repo_mode), &detail).contains("Mode: comparison"));
+    }
+
+    #[test]
+    fn status_detail_focus_help_tracks_main_panel_submode_copy() {
+        let repo_id = RepoId::new("repo-1");
+        let mut repo_mode = RepoModeState {
+            current_repo_id: repo_id.clone(),
+            active_subview: RepoSubview::Status,
+            detail: Some(sample_repo_detail()),
+            ..RepoModeState::new(repo_id)
+        };
+
+        assert!(
+            status_detail_focus_help(&repo_mode).contains("Enter/Space stages the current hunk")
+        );
+        assert!(status_detail_focus_help(&repo_mode).contains("Esc or 0 returns to the main pane"));
+
+        if let Some(detail) = repo_mode.detail.as_mut() {
+            detail.merge_state = super_lazygit_core::MergeState::MergeInProgress;
+        }
+        assert!(status_detail_focus_help(&repo_mode).contains("merge resolution"));
+
+        if let Some(detail) = repo_mode.detail.as_mut() {
+            detail.diff.presentation = DiffPresentation::Staged;
+        }
+        assert!(
+            status_detail_focus_help(&repo_mode).contains("Enter/Space unstages the current hunk")
+        );
+
+        if let Some(detail) = repo_mode.detail.as_mut() {
+            detail.diff.presentation = DiffPresentation::Comparison;
+        }
+        assert!(status_detail_focus_help(&repo_mode).contains("read-only"));
     }
 
     #[test]

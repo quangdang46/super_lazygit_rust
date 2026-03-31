@@ -9,7 +9,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `?` | Open the help modal |
 | `Tab` | Move focus to the next pane |
 | `Shift+Tab` | Move focus to the previous pane |
-| `Esc` | Leave repo mode, or close the active modal/overlay |
+| `Esc` | Leave repo mode, close the active modal/overlay, or return from status detail to the last files pane |
 
 ## Workspace mode
 
@@ -83,7 +83,7 @@ This document reflects the current interactive terminal behavior shipped by the 
 | `f` | Open fetch confirmation |
 | `p` | Open pull confirmation |
 | `P` | Open push confirmation |
-| `Esc` | Return to workspace mode |
+| `Esc` | Return to workspace mode from the files panes; in `Status detail`, return to the last focused files pane instead |
 
 ### Repo detail contract
 
@@ -148,6 +148,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `a` | Open the all-branches commit graph, newest first |
 | `A` | Open the all-branches commit graph, oldest first |
 | `X` | Open destructive confirmation for nuking the working tree |
+| `Esc` / `0` | Return to the last focused files pane |
 
 ### Branches detail subview
 
