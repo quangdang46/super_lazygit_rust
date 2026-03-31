@@ -188,6 +188,76 @@ mod tests {
     }
 
     #[test]
+    fn lazygit_parity_regression_script_targets_documented_suites() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let script =
+            fs::read_to_string(workspace_root.join("scripts/run_lazygit_parity_regression.sh"))
+                .expect("read lazygit parity regression script");
+
+        for expected in [
+            "cargo fmt --all --check",
+            "cargo check --all-targets",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo test -p super-lazygit-app lazygit_parity_regression_script_targets_documented_suites",
+            "cargo test -p super-lazygit-app parity_matrix_lists_all_open_clone_parity_beads",
+            "cargo test -p super-lazygit-tui route_repository_",
+            "cargo test -p super-lazygit-tui repo_mode_",
+            "cargo test -p super-lazygit-app e2e_keyboard_harness_runs_ -- --nocapture",
+            "cargo test -p super-lazygit-app e2e_keyboard_harness_inspects_stash_files_before_applying_older_stash -- --nocapture",
+            "cargo test -p super-lazygit-app runtime_enters_and_leaves_nested_submodule_repo -- --nocapture",
+        ] {
+            assert!(
+                script.contains(expected),
+                "parity regression script missing expected command {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn parity_matrix_lists_all_open_clone_parity_beads() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let matrix =
+            fs::read_to_string(workspace_root.join("docs/PARITY_MATRIX.md")).expect("read matrix");
+        let issues =
+            fs::read_to_string(workspace_root.join(".beads/issues.jsonl")).expect("read beads");
+
+        let open_parity_ids = issues
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("valid issue json"))
+            .filter(|issue| {
+                matches!(issue["status"].as_str(), Some("open" | "in_progress"))
+                    && issue["labels"].as_array().is_some_and(|labels| {
+                        labels.iter().any(|label| label == "clone-1-1")
+                            && labels.iter().any(|label| label == "lazygit")
+                    })
+            })
+            .filter_map(|issue| issue["id"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+
+        if open_parity_ids.is_empty() {
+            assert!(
+                matrix.contains("Current open clone-parity beads: none."),
+                "parity matrix must explicitly say when no open clone-parity beads remain"
+            );
+            return;
+        }
+
+        for bead_id in open_parity_ids {
+            assert!(
+                matrix.contains(&format!("`{bead_id}`")) || matrix.contains(&bead_id),
+                "parity matrix must mention open clone-parity bead {bead_id}"
+            );
+        }
+    }
+
+    #[test]
     fn runtime_processes_effects_until_worker_events_update_state() {
         let config = AppConfig::default();
         let state = AppState::default();

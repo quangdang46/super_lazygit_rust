@@ -82,10 +82,12 @@ cargo fmt --all
 cargo check --all-targets
 cargo clippy --all-targets -- -D warnings
 cargo test --workspace
+./scripts/run_lazygit_parity_regression.sh
 ```
 
 ## Docs
 
+- [Lazygit Parity Matrix](docs/PARITY_MATRIX.md)
 - [Keybindings](docs/KEYBINDINGS.md)
 - [Config](docs/CONFIG.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
