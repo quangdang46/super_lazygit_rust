@@ -163,20 +163,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::SelectNextStatusEntry => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_status_selection(repo_mode, state.focused_pane, 1) {
-                    if let Some((selected_path, diff_presentation)) =
-                        selected_status_detail_request(repo_mode, state.focused_pane)
-                    {
-                        effects.push(Effect::LoadRepoDetail {
-                            repo_id: repo_mode.current_repo_id.clone(),
-                            selected_path: Some(selected_path),
-                            diff_presentation,
-                            commit_ref: None,
-                            commit_history_mode: CommitHistoryMode::Linear,
-                            ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
-                            diff_context_lines: repo_mode.diff_context_lines,
-                            rename_similarity_threshold: repo_mode.rename_similarity_threshold,
-                        });
-                    }
+                    enqueue_selected_status_detail_load(repo_mode, state.focused_pane, effects);
                     effects.push(Effect::ScheduleRender);
                 }
             }
@@ -184,20 +171,15 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::SelectPreviousStatusEntry => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if step_status_selection(repo_mode, state.focused_pane, -1) {
-                    if let Some((selected_path, diff_presentation)) =
-                        selected_status_detail_request(repo_mode, state.focused_pane)
-                    {
-                        effects.push(Effect::LoadRepoDetail {
-                            repo_id: repo_mode.current_repo_id.clone(),
-                            selected_path: Some(selected_path),
-                            diff_presentation,
-                            commit_ref: None,
-                            commit_history_mode: CommitHistoryMode::Linear,
-                            ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
-                            diff_context_lines: repo_mode.diff_context_lines,
-                            rename_similarity_threshold: repo_mode.rename_similarity_threshold,
-                        });
-                    }
+                    enqueue_selected_status_detail_load(repo_mode, state.focused_pane, effects);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectStatusEntry { pane, index } => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if select_status_entry_at(repo_mode, pane, index) {
+                    enqueue_selected_status_detail_load(repo_mode, pane, effects);
                     effects.push(Effect::ScheduleRender);
                 }
             }
@@ -1363,6 +1345,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::ClearComparison => {
             clear_comparison(state, effects);
+        }
+        Action::SelectRepoDetailItem { index } => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if select_repo_detail_item_at(repo_mode, index) {
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
         }
         Action::ScrollRepoDetailUp => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
@@ -3769,6 +3758,29 @@ fn step_status_selection(repo_mode: &mut RepoModeState, focused_pane: PaneId, st
     match focused_pane {
         PaneId::RepoUnstaged => repo_mode.status_view.select_with_step(len, step).is_some(),
         PaneId::RepoStaged => repo_mode.staged_view.select_with_step(len, step).is_some(),
+        _ => false,
+    }
+}
+
+fn select_status_entry_at(repo_mode: &mut RepoModeState, pane: PaneId, index: usize) -> bool {
+    if repo_mode.detail.is_none() {
+        return false;
+    }
+
+    let len = status_entries_len(repo_mode, pane);
+    if len == 0 {
+        return false;
+    }
+
+    match pane {
+        PaneId::RepoUnstaged => {
+            let changed = repo_mode.status_view.selected_index != Some(index);
+            repo_mode.status_view.set_selected(len, index).is_some() && changed
+        }
+        PaneId::RepoStaged => {
+            let changed = repo_mode.staged_view.selected_index != Some(index);
+            repo_mode.staged_view.set_selected(len, index).is_some() && changed
+        }
         _ => false,
     }
 }
@@ -6900,6 +6912,27 @@ fn selected_status_detail_request(
     selected_status_path(repo_mode, pane).map(|path| (path, diff_presentation_for_pane(pane)))
 }
 
+fn enqueue_selected_status_detail_load(
+    repo_mode: &RepoModeState,
+    pane: PaneId,
+    effects: &mut Vec<Effect>,
+) {
+    if let Some((selected_path, diff_presentation)) =
+        selected_status_detail_request(repo_mode, pane)
+    {
+        effects.push(Effect::LoadRepoDetail {
+            repo_id: repo_mode.current_repo_id.clone(),
+            selected_path: Some(selected_path),
+            diff_presentation,
+            commit_ref: None,
+            commit_history_mode: CommitHistoryMode::Linear,
+            ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
+            diff_context_lines: repo_mode.diff_context_lines,
+            rename_similarity_threshold: repo_mode.rename_similarity_threshold,
+        });
+    }
+}
+
 fn update_status_directory_collapse(
     repo_mode: &mut RepoModeState,
     pane: PaneId,
@@ -8258,6 +8291,128 @@ fn step_filtered_selection(
     let next_index = visible_indices[next_position];
     let changed = *selected_index != Some(next_index);
     *selected_index = Some(next_index);
+    changed
+}
+
+fn select_filtered_visible_index(
+    selected_index: &mut Option<usize>,
+    visible_indices: &[usize],
+    index: usize,
+) -> bool {
+    let Some(next_index) = visible_indices.get(index).copied() else {
+        return false;
+    };
+
+    let changed = *selected_index != Some(next_index);
+    *selected_index = Some(next_index);
+    changed
+}
+
+fn select_repo_detail_item_at(repo_mode: &mut RepoModeState, index: usize) -> bool {
+    let changed = match repo_mode.active_subview {
+        crate::state::RepoSubview::Branches => {
+            let visible_indices = filtered_branch_indices(repo_mode);
+            select_filtered_visible_index(
+                &mut repo_mode.branches_view.selected_index,
+                &visible_indices,
+                index,
+            )
+        }
+        crate::state::RepoSubview::Remotes => {
+            let visible_indices = filtered_remote_indices(repo_mode);
+            select_filtered_visible_index(
+                &mut repo_mode.remotes_view.selected_index,
+                &visible_indices,
+                index,
+            )
+        }
+        crate::state::RepoSubview::RemoteBranches => {
+            let visible_indices = filtered_remote_branch_indices(repo_mode);
+            select_filtered_visible_index(
+                &mut repo_mode.remote_branches_view.selected_index,
+                &visible_indices,
+                index,
+            )
+        }
+        crate::state::RepoSubview::Tags => {
+            let visible_indices = filtered_tag_indices(repo_mode);
+            select_filtered_visible_index(
+                &mut repo_mode.tags_view.selected_index,
+                &visible_indices,
+                index,
+            )
+        }
+        crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
+            crate::state::CommitSubviewMode::History => {
+                let visible_indices = filtered_commit_indices(repo_mode);
+                select_filtered_visible_index(
+                    &mut repo_mode.commits_view.selected_index,
+                    &visible_indices,
+                    index,
+                )
+            }
+            crate::state::CommitSubviewMode::Files => match repo_mode.commit_files_mode {
+                crate::state::CommitFilesMode::List => {
+                    let visible_indices = filtered_commit_file_indices(repo_mode);
+                    select_filtered_visible_index(
+                        &mut repo_mode.commit_files_view.selected_index,
+                        &visible_indices,
+                        index,
+                    )
+                }
+                crate::state::CommitFilesMode::Diff => false,
+            },
+        },
+        crate::state::RepoSubview::Stash => match repo_mode.stash_subview_mode {
+            crate::state::StashSubviewMode::List => {
+                let visible_indices = filtered_stash_indices(repo_mode);
+                select_filtered_visible_index(
+                    &mut repo_mode.stash_view.selected_index,
+                    &visible_indices,
+                    index,
+                )
+            }
+            crate::state::StashSubviewMode::Files => {
+                let visible_indices = filtered_stash_file_indices(repo_mode);
+                select_filtered_visible_index(
+                    &mut repo_mode.stash_files_view.selected_index,
+                    &visible_indices,
+                    index,
+                )
+            }
+        },
+        crate::state::RepoSubview::Reflog => {
+            let visible_indices = filtered_reflog_indices(repo_mode);
+            select_filtered_visible_index(
+                &mut repo_mode.reflog_view.selected_index,
+                &visible_indices,
+                index,
+            )
+        }
+        crate::state::RepoSubview::Worktrees => {
+            let visible_indices = filtered_worktree_indices(repo_mode);
+            select_filtered_visible_index(
+                &mut repo_mode.worktree_view.selected_index,
+                &visible_indices,
+                index,
+            )
+        }
+        crate::state::RepoSubview::Submodules => {
+            let visible_indices = filtered_submodule_indices(repo_mode);
+            select_filtered_visible_index(
+                &mut repo_mode.submodules_view.selected_index,
+                &visible_indices,
+                index,
+            )
+        }
+        crate::state::RepoSubview::Status
+        | crate::state::RepoSubview::Compare
+        | crate::state::RepoSubview::Rebase => false,
+    };
+
+    if changed {
+        repo_mode.diff_scroll = 0;
+    }
     changed
 }
 

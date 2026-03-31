@@ -62,13 +62,11 @@ pub fn run(runtime: &mut AppRuntime) -> Result<()> {
                 CrosstermEvent::Paste(text) if !text.is_empty() => {
                     runtime.run([Event::Input(InputEvent::Paste(text))]);
                 }
-                CrosstermEvent::Mouse(mouse)
-                    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) =>
-                {
-                    runtime.run([Event::Input(InputEvent::MouseLeft {
-                        column: mouse.column,
-                        row: mouse.row,
-                    })]);
+                CrosstermEvent::Mouse(mouse) => {
+                    if let Some(input) = mouse_input_from_event(mouse.column, mouse.row, mouse.kind)
+                    {
+                        runtime.run([Event::Input(input)]);
+                    }
                 }
                 CrosstermEvent::Resize(width, height) => {
                     runtime.run([Event::Input(InputEvent::Resize { width, height })]);
@@ -254,6 +252,15 @@ fn keypress_from_event(key: KeyEvent) -> Option<KeyPress> {
     Some(KeyPress { key: rendered })
 }
 
+fn mouse_input_from_event(column: u16, row: u16, kind: MouseEventKind) -> Option<InputEvent> {
+    match kind {
+        MouseEventKind::Down(MouseButton::Left) => Some(InputEvent::MouseLeft { column, row }),
+        MouseEventKind::ScrollUp => Some(InputEvent::MouseWheelUp { column, row }),
+        MouseEventKind::ScrollDown => Some(InputEvent::MouseWheelDown { column, row }),
+        _ => None,
+    }
+}
+
 fn current_timestamp() -> Timestamp {
     Timestamp(
         SystemTime::now()
@@ -375,5 +382,22 @@ mod tests {
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         }));
+    }
+
+    #[test]
+    fn maps_mouse_click_and_wheel_events_into_core_input_events() {
+        assert_eq!(
+            mouse_input_from_event(4, 7, MouseEventKind::Down(MouseButton::Left)),
+            Some(InputEvent::MouseLeft { column: 4, row: 7 })
+        );
+        assert_eq!(
+            mouse_input_from_event(8, 3, MouseEventKind::ScrollUp),
+            Some(InputEvent::MouseWheelUp { column: 8, row: 3 })
+        );
+        assert_eq!(
+            mouse_input_from_event(9, 2, MouseEventKind::ScrollDown),
+            Some(InputEvent::MouseWheelDown { column: 9, row: 2 })
+        );
+        assert_eq!(mouse_input_from_event(1, 1, MouseEventKind::Moved), None);
     }
 }

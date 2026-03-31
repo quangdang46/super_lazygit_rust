@@ -58,7 +58,7 @@ impl RepoSidePanel {
         Self::Stash,
     ];
 
-    const fn block_title(self) -> &'static str {
+    const fn jump_label(self) -> &'static str {
         match self {
             Self::Status => "[1]",
             Self::Files => "[2]",
@@ -370,6 +370,28 @@ impl TuiApp {
                     self.apply_actions(actions)
                 }
             }
+            InputEvent::MouseWheelUp { column, row } => {
+                let actions = self.route_mouse_wheel(column, row, true);
+                if actions.is_empty() {
+                    ReduceResult {
+                        state: self.state.clone(),
+                        effects: Vec::new(),
+                    }
+                } else {
+                    self.apply_actions(actions)
+                }
+            }
+            InputEvent::MouseWheelDown { column, row } => {
+                let actions = self.route_mouse_wheel(column, row, false);
+                if actions.is_empty() {
+                    ReduceResult {
+                        state: self.state.clone(),
+                        effects: Vec::new(),
+                    }
+                } else {
+                    self.apply_actions(actions)
+                }
+            }
             InputEvent::Paste(text) => {
                 if self.commit_box_focused() && !text.is_empty() {
                     let result = reduce(
@@ -466,13 +488,77 @@ impl TuiApp {
                     }
                 }
                 if point_in_rect(column, row, layout.main_unstaged) {
-                    return vec![Action::SetFocusedPane(PaneId::RepoUnstaged)];
+                    return self.route_repo_status_click(
+                        layout.main_unstaged,
+                        PaneId::RepoUnstaged,
+                        column,
+                        row,
+                    );
                 }
                 if point_in_rect(column, row, layout.main_staged) {
-                    return vec![Action::SetFocusedPane(PaneId::RepoStaged)];
+                    return self.route_repo_status_click(
+                        layout.main_staged,
+                        PaneId::RepoStaged,
+                        column,
+                        row,
+                    );
                 }
                 if point_in_rect(column, row, layout.main_detail) {
-                    return vec![Action::SetFocusedPane(PaneId::RepoDetail)];
+                    return self.route_repo_detail_click(layout.main_detail, column, row);
+                }
+                Vec::new()
+            }
+        }
+    }
+
+    fn route_mouse_wheel(&self, column: u16, row: u16, up: bool) -> Vec<Action> {
+        if self.state.mode != AppMode::Repository || !self.state.modal_stack.is_empty() {
+            return Vec::new();
+        }
+
+        let area = Rect::new(
+            0,
+            0,
+            self.viewport.width.max(1),
+            self.viewport.height.max(1),
+        );
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(3)])
+            .split(area);
+        let body = layout[1];
+
+        match self.state.settings.screen_mode {
+            ScreenMode::FullScreen if self.fullscreen_repo_pane() == PaneId::RepoDetail => self
+                .route_repo_side_panel_wheel(self.active_repo_side_panel(), body, column, row, up),
+            ScreenMode::FullScreen => {
+                if point_in_rect(column, row, body) {
+                    let pane = self.fullscreen_repo_pane();
+                    return match pane {
+                        PaneId::RepoUnstaged | PaneId::RepoStaged => {
+                            self.route_repo_status_wheel(pane, up)
+                        }
+                        _ => self.route_repo_detail_wheel(up),
+                    };
+                }
+                Vec::new()
+            }
+            _ => {
+                let split = self.repo_split_layout(body);
+                for panel in RepoSidePanel::ALL {
+                    let rect = split.side_panels[panel.index()];
+                    if point_in_rect(column, row, rect) {
+                        return self.route_repo_side_panel_wheel(panel, rect, column, row, up);
+                    }
+                }
+                if point_in_rect(column, row, split.main_unstaged) {
+                    return self.route_repo_status_wheel(PaneId::RepoUnstaged, up);
+                }
+                if point_in_rect(column, row, split.main_staged) {
+                    return self.route_repo_status_wheel(PaneId::RepoStaged, up);
+                }
+                if point_in_rect(column, row, split.main_detail) {
+                    return self.route_repo_detail_wheel(up);
                 }
                 Vec::new()
             }
@@ -500,9 +586,251 @@ impl TuiApp {
             }
         }
 
+        if let Some(actions) =
+            self.route_repo_side_panel_item_click(panel, selected_tab, area, column, row)
+        {
+            return actions;
+        }
+
         self.repo_side_panel_action(panel.default_target())
             .into_iter()
             .collect()
+    }
+
+    fn route_repo_side_panel_item_click(
+        &self,
+        panel: RepoSidePanel,
+        selected_tab: RepoSidePanelTab,
+        area: Rect,
+        column: u16,
+        row: u16,
+    ) -> Option<Vec<Action>> {
+        let repo_mode = self.state.repo_mode.as_ref()?;
+        let inner = inner_rect(area);
+        if !point_in_rect(column, row, inner) {
+            return None;
+        }
+
+        let relative_row = usize::from(row.saturating_sub(inner.y));
+        if relative_row < 1 {
+            return None;
+        }
+        let index = relative_row.saturating_sub(1);
+
+        match (panel, selected_tab) {
+            (RepoSidePanel::Files, RepoSidePanelTab::Subview(RepoSubview::Status)) => {
+                let pane = if repo_mode.main_focus == PaneId::RepoStaged {
+                    PaneId::RepoStaged
+                } else {
+                    PaneId::RepoUnstaged
+                };
+                Some(vec![
+                    Action::SetFocusedPane(pane),
+                    Action::SelectStatusEntry { pane, index },
+                ])
+            }
+            (RepoSidePanel::Files, RepoSidePanelTab::Subview(subview @ RepoSubview::Worktrees))
+            | (
+                RepoSidePanel::Files,
+                RepoSidePanelTab::Subview(subview @ RepoSubview::Submodules),
+            )
+            | (
+                RepoSidePanel::Branches,
+                RepoSidePanelTab::Subview(subview @ RepoSubview::Branches),
+            )
+            | (
+                RepoSidePanel::Branches,
+                RepoSidePanelTab::Subview(subview @ RepoSubview::Remotes),
+            )
+            | (RepoSidePanel::Branches, RepoSidePanelTab::Subview(subview @ RepoSubview::Tags))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Commits))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Reflog))
+            | (RepoSidePanel::Stash, RepoSidePanelTab::Subview(subview @ RepoSubview::Stash)) => {
+                Some(vec![
+                    Action::SwitchRepoSubview(subview),
+                    Action::SetFocusedPane(PaneId::RepoDetail),
+                    Action::SelectRepoDetailItem { index },
+                ])
+            }
+            _ => None,
+        }
+    }
+
+    fn route_repo_side_panel_wheel(
+        &self,
+        panel: RepoSidePanel,
+        area: Rect,
+        column: u16,
+        row: u16,
+        up: bool,
+    ) -> Vec<Action> {
+        let repo_mode = match self.state.repo_mode.as_ref() {
+            Some(repo_mode) => repo_mode,
+            None => return Vec::new(),
+        };
+        if !point_in_rect(column, row, area) {
+            return Vec::new();
+        }
+
+        let selected_tab = self.selected_repo_side_tab(panel);
+        match (panel, selected_tab) {
+            (RepoSidePanel::Files, RepoSidePanelTab::Subview(RepoSubview::Status)) => {
+                let pane = if repo_mode.main_focus == PaneId::RepoStaged {
+                    PaneId::RepoStaged
+                } else {
+                    PaneId::RepoUnstaged
+                };
+                self.route_repo_status_wheel(pane, up)
+            }
+            (RepoSidePanel::Files, RepoSidePanelTab::Subview(subview @ RepoSubview::Worktrees))
+            | (
+                RepoSidePanel::Files,
+                RepoSidePanelTab::Subview(subview @ RepoSubview::Submodules),
+            )
+            | (
+                RepoSidePanel::Branches,
+                RepoSidePanelTab::Subview(subview @ RepoSubview::Branches),
+            )
+            | (
+                RepoSidePanel::Branches,
+                RepoSidePanelTab::Subview(subview @ RepoSubview::Remotes),
+            )
+            | (RepoSidePanel::Branches, RepoSidePanelTab::Subview(subview @ RepoSubview::Tags))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Commits))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Reflog))
+            | (RepoSidePanel::Stash, RepoSidePanelTab::Subview(subview @ RepoSubview::Stash)) => {
+                let mut actions = vec![
+                    Action::SwitchRepoSubview(subview),
+                    Action::SetFocusedPane(PaneId::RepoDetail),
+                ];
+                actions.push(if up {
+                    detail_prev_action_for_repo_mode(repo_mode)
+                } else {
+                    detail_next_action_for_repo_mode(repo_mode)
+                });
+                actions
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn route_repo_status_click(
+        &self,
+        area: Rect,
+        pane: PaneId,
+        column: u16,
+        row: u16,
+    ) -> Vec<Action> {
+        let Some(repo_mode) = self.state.repo_mode.as_ref() else {
+            return vec![Action::SetFocusedPane(pane)];
+        };
+        let inner = inner_rect(area);
+        if !point_in_rect(column, row, inner) {
+            return vec![Action::SetFocusedPane(pane)];
+        }
+
+        let relative_row = usize::from(row.saturating_sub(inner.y));
+        let header_lines = repo_status_header_lines();
+        if relative_row < header_lines {
+            return vec![Action::SetFocusedPane(pane)];
+        }
+
+        let entries = super_lazygit_core::visible_status_entries(repo_mode, pane);
+        if entries.is_empty() {
+            return vec![Action::SetFocusedPane(pane)];
+        }
+
+        let scroll = usize::from(repo_status_scroll_offset(
+            repo_mode,
+            pane,
+            usize::from(inner.height),
+        ));
+        let index = scroll + relative_row.saturating_sub(header_lines);
+        let Some(entry) = entries.get(index) else {
+            return vec![Action::SetFocusedPane(pane)];
+        };
+
+        let mut actions = vec![
+            Action::SetFocusedPane(pane),
+            Action::SelectStatusEntry { pane, index },
+        ];
+        if matches!(
+            entry.entry_kind,
+            super_lazygit_core::VisibleStatusEntryKind::Directory { .. }
+        ) && status_entry_arrow_hit(entry, column, inner.x)
+        {
+            actions.push(match entry.entry_kind {
+                super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed: true } => {
+                    Action::ExpandStatusEntry
+                }
+                super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed: false } => {
+                    Action::CollapseStatusEntry
+                }
+                super_lazygit_core::VisibleStatusEntryKind::File => Action::OpenSelectedStatusEntry,
+            });
+        }
+        actions
+    }
+
+    fn route_repo_status_wheel(&self, pane: PaneId, up: bool) -> Vec<Action> {
+        vec![
+            Action::SetFocusedPane(pane),
+            if up {
+                Action::SelectPreviousStatusEntry
+            } else {
+                Action::SelectNextStatusEntry
+            },
+        ]
+    }
+
+    fn route_repo_detail_click(&self, area: Rect, column: u16, row: u16) -> Vec<Action> {
+        let Some(repo_mode) = self.state.repo_mode.as_ref() else {
+            return vec![Action::SetFocusedPane(PaneId::RepoDetail)];
+        };
+        let inner = inner_rect(area);
+        if !point_in_rect(column, row, inner) {
+            return vec![Action::SetFocusedPane(PaneId::RepoDetail)];
+        }
+
+        let relative_row = usize::from(row.saturating_sub(inner.y));
+        let Some((header_lines, window_start, window_len)) =
+            repo_detail_click_window(repo_mode, usize::from(inner.height))
+        else {
+            return vec![Action::SetFocusedPane(PaneId::RepoDetail)];
+        };
+        if relative_row < header_lines {
+            return vec![Action::SetFocusedPane(PaneId::RepoDetail)];
+        }
+
+        let index = window_start + relative_row.saturating_sub(header_lines);
+        if index >= window_start + window_len {
+            return vec![Action::SetFocusedPane(PaneId::RepoDetail)];
+        }
+
+        vec![
+            Action::SetFocusedPane(PaneId::RepoDetail),
+            Action::SelectRepoDetailItem { index },
+        ]
+    }
+
+    fn route_repo_detail_wheel(&self, up: bool) -> Vec<Action> {
+        let Some(repo_mode) = self.state.repo_mode.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut actions = vec![Action::SetFocusedPane(PaneId::RepoDetail)];
+        actions.push(if repo_detail_uses_diff_scroll(repo_mode) {
+            if up {
+                Action::ScrollRepoDetailUp
+            } else {
+                Action::ScrollRepoDetailDown
+            }
+        } else if up {
+            detail_prev_action_for_repo_mode(repo_mode)
+        } else {
+            detail_next_action_for_repo_mode(repo_mode)
+        });
+        actions
     }
 
     fn route_key(&self, key: KeyPress) -> Option<Action> {
@@ -3259,10 +3587,12 @@ impl TuiApp {
             return;
         };
 
+        let content_height = usize::from(area.height.saturating_sub(2));
         let lines = repo_unstaged_lines(
             Some(repo_mode),
             self.state.focused_pane == PaneId::RepoUnstaged,
             &repo_mode.operation_progress,
+            content_height,
         );
 
         Paragraph::new(lines)
@@ -3277,7 +3607,12 @@ impl TuiApp {
 
     fn render_repo_staged(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let repo_mode = self.state.repo_mode.as_ref();
-        let lines = repo_staged_lines(repo_mode, self.state.focused_pane == PaneId::RepoStaged);
+        let content_height = usize::from(area.height.saturating_sub(2));
+        let lines = repo_staged_lines(
+            repo_mode,
+            self.state.focused_pane == PaneId::RepoStaged,
+            content_height,
+        );
         let title = if repo_mode.is_some_and(|repo_mode| repo_mode.commit_box.focused) {
             match repo_mode.map(|repo_mode| repo_mode.commit_box.mode) {
                 Some(CommitBoxMode::Commit) => "Staged changes · Commit",
@@ -3345,6 +3680,7 @@ impl TuiApp {
                     repo_mode.comparison_source,
                     repo_mode.branch_sort_mode,
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
                 RepoSubview::Remotes => repo_remote_lines(
@@ -3358,6 +3694,7 @@ impl TuiApp {
                         .subview_filter(RepoSubview::Remotes)
                         .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
                 RepoSubview::RemoteBranches => repo_remote_branch_lines(
@@ -3372,6 +3709,7 @@ impl TuiApp {
                         .is_some_and(|filter| filter.focused),
                     repo_mode.remote_branch_sort_mode,
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
                 RepoSubview::Tags => repo_tag_lines(
@@ -3385,6 +3723,7 @@ impl TuiApp {
                         .subview_filter(RepoSubview::Tags)
                         .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
                 RepoSubview::Commits => {
@@ -3417,6 +3756,7 @@ impl TuiApp {
                         .is_some_and(|filter| filter.focused),
                     repo_mode.stash_subview_mode,
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
                 RepoSubview::Reflog => repo_reflog_lines(
@@ -3430,6 +3770,7 @@ impl TuiApp {
                         .subview_filter(RepoSubview::Reflog)
                         .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
                 RepoSubview::Worktrees => repo_worktree_lines(
@@ -3443,6 +3784,7 @@ impl TuiApp {
                         .subview_filter(RepoSubview::Worktrees)
                         .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
                 RepoSubview::Submodules => repo_submodule_lines(
@@ -3456,6 +3798,7 @@ impl TuiApp {
                         .subview_filter(RepoSubview::Submodules)
                         .is_some_and(|filter| filter.focused),
                     self.state.focused_pane == PaneId::RepoDetail,
+                    usize::from(area.height.saturating_sub(2)),
                     theme,
                 ),
             };
@@ -3590,20 +3933,16 @@ impl TuiApp {
     ) {
         let inner_height = usize::from(area.height.saturating_sub(2));
         let selected_tab = self.selected_repo_side_tab(panel);
-        let mut lines = Vec::new();
-        if inner_height > 0 {
-            lines.push(repo_side_panel_tab_line(panel, selected_tab, theme));
-            lines.extend(self.repo_side_panel_preview_lines(
-                panel,
-                inner_height.saturating_sub(1),
-                theme,
-            ));
-        }
+        let lines = if inner_height > 0 {
+            self.repo_side_panel_preview_lines(panel, inner_height, theme)
+        } else {
+            Vec::new()
+        };
 
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title(panel.block_title())
+                    .title(repo_side_panel_title(panel, selected_tab))
                     .borders(Borders::ALL)
                     .border_style(if self.active_repo_side_panel() == panel {
                         Style::default()
@@ -3763,10 +4102,16 @@ impl TuiApp {
             lines.push(Line::from("No visible file entries."));
             return lines;
         }
+        let selected_position = selected_index
+            .unwrap_or(0)
+            .min(entries.len().saturating_sub(1));
+        let (window_start, window_len) =
+            centered_list_window(selected_position, entries.len(), available_lines, 1, 0);
         for (index, entry) in entries
             .into_iter()
-            .take(available_lines.saturating_sub(1))
             .enumerate()
+            .skip(window_start)
+            .take(window_len)
         {
             let marker = if selected_index == Some(index) {
                 ">"
@@ -3819,9 +4164,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let worktree = &detail.worktrees[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -3862,9 +4216,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let submodule = &detail.submodules[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -3913,9 +4276,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let branch = &detail.branches[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -3957,9 +4329,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let remote = &detail.remotes[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -3999,9 +4380,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let tag = &detail.tags[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -4043,9 +4433,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let commit = &detail.commits[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -4091,9 +4490,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let entry = &detail.reflog_items[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -4133,9 +4541,18 @@ impl TuiApp {
             .selected_index
             .filter(|index| visible_indices.contains(index))
             .unwrap_or(visible_indices[0]);
+        let selected_position = visible_position(&visible_indices, Some(selected_index));
+        let (window_start, window_len) = centered_list_window(
+            selected_position,
+            visible_indices.len(),
+            available_lines,
+            1,
+            0,
+        );
         for index in visible_indices
             .into_iter()
-            .take(available_lines.saturating_sub(1))
+            .skip(window_start)
+            .take(window_len)
         {
             let stash = &detail.stashes[index];
             let marker = if index == selected_index { ">" } else { " " };
@@ -4176,40 +4593,35 @@ impl TuiApp {
     }
 
     fn render_status_bar(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
-        let mut lines = vec![Line::from(vec![
-            Span::styled(
-                mode_label(self.state.mode.clone()),
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::raw(format!("focus={:?}", self.state.focused_pane)),
-            Span::raw("  "),
-            Span::raw(format!(
-                "size={}x{}",
-                self.viewport.width, self.viewport.height
-            )),
-            Span::raw("  "),
-            Span::raw(status_text(&self.state)),
-        ])];
+        let options = footer_hint_text(&self.state);
+        let app_status = footer_app_status_text(&self.state);
+        let information = footer_information_text(&self.state);
+        let segments = footer_segments(&options, &app_status, &information);
+        let sections = layout_footer_segments(area, &segments);
 
-        if self.state.settings.show_help_footer {
-            lines.push(Line::from(help_text(&self.state)));
-            if matches!(self.state.mode, AppMode::Repository) && self.state.modal_stack.is_empty() {
-                lines.push(Line::from(repo_screen_status_line(&self.state)));
+        for (segment, rect) in segments.iter().zip(sections.into_iter()) {
+            match segment.kind {
+                FooterSegmentKind::Options => {
+                    Paragraph::new(options.clone())
+                        .alignment(Alignment::Left)
+                        .style(Style::default().fg(theme.foreground))
+                        .render(rect, buffer);
+                }
+                FooterSegmentKind::AppStatus => {
+                    Paragraph::new(app_status.clone())
+                        .alignment(Alignment::Left)
+                        .style(Style::default().fg(theme.accent))
+                        .render(rect, buffer);
+                }
+                FooterSegmentKind::Information => {
+                    Paragraph::new(information.clone())
+                        .alignment(Alignment::Right)
+                        .style(Style::default().fg(theme.success))
+                        .render(rect, buffer);
+                }
+                FooterSegmentKind::SpacerFixed | FooterSegmentKind::SpacerFlexible => {}
             }
         }
-
-        Paragraph::new(lines)
-            .alignment(Alignment::Left)
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(Style::default().fg(theme.accent)),
-            )
-            .style(Style::default().bg(theme.background).fg(theme.foreground))
-            .render(area, buffer);
     }
 
     fn pane_style(&self, pane: PaneId, theme: Theme) -> Style {
@@ -4342,24 +4754,39 @@ fn split_repo_left_column(area: Rect) -> std::rc::Rc<[Rect]> {
 }
 
 fn split_repo_side_panels(area: Rect, active_panel: RepoSidePanel) -> std::rc::Rc<[Rect]> {
-    let mut weights = [1_u32, 1_u32, 1_u32, 1_u32];
-    match active_panel {
-        RepoSidePanel::Files => weights[0] = 2,
-        RepoSidePanel::Branches => weights[1] = 2,
-        RepoSidePanel::Commits => weights[2] = 2,
-        RepoSidePanel::Stash => weights[3] = 2,
-        RepoSidePanel::Status => {}
-    }
-    let total_weight: u32 = weights.iter().sum();
+    let squashed_height = if area.height >= 21 { 3 } else { 1 };
+    let panel_constraint = |panel| {
+        if panel == active_panel {
+            Constraint::Fill(1)
+        } else {
+            Constraint::Length(squashed_height)
+        }
+    };
+    let constraints = if area.height >= 28 {
+        [
+            Constraint::Length(3),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
+            if active_panel == RepoSidePanel::Stash {
+                Constraint::Fill(1)
+            } else {
+                Constraint::Length(3)
+            },
+        ]
+    } else {
+        [
+            panel_constraint(RepoSidePanel::Status),
+            panel_constraint(RepoSidePanel::Files),
+            panel_constraint(RepoSidePanel::Branches),
+            panel_constraint(RepoSidePanel::Commits),
+            panel_constraint(RepoSidePanel::Stash),
+        ]
+    };
+
     Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(if area.height >= 20 { 4 } else { 3 }),
-            Constraint::Ratio(weights[0], total_weight),
-            Constraint::Ratio(weights[1], total_weight),
-            Constraint::Ratio(weights[2], total_weight),
-            Constraint::Ratio(weights[3], total_weight),
-        ])
+        .constraints(constraints)
         .split(area)
 }
 
@@ -4419,37 +4846,34 @@ fn point_in_rect(column: u16, row: u16, rect: Rect) -> bool {
 }
 
 fn repo_side_panel_tab_display(tab: RepoSidePanelTabDef, selected_tab: RepoSidePanelTab) -> String {
-    if tab.target == selected_tab {
-        format!("[{}]", tab.label)
-    } else {
-        tab.label.to_string()
+    let _ = selected_tab;
+    tab.label.to_string()
+}
+
+fn repo_side_panel_tab_separator(panel: RepoSidePanel, previous_tab_index: usize) -> &'static str {
+    match (panel, previous_tab_index) {
+        (RepoSidePanel::Files, 0) => "──────────",
+        (RepoSidePanel::Files, 1) => "──",
+        (RepoSidePanel::Branches, 0) => "────",
+        (RepoSidePanel::Branches, 1) => "──",
+        (RepoSidePanel::Commits, 0) => "───────────",
+        (RepoSidePanel::Stash, 0) => " ",
+        _ => "",
     }
 }
 
-fn repo_side_panel_tab_line(
-    panel: RepoSidePanel,
-    selected_tab: RepoSidePanelTab,
-    theme: Theme,
-) -> Line<'static> {
-    let mut spans = Vec::new();
+fn repo_side_panel_title(panel: RepoSidePanel, selected_tab: RepoSidePanelTab) -> String {
     let tabs = repo_side_panel_tabs(panel);
-    for (index, tab) in tabs.iter().enumerate() {
-        let selected = tab.target == selected_tab;
-        spans.push(Span::styled(
-            repo_side_panel_tab_display(*tab, selected_tab),
-            if selected {
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.foreground)
-            },
-        ));
-        if index + 1 < tabs.len() {
-            spans.push(Span::raw(" | "));
+    let mut title = String::from(panel.jump_label());
+    if let Some(first) = tabs.first() {
+        title.push('─');
+        title.push_str(&repo_side_panel_tab_display(*first, selected_tab));
+        for (index, tab) in tabs.iter().enumerate().skip(1) {
+            title.push_str(repo_side_panel_tab_separator(panel, index - 1));
+            title.push_str(&repo_side_panel_tab_display(*tab, selected_tab));
         }
     }
-    Line::from(spans)
+    title
 }
 
 fn repo_side_panel_tab_hitboxes(
@@ -4462,7 +4886,10 @@ fn repo_side_panel_tab_hitboxes(
         return hitboxes;
     }
 
-    let mut cursor = inner.x;
+    let mut cursor = inner
+        .x
+        .saturating_add(panel.jump_label().chars().count() as u16)
+        .saturating_add(1);
     let right = inner.x.saturating_add(inner.width);
     for (index, tab) in repo_side_panel_tabs(panel).iter().enumerate() {
         let display = repo_side_panel_tab_display(*tab, selected_tab);
@@ -4473,10 +4900,443 @@ fn repo_side_panel_tab_hitboxes(
             cursor = cursor.saturating_add(width);
         }
         if index + 1 < repo_side_panel_tabs(panel).len() {
-            cursor = cursor.saturating_add(3);
+            cursor = cursor
+                .saturating_add(repo_side_panel_tab_separator(panel, index).chars().count() as u16);
         }
     }
     hitboxes
+}
+
+fn centered_list_window(
+    selected_position: usize,
+    len: usize,
+    viewport_lines: usize,
+    header_lines: usize,
+    footer_lines: usize,
+) -> (usize, usize) {
+    if len == 0 {
+        return (0, 0);
+    }
+
+    let visible_capacity = viewport_lines
+        .saturating_sub(header_lines.saturating_add(footer_lines))
+        .max(1);
+    let half = visible_capacity / 2;
+    let mut window_start = selected_position.saturating_sub(half);
+    let window_end = (window_start + visible_capacity).min(len);
+    if window_end.saturating_sub(window_start) < visible_capacity {
+        window_start = window_end.saturating_sub(visible_capacity);
+    }
+    (window_start, window_end.saturating_sub(window_start))
+}
+
+fn visible_position(visible_indices: &[usize], selected_index: Option<usize>) -> usize {
+    selected_index
+        .and_then(|selected_index| {
+            visible_indices
+                .iter()
+                .position(|visible_index| *visible_index == selected_index)
+        })
+        .unwrap_or(0)
+}
+
+fn detail_prev_action_for_repo_mode(repo_mode: &RepoModeState) -> Action {
+    match repo_mode.active_subview {
+        RepoSubview::Branches => Action::SelectPreviousBranch,
+        RepoSubview::Remotes => Action::SelectPreviousRemote,
+        RepoSubview::RemoteBranches => Action::SelectPreviousRemoteBranch,
+        RepoSubview::Tags => Action::SelectPreviousTag,
+        RepoSubview::Commits => Action::SelectPreviousCommit,
+        RepoSubview::Stash => match repo_mode.stash_subview_mode {
+            StashSubviewMode::List => Action::SelectPreviousStash,
+            StashSubviewMode::Files => Action::SelectPreviousStashFile,
+        },
+        RepoSubview::Reflog => Action::SelectPreviousReflog,
+        RepoSubview::Worktrees => Action::SelectPreviousWorktree,
+        RepoSubview::Submodules => Action::SelectPreviousSubmodule,
+        RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => {
+            Action::ScrollRepoDetailUp
+        }
+    }
+}
+
+fn detail_next_action_for_repo_mode(repo_mode: &RepoModeState) -> Action {
+    match repo_mode.active_subview {
+        RepoSubview::Branches => Action::SelectNextBranch,
+        RepoSubview::Remotes => Action::SelectNextRemote,
+        RepoSubview::RemoteBranches => Action::SelectNextRemoteBranch,
+        RepoSubview::Tags => Action::SelectNextTag,
+        RepoSubview::Commits => Action::SelectNextCommit,
+        RepoSubview::Stash => match repo_mode.stash_subview_mode {
+            StashSubviewMode::List => Action::SelectNextStash,
+            StashSubviewMode::Files => Action::SelectNextStashFile,
+        },
+        RepoSubview::Reflog => Action::SelectNextReflog,
+        RepoSubview::Worktrees => Action::SelectNextWorktree,
+        RepoSubview::Submodules => Action::SelectNextSubmodule,
+        RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => {
+            Action::ScrollRepoDetailDown
+        }
+    }
+}
+
+fn repo_status_header_lines() -> usize {
+    2
+}
+
+fn repo_status_footer_lines(pane: PaneId) -> usize {
+    usize::from(matches!(pane, PaneId::RepoUnstaged))
+}
+
+fn repo_status_scroll_offset(
+    repo_mode: &RepoModeState,
+    pane: PaneId,
+    viewport_lines: usize,
+) -> u16 {
+    let entries = super_lazygit_core::visible_status_entries(repo_mode, pane);
+    if entries.is_empty() {
+        return 0;
+    }
+
+    let selected_position = match pane {
+        PaneId::RepoStaged => repo_mode.staged_view.selected_index.unwrap_or(0),
+        _ => repo_mode.status_view.selected_index.unwrap_or(0),
+    }
+    .min(entries.len().saturating_sub(1));
+    let (window_start, _) = centered_list_window(
+        selected_position,
+        entries.len(),
+        viewport_lines,
+        repo_status_header_lines(),
+        repo_status_footer_lines(pane),
+    );
+    window_start as u16
+}
+
+fn status_entry_arrow_hit(
+    entry: &super_lazygit_core::VisibleStatusEntry,
+    column: u16,
+    inner_x: u16,
+) -> bool {
+    matches!(
+        entry.entry_kind,
+        super_lazygit_core::VisibleStatusEntryKind::Directory { .. }
+    ) && column
+        == inner_x
+            .saturating_add(4)
+            .saturating_add((entry.depth as u16).saturating_mul(2))
+}
+
+fn repo_detail_uses_diff_scroll(repo_mode: &RepoModeState) -> bool {
+    matches!(
+        repo_mode.active_subview,
+        RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase
+    ) || (repo_mode.active_subview == RepoSubview::Commits
+        && repo_mode.commit_subview_mode == CommitSubviewMode::Files
+        && repo_mode.commit_files_mode == CommitFilesMode::Diff)
+}
+
+fn repo_detail_click_window(
+    repo_mode: &RepoModeState,
+    viewport_lines: usize,
+) -> Option<(usize, usize, usize)> {
+    let detail = repo_mode.detail.as_ref()?;
+    match repo_mode.active_subview {
+        RepoSubview::Branches => {
+            let visible_indices = visible_branch_indices(
+                detail,
+                repo_mode.branches_filter.query.as_str(),
+                repo_mode.branch_sort_mode,
+            );
+            if visible_indices.is_empty() {
+                return None;
+            }
+            let selected_position =
+                visible_position(&visible_indices, repo_mode.branches_view.selected_index);
+            let header_lines = 9 + usize::from(
+                repo_filter_summary_line(
+                    repo_mode.branches_filter.query.as_str(),
+                    repo_mode.branches_filter.focused,
+                    visible_indices.len(),
+                    detail.branches.len(),
+                )
+                .is_some(),
+            );
+            let (window_start, window_len) = centered_list_window(
+                selected_position,
+                visible_indices.len(),
+                viewport_lines,
+                header_lines,
+                0,
+            );
+            Some((header_lines, window_start, window_len))
+        }
+        RepoSubview::Remotes => {
+            let visible_indices =
+                visible_remote_indices(detail, repo_mode.remotes_filter.query.as_str());
+            if visible_indices.is_empty() {
+                return None;
+            }
+            let selected_position =
+                visible_position(&visible_indices, repo_mode.remotes_view.selected_index);
+            let header_lines = 8 + usize::from(
+                repo_filter_summary_line(
+                    repo_mode.remotes_filter.query.as_str(),
+                    repo_mode.remotes_filter.focused,
+                    visible_indices.len(),
+                    detail.remotes.len(),
+                )
+                .is_some(),
+            );
+            let (window_start, window_len) = centered_list_window(
+                selected_position,
+                visible_indices.len(),
+                viewport_lines,
+                header_lines,
+                0,
+            );
+            Some((header_lines, window_start, window_len))
+        }
+        RepoSubview::RemoteBranches => {
+            let visible_indices = visible_remote_branch_indices(
+                detail,
+                repo_mode.remote_branches_filter.query.as_str(),
+                repo_mode.remote_branch_sort_mode,
+            );
+            if visible_indices.is_empty() {
+                return None;
+            }
+            let selected_position = visible_position(
+                &visible_indices,
+                repo_mode.remote_branches_view.selected_index,
+            );
+            let header_lines = 9 + usize::from(
+                repo_filter_summary_line(
+                    repo_mode.remote_branches_filter.query.as_str(),
+                    repo_mode.remote_branches_filter.focused,
+                    visible_indices.len(),
+                    detail.remote_branches.len(),
+                )
+                .is_some(),
+            );
+            let (window_start, window_len) = centered_list_window(
+                selected_position,
+                visible_indices.len(),
+                viewport_lines,
+                header_lines,
+                0,
+            );
+            Some((header_lines, window_start, window_len))
+        }
+        RepoSubview::Tags => {
+            let visible_indices = visible_tag_indices(detail, repo_mode.tags_filter.query.as_str());
+            if visible_indices.is_empty() {
+                return None;
+            }
+            let selected_position =
+                visible_position(&visible_indices, repo_mode.tags_view.selected_index);
+            let header_lines = 8 + usize::from(
+                repo_filter_summary_line(
+                    repo_mode.tags_filter.query.as_str(),
+                    repo_mode.tags_filter.focused,
+                    visible_indices.len(),
+                    detail.tags.len(),
+                )
+                .is_some(),
+            );
+            let (window_start, window_len) = centered_list_window(
+                selected_position,
+                visible_indices.len(),
+                viewport_lines,
+                header_lines,
+                0,
+            );
+            Some((header_lines, window_start, window_len))
+        }
+        RepoSubview::Commits => match repo_mode.commit_subview_mode {
+            CommitSubviewMode::History => {
+                let visible_indices =
+                    visible_commit_indices(detail, repo_mode.commits_filter.query.as_str());
+                if visible_indices.is_empty() {
+                    return None;
+                }
+                let selected_position =
+                    visible_position(&visible_indices, repo_mode.commits_view.selected_index);
+                let header_lines = 9;
+                let (window_start, window_len) = centered_list_window(
+                    selected_position,
+                    visible_indices.len(),
+                    viewport_lines,
+                    header_lines,
+                    0,
+                );
+                Some((header_lines, window_start, window_len))
+            }
+            CommitSubviewMode::Files => match repo_mode.commit_files_mode {
+                CommitFilesMode::List => {
+                    let selected_commit = selected_commit(
+                        repo_mode.detail.as_ref(),
+                        repo_mode.commits_view.selected_index,
+                    )?;
+                    let visible_indices = visible_commit_file_indices(
+                        selected_commit,
+                        repo_mode.commit_files_filter.query.as_str(),
+                    );
+                    if visible_indices.is_empty() {
+                        return None;
+                    }
+                    let selected_position = visible_position(
+                        &visible_indices,
+                        repo_mode.commit_files_view.selected_index,
+                    );
+                    let header_lines = 5 + usize::from(
+                        repo_filter_summary_line(
+                            repo_mode.commit_files_filter.query.as_str(),
+                            repo_mode.commit_files_filter.focused,
+                            visible_indices.len(),
+                            selected_commit.changed_files.len(),
+                        )
+                        .is_some(),
+                    );
+                    let (window_start, window_len) = centered_list_window(
+                        selected_position,
+                        visible_indices.len(),
+                        viewport_lines,
+                        header_lines,
+                        0,
+                    );
+                    Some((header_lines, window_start, window_len))
+                }
+                CommitFilesMode::Diff => None,
+            },
+        },
+        RepoSubview::Stash => match repo_mode.stash_subview_mode {
+            StashSubviewMode::List => {
+                let visible_indices =
+                    visible_stash_indices(detail, repo_mode.stash_filter.query.as_str());
+                if visible_indices.is_empty() {
+                    return None;
+                }
+                let selected_position =
+                    visible_position(&visible_indices, repo_mode.stash_view.selected_index);
+                let header_lines = 6 + usize::from(
+                    repo_filter_summary_line(
+                        repo_mode.stash_filter.query.as_str(),
+                        repo_mode.stash_filter.focused,
+                        visible_indices.len(),
+                        detail.stashes.len(),
+                    )
+                    .is_some(),
+                );
+                let (window_start, window_len) = centered_list_window(
+                    selected_position,
+                    visible_indices.len(),
+                    viewport_lines,
+                    header_lines,
+                    0,
+                );
+                Some((header_lines, window_start, window_len))
+            }
+            StashSubviewMode::Files => {
+                let selected_stash = selected_stash(
+                    repo_mode.detail.as_ref(),
+                    repo_mode.stash_view.selected_index,
+                )?;
+                let len = selected_stash.changed_files.len();
+                if len == 0 {
+                    return None;
+                }
+                let selected_position = repo_mode
+                    .stash_files_view
+                    .selected_index
+                    .unwrap_or(0)
+                    .min(len.saturating_sub(1));
+                let header_lines = 5;
+                let (window_start, window_len) =
+                    centered_list_window(selected_position, len, viewport_lines, header_lines, 0);
+                Some((header_lines, window_start, window_len))
+            }
+        },
+        RepoSubview::Reflog => {
+            let visible_indices =
+                visible_reflog_indices(detail, repo_mode.reflog_filter.query.as_str());
+            if visible_indices.is_empty() {
+                return None;
+            }
+            let selected_position =
+                visible_position(&visible_indices, repo_mode.reflog_view.selected_index);
+            let header_lines = 9 + usize::from(
+                repo_filter_summary_line(
+                    repo_mode.reflog_filter.query.as_str(),
+                    repo_mode.reflog_filter.focused,
+                    visible_indices.len(),
+                    detail.reflog_items.len(),
+                )
+                .is_some(),
+            );
+            let (window_start, window_len) = centered_list_window(
+                selected_position,
+                visible_indices.len(),
+                viewport_lines,
+                header_lines,
+                0,
+            );
+            Some((header_lines, window_start, window_len))
+        }
+        RepoSubview::Worktrees => {
+            let visible_indices =
+                visible_worktree_indices(detail, repo_mode.worktree_filter.query.as_str());
+            if visible_indices.is_empty() {
+                return None;
+            }
+            let selected_position =
+                visible_position(&visible_indices, repo_mode.worktree_view.selected_index);
+            let header_lines = 6 + usize::from(
+                repo_filter_summary_line(
+                    repo_mode.worktree_filter.query.as_str(),
+                    repo_mode.worktree_filter.focused,
+                    visible_indices.len(),
+                    detail.worktrees.len(),
+                )
+                .is_some(),
+            );
+            let (window_start, window_len) = centered_list_window(
+                selected_position,
+                visible_indices.len(),
+                viewport_lines,
+                header_lines,
+                0,
+            );
+            Some((header_lines, window_start, window_len))
+        }
+        RepoSubview::Submodules => {
+            let visible_indices =
+                visible_submodule_indices(detail, repo_mode.submodules_filter.query.as_str());
+            if visible_indices.is_empty() {
+                return None;
+            }
+            let selected_position =
+                visible_position(&visible_indices, repo_mode.submodules_view.selected_index);
+            let header_lines = 8 + usize::from(
+                repo_filter_summary_line(
+                    repo_mode.submodules_filter.query.as_str(),
+                    repo_mode.submodules_filter.focused,
+                    visible_indices.len(),
+                    detail.submodules.len(),
+                )
+                .is_some(),
+            );
+            let (window_start, window_len) = centered_list_window(
+                selected_position,
+                visible_indices.len(),
+                viewport_lines,
+                header_lines,
+                0,
+            );
+            Some((header_lines, window_start, window_len))
+        }
+        RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
+    }
 }
 
 fn query_label(query: &str) -> String {
@@ -4953,6 +5813,7 @@ fn repo_branch_lines(
     comparison_source: Option<RepoSubview>,
     branch_sort_mode: super_lazygit_core::BranchSortMode,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5035,7 +5896,20 @@ fn repo_branch_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let branch = &detail.branches[index];
         let style = branch_row_style(branch, index == selected_index, is_focused, theme);
         lines.push(Line::from(Span::styled(branch_row_label(branch), style)));
@@ -5051,6 +5925,7 @@ fn repo_remote_branch_lines(
     filter_focused: bool,
     remote_branch_sort_mode: super_lazygit_core::RemoteBranchSortMode,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5122,7 +5997,20 @@ fn repo_remote_branch_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let branch = &detail.remote_branches[index];
         let style = if index == selected_index {
             let mut style = Style::default()
@@ -5150,6 +6038,7 @@ fn repo_remote_lines(
     filter_query: &str,
     filter_focused: bool,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5214,7 +6103,20 @@ fn repo_remote_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let remote = &detail.remotes[index];
         let style = if index == selected_index {
             let mut style = Style::default()
@@ -5242,6 +6144,7 @@ fn repo_tag_lines(
     filter_query: &str,
     filter_focused: bool,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5315,7 +6218,20 @@ fn repo_tag_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let tag = &detail.tags[index];
         let style = if index == selected_index {
             let mut style = Style::default()
@@ -5433,6 +6349,17 @@ fn selected_tag(
     detail.tags.get(selected_index)
 }
 
+fn selected_commit(
+    detail: Option<&RepoDetail>,
+    selected_index: Option<usize>,
+) -> Option<&super_lazygit_core::CommitItem> {
+    let detail = detail?;
+    let selected_index = selected_index
+        .filter(|index| *index < detail.commits.len())
+        .unwrap_or(0);
+    detail.commits.get(selected_index)
+}
+
 fn selected_stash(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
@@ -5459,6 +6386,7 @@ fn repo_stash_lines(
     filter_focused: bool,
     stash_subview_mode: StashSubviewMode,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5480,11 +6408,16 @@ fn repo_stash_lines(
             filter_query,
             filter_focused,
             is_focused,
+            viewport_lines,
             theme,
         ),
-        StashSubviewMode::Files => {
-            repo_stash_file_lines(detail, selected_index, selected_file_index, theme)
-        }
+        StashSubviewMode::Files => repo_stash_file_lines(
+            detail,
+            selected_index,
+            selected_file_index,
+            viewport_lines,
+            theme,
+        ),
     }
 }
 
@@ -5494,6 +6427,7 @@ fn repo_stash_list_lines(
     filter_query: &str,
     filter_focused: bool,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let visible_indices = visible_stash_indices(detail, filter_query);
@@ -5544,7 +6478,20 @@ fn repo_stash_list_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let stash = &detail.stashes[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
@@ -5563,6 +6510,7 @@ fn repo_stash_file_lines(
     detail: &RepoDetail,
     selected_stash_index: Option<usize>,
     selected_file_index: Option<usize>,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(selected_stash) = selected_stash(Some(detail), selected_stash_index) else {
@@ -5602,7 +6550,21 @@ fn repo_stash_file_lines(
     let selected_file_index = selected_file_index
         .filter(|index| *index < selected_stash.changed_files.len())
         .unwrap_or(0);
-    for (index, file) in selected_stash.changed_files.iter().enumerate() {
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_file_index,
+        selected_stash.changed_files.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for (index, file) in selected_stash
+        .changed_files
+        .iter()
+        .enumerate()
+        .skip(window_start)
+        .take(window_len)
+    {
         let prefix = if index == selected_file_index {
             ">"
         } else {
@@ -5624,6 +6586,7 @@ fn repo_reflog_lines(
     filter_query: &str,
     filter_focused: bool,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5711,7 +6674,20 @@ fn repo_reflog_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let entry = &detail.reflog_items[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
@@ -5732,6 +6708,7 @@ fn repo_worktree_lines(
     filter_query: &str,
     filter_focused: bool,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5797,7 +6774,20 @@ fn repo_worktree_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let worktree = &detail.worktrees[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
@@ -5822,6 +6812,7 @@ fn repo_submodule_lines(
     filter_query: &str,
     filter_focused: bool,
     is_focused: bool,
+    viewport_lines: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
@@ -5902,7 +6893,20 @@ fn repo_submodule_lines(
         Line::from(""),
     ]);
 
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let submodule = &detail.submodules[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
@@ -6169,7 +7173,20 @@ fn repo_commit_file_list_lines(
         .selected_index
         .filter(|index| visible_indices.contains(index))
         .unwrap_or(visible_indices[0]);
-    for index in visible_indices {
+    let selected_position = visible_position(&visible_indices, Some(selected_index));
+    let header_lines = lines.len();
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        visible_indices.len(),
+        viewport_lines,
+        header_lines,
+        0,
+    );
+    for index in visible_indices
+        .into_iter()
+        .skip(window_start)
+        .take(window_len)
+    {
         let file = &selected_commit.changed_files[index];
         let prefix = if index == selected_index { ">" } else { " " };
         lines.push(Line::from(format!(
@@ -7418,18 +8435,11 @@ fn mode_label(mode: AppMode) -> &'static str {
 }
 
 fn status_bar_height(state: &AppState) -> u16 {
-    if !state.settings.show_help_footer {
-        return 1;
-    }
-
-    if matches!(state.mode, AppMode::Repository) && state.modal_stack.is_empty() {
-        3
-    } else {
-        2
-    }
+    let _ = state;
+    1
 }
 
-fn status_text(state: &AppState) -> String {
+fn footer_app_status_text(state: &AppState) -> String {
     state
         .status_messages
         .back()
@@ -7440,7 +8450,249 @@ fn status_text(state: &AppState) -> String {
                 .back()
                 .map(|notification| notification.text.clone())
         })
-        .unwrap_or_else(|| default_status_text(state))
+        .unwrap_or_default()
+}
+
+fn footer_hint_text(state: &AppState) -> String {
+    if !state.settings.show_help_footer {
+        return String::new();
+    }
+
+    match state.focused_pane {
+        PaneId::WorkspaceList => {
+            "Open: enter  Search: /  Filter: f  Sort: s  Refresh: r  Keybindings: ?".to_string()
+        }
+        PaneId::RepoUnstaged => {
+            "Stage: <space>  Edit: e  Stash: s  Discard: d  Reset: D  Keybindings: ?".to_string()
+        }
+        PaneId::RepoStaged => {
+            "Unstage: <space>  Commit: c  Edit: e  Stash: s  Discard: d  Keybindings: ?".to_string()
+        }
+        PaneId::RepoDetail => repo_footer_hint_text(state),
+        PaneId::Modal => "Confirm: enter  Close: esc".to_string(),
+        _ => help_text(state),
+    }
+}
+
+fn repo_footer_hint_text(state: &AppState) -> String {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return "Repo".to_string();
+    };
+
+    match repo_mode.active_subview {
+        RepoSubview::Status => {
+            "Open: enter  Stage hunk: <space>  Whitespace: W  Context: {/}  Keybindings: ?"
+                .to_string()
+        }
+        RepoSubview::Branches => {
+            "Space checkout  F force checkout  enter commits  n branch  d delete  v compare  ?"
+                .to_string()
+        }
+        RepoSubview::Remotes => {
+            "Branches: enter  Add: n  Edit: e  Remove: d  Fetch: f  Keybindings: ?".to_string()
+        }
+        RepoSubview::RemoteBranches => {
+            "Commits: enter  Checkout: <space>  Local branch: n  Delete: d  Keybindings: ?"
+                .to_string()
+        }
+        RepoSubview::Tags => {
+            "Commits: enter  Checkout: <space>  Create: n  Delete: d  Push: P  Keybindings: ?"
+                .to_string()
+        }
+        RepoSubview::Commits => match repo_mode.commit_subview_mode {
+            CommitSubviewMode::History => {
+                if repo_mode.commit_history_ref.is_some() {
+                    "enter files  3 returns to current-branch history  n branch  T tag  y copy  ?"
+                        .to_string()
+                } else {
+                    "enter files  checkout: <space>  n branch  T tag  y copy  ?".to_string()
+                }
+            }
+            CommitSubviewMode::Files => match repo_mode.commit_files_mode {
+                CommitFilesMode::List => {
+                    "Diff: enter  Checkout: <space>  Open: e  Copy path: y  Keybindings: ?"
+                        .to_string()
+                }
+                CommitFilesMode::Diff => {
+                    "Back: enter  Hunk: j/k  Line: J/K  Anchor: v  Keybindings: ?".to_string()
+                }
+            },
+        },
+        RepoSubview::Compare => {
+            "Scroll: j/k  Whitespace: W  Context: {/}  Clear compare: x  Keybindings: ?".to_string()
+        }
+        RepoSubview::Rebase => {
+            "Continue: c  Skip: s  Abort: A  Scroll: j/k  Keybindings: ?".to_string()
+        }
+        RepoSubview::Stash => match repo_mode.stash_subview_mode {
+            StashSubviewMode::List => {
+                "Files: enter  Apply: <space>  Branch: n  Pop: g  Drop: d  Keybindings: ?"
+                    .to_string()
+            }
+            StashSubviewMode::Files => {
+                "Back: enter  Open: o  Apply/pop/drop on stash list  Keybindings: ?".to_string()
+            }
+        },
+        RepoSubview::Reflog => {
+            "Commits: enter  Checkout: <space>  Reset: g  Restore: u  Browser: o  Keybindings: ?"
+                .to_string()
+        }
+        RepoSubview::Worktrees => {
+            "Switch: enter  Create: n  Open: o  Delete: d  Keybindings: ?".to_string()
+        }
+        RepoSubview::Submodules => {
+            "Open: enter  Options: b  Add: n  Edit URL: e  Update: u  Keybindings: ?".to_string()
+        }
+    }
+}
+
+fn footer_information_text(state: &AppState) -> String {
+    format!(
+        "{}  v{}",
+        mode_label(state.mode.clone()),
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FooterSegmentKind {
+    Options,
+    AppStatus,
+    Information,
+    SpacerFixed,
+    SpacerFlexible,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FooterSegment {
+    kind: FooterSegmentKind,
+    width: u16,
+}
+
+fn footer_segments(options: &str, app_status: &str, information: &str) -> Vec<FooterSegment> {
+    let mut result = Vec::new();
+
+    if !app_status.is_empty() {
+        result.push(FooterSegment {
+            kind: FooterSegmentKind::AppStatus,
+            width: text_width(app_status),
+        });
+    }
+
+    if !options.is_empty() {
+        result.push(FooterSegment {
+            kind: FooterSegmentKind::Options,
+            width: 0,
+        });
+    }
+
+    if !information.is_empty() {
+        result.push(FooterSegment {
+            kind: FooterSegmentKind::Information,
+            width: text_width(information),
+        });
+    }
+
+    if result.len() == 2 && result[0].kind == FooterSegmentKind::AppStatus {
+        result.insert(
+            1,
+            FooterSegment {
+                kind: FooterSegmentKind::SpacerFlexible,
+                width: 0,
+            },
+        );
+    } else if result.len() == 1 {
+        if result[0].kind == FooterSegmentKind::Information {
+            result.insert(
+                0,
+                FooterSegment {
+                    kind: FooterSegmentKind::SpacerFlexible,
+                    width: 0,
+                },
+            );
+        } else {
+            result[0].width = 0;
+        }
+    }
+
+    if !result.is_empty() {
+        let mut with_spacers = Vec::with_capacity(result.len().saturating_mul(2));
+        for (index, segment) in result.into_iter().enumerate() {
+            if index > 0 {
+                with_spacers.push(FooterSegment {
+                    kind: FooterSegmentKind::SpacerFixed,
+                    width: 1,
+                });
+            }
+            with_spacers.push(segment);
+        }
+        return with_spacers;
+    }
+
+    result
+}
+
+fn layout_footer_segments(area: Rect, segments: &[FooterSegment]) -> Vec<Rect> {
+    if area.width == 0 || segments.is_empty() {
+        return vec![Rect::new(area.x, area.y, 0, area.height); segments.len()];
+    }
+
+    let fixed_width: u16 = segments
+        .iter()
+        .filter(|segment| {
+            !matches!(
+                segment.kind,
+                FooterSegmentKind::Options | FooterSegmentKind::SpacerFlexible
+            )
+        })
+        .map(|segment| segment.width)
+        .sum();
+    let flexible_count = segments
+        .iter()
+        .filter(|segment| {
+            matches!(
+                segment.kind,
+                FooterSegmentKind::Options | FooterSegmentKind::SpacerFlexible
+            )
+        })
+        .count() as u16;
+    let remaining = area.width.saturating_sub(fixed_width);
+    let flexible_width = if flexible_count == 0 {
+        0
+    } else {
+        remaining / flexible_count
+    };
+    let mut extra = if flexible_count == 0 {
+        0
+    } else {
+        remaining % flexible_count
+    };
+
+    let mut x = area.x;
+    let mut rects = Vec::with_capacity(segments.len());
+    for segment in segments {
+        let mut width = match segment.kind {
+            FooterSegmentKind::Options | FooterSegmentKind::SpacerFlexible => flexible_width,
+            _ => segment.width,
+        };
+        if matches!(
+            segment.kind,
+            FooterSegmentKind::Options | FooterSegmentKind::SpacerFlexible
+        ) && extra > 0
+        {
+            width = width.saturating_add(1);
+            extra -= 1;
+        }
+        let clamped_width = width.min(area.x.saturating_add(area.width).saturating_sub(x));
+        rects.push(Rect::new(x, area.y, clamped_width, area.height));
+        x = x.saturating_add(clamped_width);
+    }
+
+    rects
+}
+
+fn text_width(text: &str) -> u16 {
+    text.chars().count() as u16
 }
 
 fn help_text(state: &AppState) -> String {
@@ -7462,13 +8714,6 @@ fn help_text(state: &AppState) -> String {
         }
         AppMode::Repository => repo_help_text(state),
     }
-}
-
-fn repo_screen_status_line(state: &AppState) -> String {
-    format!(
-        "Screen mode {}  + next screen  _ previous screen  Ctrl+Z suspend terminal",
-        state.settings.screen_mode.label()
-    )
 }
 
 fn recent_repo_menu_lines(state: &AppState) -> Vec<String> {
@@ -8009,8 +9254,14 @@ fn repo_unstaged_lines(
     repo_mode: Option<&RepoModeState>,
     is_focused: bool,
     progress: &super_lazygit_core::OperationProgress,
+    viewport_lines: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines = repo_status_section_lines(repo_mode, is_focused, FileStatusSection::Unstaged);
+    let mut lines = repo_status_section_lines(
+        repo_mode,
+        is_focused,
+        FileStatusSection::Unstaged,
+        viewport_lines,
+    );
     lines.push(Line::from(format!(
         "Progress: {}",
         operation_progress_label(progress)
@@ -8018,8 +9269,17 @@ fn repo_unstaged_lines(
     lines
 }
 
-fn repo_staged_lines(repo_mode: Option<&RepoModeState>, is_focused: bool) -> Vec<Line<'static>> {
-    repo_status_section_lines(repo_mode, is_focused, FileStatusSection::Staged)
+fn repo_staged_lines(
+    repo_mode: Option<&RepoModeState>,
+    is_focused: bool,
+    viewport_lines: usize,
+) -> Vec<Line<'static>> {
+    repo_status_section_lines(
+        repo_mode,
+        is_focused,
+        FileStatusSection::Staged,
+        viewport_lines,
+    )
 }
 
 fn commit_box_title(mode: CommitBoxMode) -> &'static str {
@@ -8121,6 +9381,7 @@ fn repo_status_section_lines(
     repo_mode: Option<&RepoModeState>,
     is_focused: bool,
     section: FileStatusSection,
+    viewport_lines: usize,
 ) -> Vec<Line<'static>> {
     let pane = match section {
         FileStatusSection::Unstaged => PaneId::RepoUnstaged,
@@ -8183,27 +9444,46 @@ fn repo_status_section_lines(
         repo_mode.status_filter_mode.label(),
         repo_mode.status_filter.query
     )));
-    lines.extend(entries.into_iter().enumerate().map(|(index, entry)| {
-        let marker = if selected_index == Some(index) {
-            ">"
-        } else {
-            " "
-        };
-        let indent = "  ".repeat(entry.depth);
-        let kind = entry.kind.map(file_status_kind_label).unwrap_or(" ");
-        let label = match entry.entry_kind {
-            super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed } => {
-                format!(
-                    "{}{} {}/",
-                    if collapsed { "▸" } else { "▾" },
-                    indent,
-                    entry.label
-                )
-            }
-            super_lazygit_core::VisibleStatusEntryKind::File => format!("{indent}{}", entry.label),
-        };
-        Line::from(format!("{marker} {kind} {label}"))
-    }));
+    let selected_position = selected_index
+        .unwrap_or(0)
+        .min(entries.len().saturating_sub(1));
+    let (window_start, window_len) = centered_list_window(
+        selected_position,
+        entries.len(),
+        viewport_lines,
+        repo_status_header_lines(),
+        repo_status_footer_lines(pane),
+    );
+    lines.extend(
+        entries
+            .into_iter()
+            .enumerate()
+            .skip(window_start)
+            .take(window_len)
+            .map(|(index, entry)| {
+                let marker = if selected_index == Some(index) {
+                    ">"
+                } else {
+                    " "
+                };
+                let indent = "  ".repeat(entry.depth);
+                let kind = entry.kind.map(file_status_kind_label).unwrap_or(" ");
+                let label = match entry.entry_kind {
+                    super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed } => {
+                        format!(
+                            "{}{} {}/",
+                            if collapsed { "▸" } else { "▾" },
+                            indent,
+                            entry.label
+                        )
+                    }
+                    super_lazygit_core::VisibleStatusEntryKind::File => {
+                        format!("{indent}{}", entry.label)
+                    }
+                };
+                Line::from(format!("{marker} {kind} {label}"))
+            }),
+    );
     lines
 }
 
@@ -8252,119 +9532,7 @@ fn repo_subview_tabs(active: RepoSubview) -> Vec<Span<'static>> {
     spans
 }
 
-fn default_status_text(state: &AppState) -> String {
-    match state.mode {
-        AppMode::Workspace => {
-            if state.workspace.search_focused {
-                "Workspace search focused; type to filter repos, Enter keeps it, and Esc clears it."
-                    .to_string()
-            } else {
-                format!(
-                    "Workspace triage ready; {} repo(s) visible with {} sort and {} filter.",
-                    state.workspace.visible_repo_ids().len(),
-                    state.workspace.sort_mode.label(),
-                    state.workspace.filter_mode.label()
-                )
-            }
-        }
-        AppMode::Repository => {
-            if let Some(repo_mode) = state
-                .repo_mode
-                .as_ref()
-                .filter(|repo_mode| repo_mode.commit_box.focused)
-            {
-                return match repo_mode.commit_box.mode {
-                    CommitBoxMode::Commit => {
-                        "Commit box focused; type a message, Enter commits, and Esc cancels."
-                            .to_string()
-                    }
-                    CommitBoxMode::CommitNoVerify => {
-                        "No-verify commit box focused; type a message, Enter commits without hooks, and Esc cancels."
-                            .to_string()
-                    }
-                    CommitBoxMode::Amend => {
-                        "Amend box focused; Enter confirms, Esc cancels, and blank input keeps the HEAD message."
-                            .to_string()
-                    }
-                };
-            }
-
-            if state
-                .repo_mode
-                .as_ref()
-                .and_then(|repo_mode| repo_mode.subview_filter(repo_mode.active_subview))
-                .is_some_and(|filter| filter.focused)
-            {
-                return "Detail filter focused; type to narrow the current panel, Enter keeps the query, and Esc clears it."
-                    .to_string();
-            }
-
-            match state.focused_pane {
-            PaneId::RepoUnstaged => {
-                "Working tree focus; j/k move, Space stages, Enter opens the diff, Ctrl+B cycles status filters, ` toggles the tree, -/= collapse or expand directories, a stages all, i opens ignore options, o opens the path, y copies the path, Ctrl+T opens the difftool, g opens reset options, M opens merge options, / filters, and 0 jumps to the main pane."
-                    .to_string()
-            }
-            PaneId::RepoStaged => {
-                "Staged focus; j/k move, Space unstages, Enter opens the diff, Ctrl+B cycles status filters, ` toggles the tree, -/= collapse or expand directories, a unstages all, i opens ignore options, o opens the path, y copies the path, Ctrl+T opens the difftool, g opens reset options, M opens merge options, / filters, 0 jumps to the main pane, c commits, w commits without hooks, and A amends HEAD."
-                    .to_string()
-            }
-            PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
-                || "Repository shell ready.".to_string(),
-                |repo_mode| {
-                    if repo_mode.active_subview == RepoSubview::Status {
-                        status_detail_focus_help(repo_mode)
-                    } else if repo_mode.active_subview == RepoSubview::Branches {
-                        "Branches detail focus; Enter opens commits, Space checks out, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, v compares refs, x clears compare, c creates, R renames, d deletes, u opens upstream options, y copies, r rebases current onto the selected branch, and M merges the selected branch into the current branch."
-                            .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::Remotes {
-                        "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
-                            .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::RemoteBranches {
-                        "Remote branches detail focus; Enter opens commits, Space checks out, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, n creates a local branch, d deletes the selected remote branch, y copies, u sets the current branch upstream, r rebases the current branch onto the selected remote branch, and M merges the selected remote branch into the current branch."
-                            .to_string()
-                } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; 3 returns to current-branch history, Ctrl+L opens log options, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends with staged changes, a opens amend attribute options, f opens fixup options, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, y opens copy options, C cherry-picks, V pastes the copied commit, t reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
-                            .to_string()
-                } else if repo_mode.active_subview == RepoSubview::Compare {
-                        "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
-                            .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::Rebase {
-                        "Rebase detail focus; c continues, s skips, A aborts, 0 returns to the main pane, and j/k scroll the active step."
-                            .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::Stash {
-                        match repo_mode.stash_subview_mode {
-                            StashSubviewMode::List => {
-                                "Stash detail focus; Enter opens changed files, Space applies, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and g/d manage the selected stash."
-                                    .to_string()
-                            }
-                            StashSubviewMode::Files => {
-                                "Stash files focus; Enter returns to the stash list, 0 returns to the main pane, and w/b open worktrees or submodules. Apply/pop/drop/rename/new-branch stay on the stash list."
-                                    .to_string()
-                            }
-                        }
-                    } else if repo_mode.active_subview == RepoSubview::Reflog {
-                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, Ctrl+O copies the selected hash, o opens the selected target in the browser, n branches off it, T tags it, C cherry-picks, g opens reset options, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and u preserves the explicit restore flow."
-                            .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::Worktrees {
-                        "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, b opens submodules, and n/o/d manage the selected worktree."
-                            .to_string()
-                    } else if repo_mode.active_subview == RepoSubview::Submodules {
-                        "Submodules detail focus; Enter opens the selected nested repo, Ctrl+O copies the selected submodule name, b opens the bulk submodule options menu, Esc returns to the parent repo, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, and n/e/i/u/o/d manage the selected submodule."
-                            .to_string()
-                    } else {
-                        format!(
-                            "{} detail focus; deeper interactions are staged behind the shell bead.",
-                            repo_subview_label(repo_mode.active_subview)
-                        )
-                    }
-                },
-            ),
-            _ => "Repository shell ready.".to_string(),
-            }
-        }
-    }
-}
-
+#[cfg(test)]
 fn status_detail_focus_help(repo_mode: &RepoModeState) -> String {
     let Some(detail) = repo_mode.detail.as_ref() else {
         return "Repository shell ready.".to_string();
@@ -10080,10 +11248,11 @@ mod tests {
         repo_mode.status_filter.query = "ui".to_string();
         repo_mode.status_view.selected_index = Some(0);
 
-        let lines = repo_status_section_lines(Some(&repo_mode), true, FileStatusSection::Unstaged)
-            .iter()
-            .map(line_text)
-            .collect::<Vec<_>>();
+        let lines =
+            repo_status_section_lines(Some(&repo_mode), true, FileStatusSection::Unstaged, 16)
+                .iter()
+                .map(line_text)
+                .collect::<Vec<_>>();
 
         assert_eq!(lines[1], "Files: 4  Tree: on  Status: tracked  Filter: /ui");
         assert!(lines.iter().any(|line| line.contains("▾ src/")));
@@ -14980,6 +16149,42 @@ mod tests {
     }
 
     #[test]
+    fn repo_side_panel_titles_match_lazygit_group_layout_copy() {
+        assert_eq!(
+            repo_side_panel_title(RepoSidePanel::Status, RepoSidePanelTab::StatusSummary),
+            "[1]─Status"
+        );
+        assert_eq!(
+            repo_side_panel_title(
+                RepoSidePanel::Files,
+                RepoSidePanelTab::Subview(RepoSubview::Status)
+            ),
+            "[2]─Files──────────Worktrees──Submodules"
+        );
+        assert_eq!(
+            repo_side_panel_title(
+                RepoSidePanel::Branches,
+                RepoSidePanelTab::Subview(RepoSubview::Branches)
+            ),
+            "[3]─Local branches────Remotes──Tags"
+        );
+        assert_eq!(
+            repo_side_panel_title(
+                RepoSidePanel::Commits,
+                RepoSidePanelTab::Subview(RepoSubview::Commits)
+            ),
+            "[4]─Commits───────────Reflog"
+        );
+        assert_eq!(
+            repo_side_panel_title(
+                RepoSidePanel::Stash,
+                RepoSidePanelTab::Subview(RepoSubview::Stash)
+            ),
+            "[5]─Stash Command log"
+        );
+    }
+
+    #[test]
     fn render_repo_shell_hides_side_panes_in_fullscreen_mode() {
         let mut state = AppState {
             mode: AppMode::Repository,
@@ -15018,7 +16223,7 @@ mod tests {
         let rendered = app.render_to_string();
 
         assert!(rendered.contains("Screen: fullscreen"));
-        assert!(rendered.contains("[Files] | Worktrees | Submodules"));
+        assert!(rendered.contains("[2]─Files──────────Worktrees──Submodules"));
         assert!(rendered.contains("Files: 6 item(s)"));
         assert!(!rendered.contains("Working tree"));
         assert!(!rendered.contains("Staged changes"));

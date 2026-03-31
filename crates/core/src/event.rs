@@ -19,6 +19,8 @@ pub enum InputEvent {
     Resize { width: u16, height: u16 },
     Paste(String),
     MouseLeft { column: u16, row: u16 },
+    MouseWheelUp { column: u16, row: u16 },
+    MouseWheelDown { column: u16, row: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

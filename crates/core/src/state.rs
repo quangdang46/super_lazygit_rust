@@ -1102,6 +1102,16 @@ impl ListViewState {
         self.selected_index = Some(last);
         Some(last)
     }
+
+    pub fn set_selected(&mut self, len: usize, index: usize) -> Option<usize> {
+        if len == 0 || index >= len {
+            self.selected_index = None;
+            return None;
+        }
+
+        self.selected_index = Some(index);
+        Some(index)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

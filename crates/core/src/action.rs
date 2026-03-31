@@ -25,6 +25,10 @@ pub enum Action {
     CycleWorkspaceSort,
     SelectNextStatusEntry,
     SelectPreviousStatusEntry,
+    SelectStatusEntry {
+        pane: crate::state::PaneId,
+        index: usize,
+    },
     SelectNextBranch,
     SelectPreviousBranch,
     SelectNextRemote,
@@ -113,6 +117,9 @@ pub enum Action {
     DeinitAllSubmodules,
     ToggleComparisonSelection,
     ClearComparison,
+    SelectRepoDetailItem {
+        index: usize,
+    },
     ScrollRepoDetailUp,
     ScrollRepoDetailDown,
     SelectNextDiffHunk,
