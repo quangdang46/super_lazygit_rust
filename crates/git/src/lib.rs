@@ -578,6 +578,13 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["add", "."])?;
                 "Staged current selection".to_string()
             }
+            GitCommand::UnstageSelection => {
+                git(
+                    &repo_path,
+                    ["restore", "--staged", "--source=HEAD", "--", "."],
+                )?;
+                "Unstaged current selection".to_string()
+            }
             GitCommand::StageFile { path } => {
                 git_path(&repo_path, ["add"], path)?;
                 format!("Staged {}", path.display())
@@ -1083,6 +1090,7 @@ fn prefer_backend(active_backend: GitBackendKind, preferred: GitBackendKind) -> 
 fn git_command_label(request: &GitCommandRequest) -> &'static str {
     match &request.command {
         GitCommand::StageSelection => "stage_selection",
+        GitCommand::UnstageSelection => "unstage_selection",
         GitCommand::StageFile { .. } => "stage_file",
         GitCommand::DiscardFile { .. } => "discard_file",
         GitCommand::UnstageFile { .. } => "unstage_file",

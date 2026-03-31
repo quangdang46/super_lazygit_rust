@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -281,6 +281,8 @@ pub enum MenuOperation {
     FilterOptions,
     DiffOptions,
     MergeRebaseOptions,
+    IgnoreOptions,
+    StatusResetOptions,
     PatchOptions,
     RecentRepos,
     CommandLog,
@@ -628,6 +630,10 @@ pub struct RepoModeState {
     pub diff_line_anchor: Option<usize>,
     pub status_view: ListViewState,
     pub staged_view: ListViewState,
+    pub status_filter: RepoSubviewFilterState,
+    pub status_filter_mode: StatusFilterMode,
+    pub status_tree_enabled: bool,
+    pub collapsed_status_dirs: BTreeSet<PathBuf>,
     pub commit_box: CommitBoxState,
     pub branches_view: ListViewState,
     pub remotes_view: ListViewState,
@@ -691,6 +697,10 @@ impl RepoModeState {
             diff_line_anchor: None,
             status_view: ListViewState::default(),
             staged_view: ListViewState::default(),
+            status_filter: RepoSubviewFilterState::default(),
+            status_filter_mode: StatusFilterMode::default(),
+            status_tree_enabled: true,
+            collapsed_status_dirs: BTreeSet::default(),
             commit_box: CommitBoxState::default(),
             branches_view: ListViewState::default(),
             remotes_view: ListViewState::default(),
@@ -729,6 +739,7 @@ impl RepoModeState {
     #[must_use]
     pub fn subview_filter(&self, subview: RepoSubview) -> Option<&RepoSubviewFilterState> {
         match subview {
+            RepoSubview::Status => Some(&self.status_filter),
             RepoSubview::Branches => Some(&self.branches_filter),
             RepoSubview::Remotes => Some(&self.remotes_filter),
             RepoSubview::RemoteBranches => Some(&self.remote_branches_filter),
@@ -744,7 +755,7 @@ impl RepoModeState {
             RepoSubview::Reflog => Some(&self.reflog_filter),
             RepoSubview::Worktrees => Some(&self.worktree_filter),
             RepoSubview::Submodules => Some(&self.submodules_filter),
-            RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
+            RepoSubview::Compare | RepoSubview::Rebase => None,
         }
     }
 
@@ -753,6 +764,7 @@ impl RepoModeState {
         subview: RepoSubview,
     ) -> Option<&mut RepoSubviewFilterState> {
         match subview {
+            RepoSubview::Status => Some(&mut self.status_filter),
             RepoSubview::Branches => Some(&mut self.branches_filter),
             RepoSubview::Remotes => Some(&mut self.remotes_filter),
             RepoSubview::RemoteBranches => Some(&mut self.remote_branches_filter),
@@ -768,7 +780,7 @@ impl RepoModeState {
             RepoSubview::Reflog => Some(&mut self.reflog_filter),
             RepoSubview::Worktrees => Some(&mut self.worktree_filter),
             RepoSubview::Submodules => Some(&mut self.submodules_filter),
-            RepoSubview::Status | RepoSubview::Compare | RepoSubview::Rebase => None,
+            RepoSubview::Compare | RepoSubview::Rebase => None,
         }
     }
 }
@@ -837,7 +849,8 @@ impl RepoSubview {
     pub const fn supports_filter(self) -> bool {
         matches!(
             self,
-            Self::Branches
+            Self::Status
+                | Self::Branches
                 | Self::Remotes
                 | Self::RemoteBranches
                 | Self::Tags
@@ -847,6 +860,37 @@ impl RepoSubview {
                 | Self::Worktrees
                 | Self::Submodules
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatusFilterMode {
+    #[default]
+    All,
+    TrackedOnly,
+    UntrackedOnly,
+    ConflictedOnly,
+}
+
+impl StatusFilterMode {
+    #[must_use]
+    pub const fn cycle_next(self) -> Self {
+        match self {
+            Self::All => Self::TrackedOnly,
+            Self::TrackedOnly => Self::UntrackedOnly,
+            Self::UntrackedOnly => Self::ConflictedOnly,
+            Self::ConflictedOnly => Self::All,
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::TrackedOnly => "tracked",
+            Self::UntrackedOnly => "untracked",
+            Self::ConflictedOnly => "conflicts",
+        }
     }
 }
 
@@ -1037,6 +1081,41 @@ pub struct FileStatus {
     pub unstaged_kind: Option<FileStatusKind>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibleStatusEntry {
+    pub path: PathBuf,
+    pub kind: Option<FileStatusKind>,
+    pub depth: usize,
+    pub label: String,
+    pub entry_kind: VisibleStatusEntryKind,
+}
+
+impl VisibleStatusEntry {
+    #[must_use]
+    pub const fn is_directory(&self) -> bool {
+        matches!(self.entry_kind, VisibleStatusEntryKind::Directory { .. })
+    }
+
+    #[must_use]
+    pub const fn is_file(&self) -> bool {
+        matches!(self.entry_kind, VisibleStatusEntryKind::File)
+    }
+
+    #[must_use]
+    pub const fn collapsed(&self) -> bool {
+        matches!(
+            self.entry_kind,
+            VisibleStatusEntryKind::Directory { collapsed: true }
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisibleStatusEntryKind {
+    Directory { collapsed: bool },
+    File,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileStatusKind {
     #[default]
@@ -1046,6 +1125,217 @@ pub enum FileStatusKind {
     Renamed,
     Untracked,
     Conflicted,
+}
+
+#[must_use]
+pub fn visible_status_entries(repo_mode: &RepoModeState, pane: PaneId) -> Vec<VisibleStatusEntry> {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+
+    let normalized_query = repo_mode.status_filter.active_query();
+    let filtered_files = detail
+        .file_tree
+        .iter()
+        .filter(|item| {
+            status_kind_for_pane(item, pane).is_some_and(|kind| {
+                status_filter_mode_matches(repo_mode.status_filter_mode, kind)
+                    && normalized_query
+                        .as_deref()
+                        .is_none_or(|query| status_entry_matches_query(&item.path, kind, query))
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if !repo_mode.status_tree_enabled {
+        return filtered_files
+            .into_iter()
+            .map(|item| VisibleStatusEntry {
+                path: item.path.clone(),
+                kind: status_kind_for_pane(item, pane),
+                depth: 0,
+                label: item.path.display().to_string(),
+                entry_kind: VisibleStatusEntryKind::File,
+            })
+            .collect();
+    }
+
+    let mut directory_children = BTreeMap::<PathBuf, BTreeSet<PathBuf>>::new();
+    let mut directory_files = BTreeMap::<PathBuf, Vec<&FileStatus>>::new();
+    let mut directory_aggregate = BTreeMap::<PathBuf, Vec<&FileStatus>>::new();
+
+    for item in filtered_files {
+        let mut parent = PathBuf::new();
+        let components = item.path.components().collect::<Vec<_>>();
+        for component in components.iter().take(components.len().saturating_sub(1)) {
+            let mut directory = parent.clone();
+            directory.push(component.as_os_str());
+            directory_children
+                .entry(parent.clone())
+                .or_default()
+                .insert(directory.clone());
+            directory_aggregate
+                .entry(directory.clone())
+                .or_default()
+                .push(item);
+            parent = directory;
+        }
+        directory_files.entry(parent).or_default().push(item);
+    }
+
+    let tree = StatusTreeCollections {
+        directory_children: &directory_children,
+        directory_files: &directory_files,
+        directory_aggregate: &directory_aggregate,
+    };
+    let mut entries = Vec::new();
+    tree.append_entries(Path::new(""), 0, pane, repo_mode, &mut entries);
+    entries
+}
+
+struct StatusTreeCollections<'a> {
+    directory_children: &'a BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+    directory_files: &'a BTreeMap<PathBuf, Vec<&'a FileStatus>>,
+    directory_aggregate: &'a BTreeMap<PathBuf, Vec<&'a FileStatus>>,
+}
+
+impl<'a> StatusTreeCollections<'a> {
+    fn append_entries(
+        &self,
+        parent: &Path,
+        depth: usize,
+        pane: PaneId,
+        repo_mode: &RepoModeState,
+        entries: &mut Vec<VisibleStatusEntry>,
+    ) {
+        if let Some(children) = self.directory_children.get(parent) {
+            for directory in children {
+                let collapsed = repo_mode
+                    .collapsed_status_dirs
+                    .contains(directory.as_path());
+                let kind = self
+                    .directory_aggregate
+                    .get(directory.as_path())
+                    .and_then(|items| aggregate_status_kind(items.iter().copied(), pane));
+                let label = directory
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map_or_else(|| directory.display().to_string(), ToString::to_string);
+                entries.push(VisibleStatusEntry {
+                    path: directory.clone(),
+                    kind,
+                    depth,
+                    label,
+                    entry_kind: VisibleStatusEntryKind::Directory { collapsed },
+                });
+                if !collapsed {
+                    self.append_entries(directory.as_path(), depth + 1, pane, repo_mode, entries);
+                }
+            }
+        }
+
+        if let Some(files) = self.directory_files.get(parent) {
+            for item in files {
+                if let Some(kind) = status_kind_for_pane(item, pane) {
+                    entries.push(VisibleStatusEntry {
+                        path: item.path.clone(),
+                        kind: Some(kind),
+                        depth,
+                        label: item
+                            .path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map_or_else(|| item.path.display().to_string(), ToString::to_string),
+                        entry_kind: VisibleStatusEntryKind::File,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn aggregate_status_kind<'a>(
+    items: impl Iterator<Item = &'a FileStatus>,
+    pane: PaneId,
+) -> Option<FileStatusKind> {
+    let mut saw_any = false;
+    let mut saw_conflict = false;
+    let mut saw_modified = false;
+    let mut saw_added = false;
+    let mut saw_deleted = false;
+    let mut saw_renamed = false;
+    let mut saw_untracked = false;
+
+    for item in items {
+        let Some(kind) = status_kind_for_pane(item, pane) else {
+            continue;
+        };
+        saw_any = true;
+        match kind {
+            FileStatusKind::Conflicted => saw_conflict = true,
+            FileStatusKind::Modified => saw_modified = true,
+            FileStatusKind::Added => saw_added = true,
+            FileStatusKind::Deleted => saw_deleted = true,
+            FileStatusKind::Renamed => saw_renamed = true,
+            FileStatusKind::Untracked => saw_untracked = true,
+        }
+    }
+
+    if !saw_any {
+        return None;
+    }
+    if saw_conflict {
+        return Some(FileStatusKind::Conflicted);
+    }
+    if saw_modified {
+        return Some(FileStatusKind::Modified);
+    }
+    if saw_added {
+        return Some(FileStatusKind::Added);
+    }
+    if saw_deleted {
+        return Some(FileStatusKind::Deleted);
+    }
+    if saw_renamed {
+        return Some(FileStatusKind::Renamed);
+    }
+    if saw_untracked {
+        return Some(FileStatusKind::Untracked);
+    }
+    None
+}
+
+fn status_kind_for_pane(item: &FileStatus, pane: PaneId) -> Option<FileStatusKind> {
+    match pane {
+        PaneId::RepoUnstaged => item.unstaged_kind,
+        PaneId::RepoStaged => item.staged_kind,
+        _ => None,
+    }
+}
+
+fn status_filter_mode_matches(mode: StatusFilterMode, kind: FileStatusKind) -> bool {
+    match mode {
+        StatusFilterMode::All => true,
+        StatusFilterMode::TrackedOnly => kind != FileStatusKind::Untracked,
+        StatusFilterMode::UntrackedOnly => kind == FileStatusKind::Untracked,
+        StatusFilterMode::ConflictedOnly => kind == FileStatusKind::Conflicted,
+    }
+}
+
+fn status_entry_matches_query(path: &Path, kind: FileStatusKind, query: &str) -> bool {
+    let path_text = normalize_search_text(&path.display().to_string());
+    fuzzy_matches(&path_text, query) || fuzzy_matches(status_kind_search_term(kind), query)
+}
+
+fn status_kind_search_term(kind: FileStatusKind) -> &'static str {
+    match kind {
+        FileStatusKind::Modified => "modified",
+        FileStatusKind::Added => "added",
+        FileStatusKind::Deleted => "deleted",
+        FileStatusKind::Renamed => "renamed",
+        FileStatusKind::Untracked => "untracked",
+        FileStatusKind::Conflicted => "conflicted",
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1551,10 +1841,11 @@ pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &st
 #[cfg(test)]
 mod tests {
     use super::{
-        workspace_attention_score, CommitFilesMode, ListViewState, OperationProgress,
-        RemoteSummary, RepoId, RepoModeState, RepoSubview, RepoSummary, Timestamp,
-        WorkspaceFilterMode, WorkspaceSortMode, WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES,
-        DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        visible_status_entries, workspace_attention_score, CommitFilesMode, FileStatus,
+        FileStatusKind, ListViewState, OperationProgress, PaneId, RemoteSummary, RepoDetail,
+        RepoId, RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, Timestamp,
+        VisibleStatusEntryKind, WorkspaceFilterMode, WorkspaceSortMode, WorkspaceState,
+        DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -1570,6 +1861,35 @@ mod tests {
                 tracking_branch: Some("origin/main".to_string()),
             },
             ..RepoSummary::default()
+        }
+    }
+
+    fn status_repo_mode() -> RepoModeState {
+        RepoModeState {
+            detail: Some(RepoDetail {
+                file_tree: vec![
+                    FileStatus {
+                        path: PathBuf::from("src/ui/lib.rs"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: Some(FileStatusKind::Modified),
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                    },
+                    FileStatus {
+                        path: PathBuf::from("src/ui/mod.rs"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                    },
+                    FileStatus {
+                        path: PathBuf::from("docs/README.md"),
+                        kind: FileStatusKind::Untracked,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Untracked),
+                    },
+                ],
+                ..RepoDetail::default()
+            }),
+            ..RepoModeState::new(RepoId::new("repo-a"))
         }
     }
 
@@ -1671,6 +1991,135 @@ mod tests {
             DEFAULT_RENAME_SIMILARITY_THRESHOLD
         );
         assert!(state.detail.is_none());
+    }
+
+    #[test]
+    fn status_filter_mode_cycles_through_all_modes() {
+        assert_eq!(
+            StatusFilterMode::All.cycle_next(),
+            StatusFilterMode::TrackedOnly
+        );
+        assert_eq!(
+            StatusFilterMode::TrackedOnly.cycle_next(),
+            StatusFilterMode::UntrackedOnly
+        );
+        assert_eq!(
+            StatusFilterMode::UntrackedOnly.cycle_next(),
+            StatusFilterMode::ConflictedOnly
+        );
+        assert_eq!(
+            StatusFilterMode::ConflictedOnly.cycle_next(),
+            StatusFilterMode::All
+        );
+    }
+
+    #[test]
+    fn visible_status_entries_build_tree_and_honor_collapsed_directories() {
+        let mut repo_mode = status_repo_mode();
+
+        let expanded = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.path.display().to_string(),
+                    entry.depth,
+                    entry.entry_kind,
+                    entry.label,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            expanded,
+            vec![
+                (
+                    "docs".to_string(),
+                    0,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "docs".to_string(),
+                ),
+                (
+                    "docs/README.md".to_string(),
+                    1,
+                    VisibleStatusEntryKind::File,
+                    "README.md".to_string(),
+                ),
+                (
+                    "src".to_string(),
+                    0,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "src".to_string(),
+                ),
+                (
+                    "src/ui".to_string(),
+                    1,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "ui".to_string(),
+                ),
+                (
+                    "src/ui/lib.rs".to_string(),
+                    2,
+                    VisibleStatusEntryKind::File,
+                    "lib.rs".to_string(),
+                ),
+                (
+                    "src/ui/mod.rs".to_string(),
+                    2,
+                    VisibleStatusEntryKind::File,
+                    "mod.rs".to_string(),
+                ),
+            ]
+        );
+
+        repo_mode.collapsed_status_dirs.insert(PathBuf::from("src"));
+        let collapsed = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| (entry.path.display().to_string(), entry.entry_kind))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collapsed,
+            vec![
+                (
+                    "docs".to_string(),
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                ),
+                ("docs/README.md".to_string(), VisibleStatusEntryKind::File),
+                (
+                    "src".to_string(),
+                    VisibleStatusEntryKind::Directory { collapsed: true },
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_status_entries_apply_status_mode_and_query_filter() {
+        let mut repo_mode = status_repo_mode();
+        repo_mode.status_filter_mode = StatusFilterMode::UntrackedOnly;
+
+        let untracked = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| entry.path.display().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            untracked,
+            vec!["docs".to_string(), "docs/README.md".to_string()]
+        );
+
+        repo_mode.status_filter_mode = StatusFilterMode::All;
+        repo_mode.status_filter.query = "mod".to_string();
+        let queried = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| entry.path.display().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            queried,
+            vec![
+                "src".to_string(),
+                "src/ui".to_string(),
+                "src/ui/lib.rs".to_string(),
+                "src/ui/mod.rs".to_string(),
+            ]
+        );
     }
 
     #[test]

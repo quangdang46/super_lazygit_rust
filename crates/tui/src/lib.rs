@@ -720,12 +720,44 @@ impl TuiApp {
                     return Some(Action::SelectPreviousStatusEntry);
                 }
 
-                if self.binding_matches_action("discard_selected_file", raw, normalized, &["D"]) {
+                if self.binding_matches_action(
+                    "discard_selected_file",
+                    raw,
+                    normalized,
+                    &["d", "D"],
+                ) {
                     return Some(Action::DiscardSelectedFile);
                 }
 
                 if self.binding_matches_action("open_in_editor", raw, normalized, &["e"]) {
                     return Some(Action::OpenInEditor);
+                }
+
+                if self.binding_matches_action(
+                    "copy_selected_status_path",
+                    raw,
+                    normalized,
+                    &["y", "ctrl+o"],
+                ) {
+                    return Some(Action::CopySelectedStatusPath);
+                }
+
+                if self.binding_matches_action(
+                    "open_selected_status_path_in_default_app",
+                    raw,
+                    normalized,
+                    &["o"],
+                ) {
+                    return Some(Action::OpenSelectedStatusPathInDefaultApp);
+                }
+
+                if self.binding_matches_action(
+                    "open_selected_status_path_in_external_difftool",
+                    raw,
+                    normalized,
+                    &["ctrl+t"],
+                ) {
+                    return Some(Action::OpenSelectedStatusPathInExternalDiffTool);
                 }
 
                 if self.binding_matches_action("open_stash_options", raw, normalized, &["S"]) {
@@ -736,19 +768,65 @@ impl TuiApp {
                     return Some(Action::StashAllChanges);
                 }
 
-                if self.binding_matches_action("open_all_branch_graph", raw, normalized, &["a"]) {
-                    return Some(Action::OpenAllBranchGraph { reverse: false });
+                if self.binding_matches_action("stage_selection", raw, normalized, &["a"]) {
+                    return Some(if self.state.focused_pane == PaneId::RepoUnstaged {
+                        Action::StageSelection
+                    } else {
+                        Action::UnstageSelection
+                    });
                 }
 
-                if self.state.focused_pane == PaneId::RepoUnstaged
-                    && self.binding_matches_action(
-                        "open_all_branch_graph_reverse",
-                        raw,
-                        normalized,
-                        &["A"],
-                    )
+                if self.binding_matches_action(
+                    "cycle_status_filter_mode",
+                    raw,
+                    normalized,
+                    &["ctrl+b"],
+                ) {
+                    return Some(Action::CycleStatusFilterMode);
+                }
+
+                if self.binding_matches_action("toggle_status_tree", raw, normalized, &["`"]) {
+                    return Some(Action::ToggleStatusTree);
+                }
+
+                if self.binding_matches_action("collapse_status_entry", raw, normalized, &["-"]) {
+                    return Some(Action::CollapseStatusEntry);
+                }
+
+                if self.binding_matches_action("expand_status_entry", raw, normalized, &["="]) {
+                    return Some(Action::ExpandStatusEntry);
+                }
+
+                if self.binding_matches_action("open_ignore_options", raw, normalized, &["i"]) {
+                    return Some(Action::OpenIgnoreOptions);
+                }
+
+                if self.binding_matches_action("open_status_reset_options", raw, normalized, &["g"])
                 {
-                    return Some(Action::OpenAllBranchGraph { reverse: true });
+                    return Some(Action::OpenStatusResetOptions);
+                }
+
+                if self.binding_matches_action("open_merge_rebase_options", raw, normalized, &["M"])
+                {
+                    return Some(Action::OpenMergeRebaseOptions);
+                }
+
+                if self.binding_matches_action("focus_repo_detail_pane", raw, normalized, &["0"]) {
+                    return Some(Action::SetFocusedPane(PaneId::RepoDetail));
+                }
+
+                if self.binding_matches_action("focus_repo_subview_filter", raw, normalized, &["/"])
+                {
+                    return Some(Action::FocusRepoSubviewFilter);
+                }
+
+                if self.binding_matches_action(
+                    "open_selected_status_entry",
+                    raw,
+                    normalized,
+                    &["enter"],
+                ) {
+                    return Some(Action::OpenSelectedStatusEntry);
                 }
 
                 if self.state.focused_pane == PaneId::RepoUnstaged
@@ -756,7 +834,7 @@ impl TuiApp {
                         "stage_selected_file",
                         raw,
                         normalized,
-                        &["enter", "space"],
+                        &["space"],
                     )
                 {
                     return Some(Action::StageSelectedFile);
@@ -767,7 +845,7 @@ impl TuiApp {
                         "unstage_selected_file",
                         raw,
                         normalized,
-                        &["enter", "space"],
+                        &["space"],
                     )
                 {
                     return Some(Action::UnstageSelectedFile);
@@ -2447,8 +2525,7 @@ impl TuiApp {
         };
 
         let lines = repo_unstaged_lines(
-            repo_mode.detail.as_ref(),
-            repo_mode.status_view.selected_index,
+            Some(repo_mode),
             self.state.focused_pane == PaneId::RepoUnstaged,
             &repo_mode.operation_progress,
         );
@@ -2465,11 +2542,7 @@ impl TuiApp {
 
     fn render_repo_staged(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let repo_mode = self.state.repo_mode.as_ref();
-        let lines = repo_staged_lines(
-            repo_mode.and_then(|repo_mode| repo_mode.detail.as_ref()),
-            repo_mode.and_then(|repo_mode| repo_mode.staged_view.selected_index),
-            self.state.focused_pane == PaneId::RepoStaged,
-        );
+        let lines = repo_staged_lines(repo_mode, self.state.focused_pane == PaneId::RepoStaged);
         let title = if repo_mode.is_some_and(|repo_mode| repo_mode.commit_box.focused) {
             match repo_mode.map(|repo_mode| repo_mode.commit_box.mode) {
                 Some(CommitBoxMode::Commit) => "Staged changes · Commit",
@@ -5425,6 +5498,12 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::MergeRebaseOptions => {
             "Open the shipped merge/rebase flows that make sense in the current repository context."
         }
+        super_lazygit_core::MenuOperation::IgnoreOptions => {
+            "Choose whether the selected path should go to the shared ignore list or the local exclude file."
+        }
+        super_lazygit_core::MenuOperation::StatusResetOptions => {
+            "Choose how aggressively to reset the current branch against its configured upstream."
+        }
         super_lazygit_core::MenuOperation::PatchOptions => {
             "Jump directly into the shipped hunk/line patch flows for the current status diff."
         }
@@ -5453,6 +5532,11 @@ fn menu_lines(
         super_lazygit_core::MenuOperation::FilterOptions => filter_menu_lines(state),
         super_lazygit_core::MenuOperation::DiffOptions => diff_menu_lines(state),
         super_lazygit_core::MenuOperation::MergeRebaseOptions => merge_rebase_menu_lines(state),
+        super_lazygit_core::MenuOperation::IgnoreOptions => vec![
+            "Add selected path to .gitignore".to_string(),
+            "Add selected path to .git/info/exclude".to_string(),
+        ],
+        super_lazygit_core::MenuOperation::StatusResetOptions => status_reset_menu_lines(state),
         super_lazygit_core::MenuOperation::PatchOptions => patch_menu_lines(state),
         super_lazygit_core::MenuOperation::RecentRepos => recent_repo_menu_lines(state),
         super_lazygit_core::MenuOperation::CommandLog => command_log_menu_lines(state),
@@ -5767,6 +5851,27 @@ fn merge_rebase_menu_lines(state: &AppState) -> Vec<String> {
     entries
 }
 
+fn status_reset_menu_lines(state: &AppState) -> Vec<String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(summary) = state
+        .workspace
+        .repo_summaries
+        .get(&repo_mode.current_repo_id)
+    else {
+        return Vec::new();
+    };
+    let Some(tracking_branch) = summary.remote_summary.tracking_branch.as_deref() else {
+        return Vec::new();
+    };
+    vec![
+        format!("Soft reset to {tracking_branch}"),
+        format!("Mixed reset to {tracking_branch}"),
+        format!("Hard reset to {tracking_branch}"),
+    ]
+}
+
 fn patch_menu_lines(state: &AppState) -> Vec<String> {
     let Some(repo_mode) = state.repo_mode.as_ref() else {
         return Vec::new();
@@ -5868,17 +5973,11 @@ fn binding_matches_key(binding: &str, raw: &str, normalized: &str) -> bool {
 }
 
 fn repo_unstaged_lines(
-    detail: Option<&RepoDetail>,
-    selected_index: Option<usize>,
+    repo_mode: Option<&RepoModeState>,
     is_focused: bool,
     progress: &super_lazygit_core::OperationProgress,
 ) -> Vec<Line<'static>> {
-    let mut lines = repo_status_section_lines(
-        detail,
-        selected_index,
-        is_focused,
-        FileStatusSection::Unstaged,
-    );
+    let mut lines = repo_status_section_lines(repo_mode, is_focused, FileStatusSection::Unstaged);
     lines.push(Line::from(format!(
         "Progress: {}",
         operation_progress_label(progress)
@@ -5886,17 +5985,8 @@ fn repo_unstaged_lines(
     lines
 }
 
-fn repo_staged_lines(
-    detail: Option<&RepoDetail>,
-    selected_index: Option<usize>,
-    is_focused: bool,
-) -> Vec<Line<'static>> {
-    repo_status_section_lines(
-        detail,
-        selected_index,
-        is_focused,
-        FileStatusSection::Staged,
-    )
+fn repo_staged_lines(repo_mode: Option<&RepoModeState>, is_focused: bool) -> Vec<Line<'static>> {
+    repo_status_section_lines(repo_mode, is_focused, FileStatusSection::Staged)
 }
 
 fn commit_box_title(mode: CommitBoxMode) -> &'static str {
@@ -5995,15 +6085,18 @@ enum FileStatusSection {
 }
 
 fn repo_status_section_lines(
-    detail: Option<&RepoDetail>,
-    selected_index: Option<usize>,
+    repo_mode: Option<&RepoModeState>,
     is_focused: bool,
     section: FileStatusSection,
 ) -> Vec<Line<'static>> {
+    let pane = match section {
+        FileStatusSection::Unstaged => PaneId::RepoUnstaged,
+        FileStatusSection::Staged => PaneId::RepoStaged,
+    };
     let (focus_text, empty_text) = match section {
         FileStatusSection::Unstaged => (
             if is_focused {
-                "j/k move  Enter stage selected file."
+                "j/k move  Space stage file  Enter open diff  a stage all  ` tree  / filter"
             } else {
                 "Move focus here to inspect working tree changes."
             },
@@ -6011,7 +6104,7 @@ fn repo_status_section_lines(
         ),
         FileStatusSection::Staged => (
             if is_focused {
-                "j/k move  Enter unstage selected file."
+                "j/k move  Space unstage file  Enter open diff  a unstage all  ` tree  / filter"
             } else {
                 "Move focus here to prep staged work."
             },
@@ -6020,42 +6113,64 @@ fn repo_status_section_lines(
     };
 
     let mut lines = vec![Line::from(focus_text)];
-    let Some(detail) = detail else {
+    let Some(repo_mode) = repo_mode else {
         lines.push(Line::from("Repository detail is still loading."));
         return lines;
     };
-
-    let entries = detail
-        .file_tree
-        .iter()
-        .filter_map(|item| {
-            let kind = match section {
-                FileStatusSection::Staged => item.staged_kind,
-                FileStatusSection::Unstaged => item.unstaged_kind,
-            }?;
-            Some((kind, item.path.display().to_string()))
-        })
-        .collect::<Vec<_>>();
+    let selected_index = match pane {
+        PaneId::RepoUnstaged => repo_mode.status_view.selected_index,
+        PaneId::RepoStaged => repo_mode.staged_view.selected_index,
+        _ => None,
+    };
+    let entries = super_lazygit_core::visible_status_entries(repo_mode, pane);
 
     if entries.is_empty() {
+        lines.push(Line::from(format!(
+            "Tree: {}  Status: {}  Filter: /{}",
+            if repo_mode.status_tree_enabled {
+                "on"
+            } else {
+                "off"
+            },
+            repo_mode.status_filter_mode.label(),
+            repo_mode.status_filter.query
+        )));
         lines.push(Line::from(empty_text));
         return lines;
     }
 
-    lines.push(Line::from(format!("Files: {}", entries.len())));
-    lines.extend(
-        entries
-            .into_iter()
-            .enumerate()
-            .map(|(index, (kind, path))| {
-                let marker = if selected_index == Some(index) {
-                    ">"
-                } else {
-                    " "
-                };
-                Line::from(format!("{marker} {} {path}", file_status_kind_label(kind)))
-            }),
-    );
+    lines.push(Line::from(format!(
+        "Files: {}  Tree: {}  Status: {}  Filter: /{}",
+        entries.len(),
+        if repo_mode.status_tree_enabled {
+            "on"
+        } else {
+            "off"
+        },
+        repo_mode.status_filter_mode.label(),
+        repo_mode.status_filter.query
+    )));
+    lines.extend(entries.into_iter().enumerate().map(|(index, entry)| {
+        let marker = if selected_index == Some(index) {
+            ">"
+        } else {
+            " "
+        };
+        let indent = "  ".repeat(entry.depth);
+        let kind = entry.kind.map(file_status_kind_label).unwrap_or(" ");
+        let label = match entry.entry_kind {
+            super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed } => {
+                format!(
+                    "{}{} {}/",
+                    if collapsed { "▸" } else { "▾" },
+                    indent,
+                    entry.label
+                )
+            }
+            super_lazygit_core::VisibleStatusEntryKind::File => format!("{indent}{}", entry.label),
+        };
+        Line::from(format!("{marker} {kind} {label}"))
+    }));
     lines
 }
 
@@ -6156,11 +6271,11 @@ fn default_status_text(state: &AppState) -> String {
 
             match state.focused_pane {
             PaneId::RepoUnstaged => {
-                "Working tree focus; j/k move, Enter stages, and D discards the selected file."
+                "Working tree focus; j/k move, Space stages, Enter opens the diff, Ctrl+B cycles status filters, ` toggles the tree, -/= collapse or expand directories, a stages all, i opens ignore options, o opens the path, y copies the path, Ctrl+T opens the difftool, g opens reset options, M opens merge options, / filters, and 0 jumps to the main pane."
                     .to_string()
             }
             PaneId::RepoStaged => {
-                "Staged focus; j/k move, Enter unstages, D discards, c commits, w commits without hooks, and A amends HEAD."
+                "Staged focus; j/k move, Space unstages, Enter opens the diff, Ctrl+B cycles status filters, ` toggles the tree, -/= collapse or expand directories, a unstages all, i opens ignore options, o opens the path, y copies the path, Ctrl+T opens the difftool, g opens reset options, M opens merge options, / filters, 0 jumps to the main pane, c commits, w commits without hooks, and A amends HEAD."
                     .to_string()
             }
             PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
@@ -6251,10 +6366,10 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  ,/. page  </> top/bottom  Enter stage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  l next pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  ,/. page  </> top/bottom  Space stage file  Enter main diff  a stage all  Ctrl+B status filter  ` tree  -/= collapse/expand  / text filter  i ignore/exclude menu  y/Ctrl+O copy path  o open path  Ctrl+T external difftool  g reset menu  M merge menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  d/D discard file  0 main pane  l next pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  ,/. page  </> top/bottom  Enter unstage file  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  D discard file  c commit  A amend HEAD  h/l change pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  ,/. page  </> top/bottom  Space unstage file  Enter main diff  a unstage all  Ctrl+B status filter  ` tree  -/= collapse/expand  / text filter  i ignore/exclude menu  y/Ctrl+O copy path  o open path  Ctrl+T external difftool  g reset menu  M merge menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  d/D discard file  c commit  A amend HEAD  0 main pane  h/l change pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
@@ -6459,17 +6574,30 @@ mod tests {
         StatusMessage, Timestamp, WorkspaceFilterMode, WorkspaceState,
     };
 
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
+
     fn sample_repo_detail() -> RepoDetail {
         RepoDetail {
             file_tree: vec![
                 FileStatus {
-                    path: PathBuf::from("src/lib.rs"),
+                    path: PathBuf::from("src/ui/lib.rs"),
                     kind: FileStatusKind::Modified,
                     staged_kind: Some(FileStatusKind::Modified),
                     unstaged_kind: Some(FileStatusKind::Modified),
                 },
                 FileStatus {
-                    path: PathBuf::from("README.md"),
+                    path: PathBuf::from("src/ui/mod.rs"),
+                    kind: FileStatusKind::Modified,
+                    staged_kind: None,
+                    unstaged_kind: Some(FileStatusKind::Modified),
+                },
+                FileStatus {
+                    path: PathBuf::from("docs/README.md"),
                     kind: FileStatusKind::Untracked,
                     staged_kind: None,
                     unstaged_kind: Some(FileStatusKind::Untracked),
@@ -6482,12 +6610,12 @@ mod tests {
                 },
             ],
             diff: DiffModel {
-                selected_path: Some(PathBuf::from("src/lib.rs")),
+                selected_path: Some(PathBuf::from("src/ui/lib.rs")),
                 presentation: DiffPresentation::Unstaged,
                 lines: vec![
                     DiffLine {
                         kind: DiffLineKind::Meta,
-                        content: "diff --git a/src/lib.rs b/src/lib.rs".to_string(),
+                        content: "diff --git a/src/ui/lib.rs b/src/ui/lib.rs".to_string(),
                     },
                     DiffLine {
                         kind: DiffLineKind::Meta,
@@ -7566,7 +7694,7 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.status_view.selected_index),
-            Some(1)
+            Some(5)
         );
     }
 
@@ -7647,6 +7775,180 @@ mod tests {
                 .map(|menu| menu.operation),
             Some(super_lazygit_core::MenuOperation::PatchOptions)
         );
+    }
+
+    #[test]
+    fn repo_status_section_lines_render_tree_metadata_and_nested_entries() {
+        let mut repo_mode = RepoModeState::new(RepoId::new("/tmp/repo-1"));
+        repo_mode.detail = Some(sample_repo_detail());
+        repo_mode.status_filter_mode = super_lazygit_core::StatusFilterMode::TrackedOnly;
+        repo_mode.status_filter.query = "ui".to_string();
+        repo_mode.status_view.selected_index = Some(0);
+
+        let lines = repo_status_section_lines(Some(&repo_mode), true, FileStatusSection::Unstaged)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines[1], "Files: 4  Tree: on  Status: tracked  Filter: /ui");
+        assert!(lines.iter().any(|line| line.contains("▾ src/")));
+        assert!(lines.iter().any(|line| line.contains("▾   ui/")));
+        assert!(lines.iter().any(|line| line.contains("lib.rs")));
+        assert!(lines.iter().any(|line| line.contains("mod.rs")));
+    }
+
+    #[test]
+    fn route_repository_status_tree_and_shell_keys() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let mut summary = workspace_repo_summary(&repo_id.0, "repo-1");
+        summary.remote_summary.remote_name = Some("origin".to_string());
+        summary.remote_summary.tracking_branch = Some("origin/main".to_string());
+        let base_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(repo_id.clone(), summary)]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let file_state = AppState {
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("/tmp/repo-1"),
+                active_subview: RepoSubview::Status,
+                status_tree_enabled: false,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..base_state.clone()
+        };
+
+        let mut cycle_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let cycled = cycle_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+b".to_string(),
+        })));
+        assert_eq!(
+            cycled
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.status_filter_mode),
+            Some(super_lazygit_core::StatusFilterMode::TrackedOnly)
+        );
+
+        let mut tree_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let toggled = tree_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "`".to_string(),
+        })));
+        assert_eq!(
+            toggled
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.status_tree_enabled),
+            Some(false)
+        );
+
+        let mut ignore_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let ignored = ignore_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "i".to_string(),
+        })));
+        assert_eq!(
+            ignored
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::IgnoreOptions)
+        );
+
+        let mut reset_app = TuiApp::new(base_state.clone(), AppConfig::default());
+        let reset = reset_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert_eq!(
+            reset.state.pending_menu.as_ref().map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::StatusResetOptions)
+        );
+
+        let mut copy_app = TuiApp::new(file_state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "y".to_string(),
+        })));
+        assert!(copied
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
+
+        let mut open_app = TuiApp::new(file_state.clone(), AppConfig::default());
+        let opened = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert!(opened
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
+
+        let mut difftool_app = TuiApp::new(file_state, AppConfig::default());
+        let difftool = difftool_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+t".to_string(),
+        })));
+        assert!(difftool
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
+
+        let mut enter_app = TuiApp::new(base_state, AppConfig::default());
+        let opened_detail = enter_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(opened_detail.state.focused_pane, PaneId::RepoUnstaged);
+        assert!(opened_detail
+            .state
+            .repo_mode
+            .as_ref()
+            .is_some_and(|repo_mode| !repo_mode.collapsed_status_dirs.is_empty()));
+    }
+
+    #[test]
+    fn route_repository_status_enter_opens_detail_in_flat_mode() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Status,
+                status_tree_enabled: false,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
     }
 
     #[test]
@@ -9566,6 +9868,7 @@ mod tests {
             focused_pane: PaneId::RepoUnstaged,
             repo_mode: Some(RepoModeState {
                 active_subview: RepoSubview::Status,
+                status_tree_enabled: false,
                 detail: Some(sample_repo_detail()),
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -9583,7 +9886,7 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(super_lazygit_core::ConfirmableOperation::DiscardFile {
-                path: std::path::PathBuf::from("src/lib.rs"),
+                path: std::path::PathBuf::from("src/ui/lib.rs"),
             })
         );
 
@@ -10616,6 +10919,7 @@ mod tests {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoUnstaged,
             repo_mode: Some(RepoModeState {
+                status_tree_enabled: false,
                 detail: Some(sample_repo_detail()),
                 status_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
@@ -10640,13 +10944,7 @@ mod tests {
         let enter = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "enter".to_string(),
         })));
-        assert!(enter.effects.iter().any(|effect| matches!(
-            effect,
-            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
-                command: super_lazygit_core::GitCommand::StageFile { .. },
-                ..
-            })
-        )));
+        assert_eq!(enter.state.focused_pane, PaneId::RepoDetail);
 
         let mut space_app = TuiApp::new(state, AppConfig::default());
         let space = space_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
@@ -10667,9 +10965,10 @@ mod tests {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoStaged,
             repo_mode: Some(RepoModeState {
+                status_tree_enabled: false,
                 detail: Some(sample_repo_detail()),
                 staged_view: super_lazygit_core::ListViewState {
-                    selected_index: Some(1),
+                    selected_index: Some(0),
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -10680,13 +10979,7 @@ mod tests {
         let enter = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "enter".to_string(),
         })));
-        assert!(enter.effects.iter().any(|effect| matches!(
-            effect,
-            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
-                command: super_lazygit_core::GitCommand::UnstageFile { .. },
-                ..
-            })
-        )));
+        assert_eq!(enter.state.focused_pane, PaneId::RepoDetail);
 
         let mut space_app = TuiApp::new(state, AppConfig::default());
         let space = space_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
@@ -11012,7 +11305,7 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(rendered_lines.contains(&"Path: src/lib.rs (unstaged)".to_string()));
+        assert!(rendered_lines.contains(&"Path: src/ui/lib.rs (unstaged)".to_string()));
         assert!(rendered_lines
             .iter()
             .any(|line| line.contains("Hunks: 1  Selected: 1/1")));
@@ -11233,10 +11526,9 @@ mod tests {
         assert!(rendered.contains("Working tree"));
         assert!(rendered.contains("Staged changes"));
         assert!(rendered.contains("Detail: Status"));
-        assert!(rendered.contains("M src/lib.rs"));
-        assert!(rendered.contains("? README.md"));
-        assert!(rendered.contains("A Cargo.toml"));
-        assert!(rendered.contains("Path: src/lib.rs"));
+        assert!(rendered.contains("lib.rs"));
+        assert!(rendered.contains("README.md"));
+        assert!(rendered.contains("Path: src/ui/lib.rs"));
         assert!(rendered.contains("Hunks: 1"));
         assert!(rendered.contains("Line select: J/K cursor"));
         assert!(rendered.contains("@@ -1 +1 @@"));

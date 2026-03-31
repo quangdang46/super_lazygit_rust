@@ -1314,6 +1314,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunGitCommand(job));
             }
         }
+        Action::UnstageSelection => {
+            if let Some(repo_mode) = &state.repo_mode {
+                let job = git_job(
+                    repo_mode.current_repo_id.clone(),
+                    GitCommand::UnstageSelection,
+                );
+                enqueue_git_job(state, &job, "Unstage selection");
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
         Action::StageSelectedFile => {
             if let Some(repo_mode) = &state.repo_mode {
                 if let Some(path) = selected_status_path(repo_mode, PaneId::RepoUnstaged) {
@@ -1347,6 +1357,176 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     enqueue_git_job(state, &job, &summary);
                     effects.push(Effect::RunGitCommand(job));
                 }
+            }
+        }
+        Action::ToggleStatusTree => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.status_tree_enabled = !repo_mode.status_tree_enabled;
+                sync_status_selection(repo_mode);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::CollapseStatusEntry => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if update_status_directory_collapse(repo_mode, state.focused_pane, true) {
+                    sync_status_selection(repo_mode);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::ExpandStatusEntry => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if update_status_directory_collapse(repo_mode, state.focused_pane, false) {
+                    sync_status_selection(repo_mode);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::CycleStatusFilterMode => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.status_filter_mode = repo_mode.status_filter_mode.cycle_next();
+                sync_status_selection(repo_mode);
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenSelectedStatusEntry => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                if let Some(entry) = selected_status_entry(repo_mode, state.focused_pane) {
+                    if entry.is_directory() {
+                        let collapsed = entry.collapsed();
+                        update_status_directory_for_path(repo_mode, entry.path, !collapsed);
+                        sync_status_selection(repo_mode);
+                    } else {
+                        state.focused_pane = PaneId::RepoDetail;
+                    }
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::OpenIgnoreOptions => {
+            let selected_path = state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| selected_status_display_path(repo_mode, state.focused_pane));
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if selected_path.is_some() {
+                    open_menu(state, repo_id, MenuOperation::IgnoreOptions);
+                    effects.push(Effect::ScheduleRender);
+                } else {
+                    push_warning(state, "Select a file or directory before ignoring it.");
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::IgnoreSelectedStatusPath => match selected_status_ignore_target(state, false) {
+            Ok(Some((repo_id, _path, command, summary))) => {
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &summary);
+                effects.push(Effect::RunShellCommand(job));
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::ExcludeSelectedStatusPath => match selected_status_ignore_target(state, true) {
+            Ok(Some((repo_id, _path, command, summary))) => {
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &summary);
+                effects.push(Effect::RunShellCommand(job));
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::CopySelectedStatusPath => match selected_status_shell_target(state, false) {
+            Ok(Some((repo_id, path, is_directory, _))) => {
+                let display_path = status_clipboard_path(&path, is_directory);
+                let command = clipboard_shell_command(&display_path);
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &format!("Copy {}", display_path.display()));
+                effects.push(Effect::RunShellCommand(job));
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::OpenSelectedStatusPathInDefaultApp => {
+            match selected_status_shell_target(state, true) {
+                Ok(Some((repo_id, path, _, _))) => {
+                    let command = open_in_default_app_command(&path);
+                    let job = shell_job(repo_id, command);
+                    enqueue_shell_job(state, &job, &format!("Open {}", path.display()));
+                    effects.push(Effect::RunShellCommand(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::OpenSelectedStatusPathInExternalDiffTool => {
+            match selected_status_shell_target(state, false) {
+                Ok(Some((repo_id, _path, is_directory, relative_path))) => {
+                    if is_directory {
+                        push_warning(state, "Select a file before opening the external difftool.");
+                        effects.push(Effect::ScheduleRender);
+                    } else {
+                        let command = external_difftool_command(&relative_path, state.focused_pane);
+                        let job = shell_job(repo_id, command);
+                        enqueue_shell_job(
+                            state,
+                            &job,
+                            &format!("Open difftool for {}", relative_path.display()),
+                        );
+                        effects.push(Effect::RunShellCommand(job));
+                    }
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::OpenStatusResetOptions => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if repo_tracking_branch(state, &repo_id).is_some() {
+                    open_menu(state, repo_id, MenuOperation::StatusResetOptions);
+                    effects.push(Effect::ScheduleRender);
+                } else {
+                    push_warning(state, "Current branch has no upstream to reset against.");
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SoftResetToUpstream => {
+            if open_upstream_reset_confirmation(state, ResetMode::Soft) {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::MixedResetToUpstream => {
+            if open_upstream_reset_confirmation(state, ResetMode::Mixed) {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::HardResetToUpstream => {
+            if open_upstream_reset_confirmation(state, ResetMode::Hard) {
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::StageSelectedHunk => {
@@ -2476,11 +2656,11 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
 }
 
 fn step_status_selection(repo_mode: &mut RepoModeState, focused_pane: PaneId, step: isize) -> bool {
-    let Some(detail) = repo_mode.detail.as_ref() else {
+    if repo_mode.detail.is_none() {
         return false;
-    };
+    }
 
-    let len = status_entries_len(detail, focused_pane);
+    let len = status_entries_len(repo_mode, focused_pane);
     if len == 0 {
         return false;
     }
@@ -3512,6 +3692,8 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::FilterOptions => "Filter options",
         MenuOperation::DiffOptions => "Diffing options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
+        MenuOperation::IgnoreOptions => "Ignore options",
+        MenuOperation::StatusResetOptions => "Reset options",
         MenuOperation::PatchOptions => "Patch options",
         MenuOperation::RecentRepos => "Recent repositories",
         MenuOperation::CommandLog => "Command log",
@@ -3524,6 +3706,8 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::FilterOptions => filter_menu_entries(state).len(),
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
+        MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
+        MenuOperation::StatusResetOptions => status_reset_menu_entries(state).len(),
         MenuOperation::PatchOptions => patch_menu_entries(state).len(),
         MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
         MenuOperation::CommandLog => state.status_messages.len(),
@@ -3636,6 +3820,42 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
         }
         MenuOperation::MergeRebaseOptions => {
             let entries = merge_rebase_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::IgnoreOptions => {
+            let entries = ignore_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::StatusResetOptions => {
+            let entries = status_reset_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -3915,6 +4135,45 @@ fn merge_rebase_menu_entries(state: &AppState) -> Vec<MenuEntry> {
     }
 
     entries
+}
+
+fn ignore_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    if state.repo_mode.as_ref().is_none() {
+        return Vec::new();
+    }
+    vec![
+        MenuEntry {
+            label: "Add selected path to .gitignore".to_string(),
+            action: Action::IgnoreSelectedStatusPath,
+        },
+        MenuEntry {
+            label: "Add selected path to .git/info/exclude".to_string(),
+            action: Action::ExcludeSelectedStatusPath,
+        },
+    ]
+}
+
+fn status_reset_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(tracking_branch) = repo_tracking_branch(state, &repo_mode.current_repo_id) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("Soft reset to {tracking_branch}"),
+            action: Action::SoftResetToUpstream,
+        },
+        MenuEntry {
+            label: format!("Mixed reset to {tracking_branch}"),
+            action: Action::MixedResetToUpstream,
+        },
+        MenuEntry {
+            label: format!("Hard reset to {tracking_branch}"),
+            action: Action::HardResetToUpstream,
+        },
+    ]
 }
 
 fn patch_menu_entries(state: &AppState) -> Vec<MenuEntry> {
@@ -4227,16 +4486,16 @@ fn sync_submodule_selection(repo_mode: &mut RepoModeState) {
 }
 
 fn sync_status_selection(repo_mode: &mut RepoModeState) {
-    let Some(detail) = repo_mode.detail.as_ref() else {
+    if repo_mode.detail.is_none() {
         repo_mode.status_view.selected_index = None;
         repo_mode.staged_view.selected_index = None;
         return;
-    };
+    }
 
-    let unstaged_len = status_entries_len(detail, PaneId::RepoUnstaged);
+    let unstaged_len = status_entries_len(repo_mode, PaneId::RepoUnstaged);
     repo_mode.status_view.ensure_selection(unstaged_len);
 
-    let staged_len = status_entries_len(detail, PaneId::RepoStaged);
+    let staged_len = status_entries_len(repo_mode, PaneId::RepoStaged);
     repo_mode.staged_view.ensure_selection(staged_len);
 }
 
@@ -4422,34 +4681,15 @@ fn selection_for_display_range(
     })
 }
 
-fn status_entries_len(detail: &crate::state::RepoDetail, pane: PaneId) -> usize {
-    detail
-        .file_tree
-        .iter()
-        .filter(|item| match pane {
-            PaneId::RepoUnstaged => item.unstaged_kind.is_some(),
-            PaneId::RepoStaged => item.staged_kind.is_some(),
-            _ => false,
-        })
-        .count()
+fn status_entries_len(repo_mode: &RepoModeState, pane: PaneId) -> usize {
+    crate::state::visible_status_entries(repo_mode, pane).len()
 }
 
-fn selected_status_path(repo_mode: &RepoModeState, pane: PaneId) -> Option<std::path::PathBuf> {
-    let detail = repo_mode.detail.as_ref()?;
-    let entries = detail
-        .file_tree
-        .iter()
-        .filter(|item| match pane {
-            PaneId::RepoUnstaged => item.unstaged_kind.is_some(),
-            PaneId::RepoStaged => item.staged_kind.is_some(),
-            _ => false,
-        })
-        .collect::<Vec<_>>();
-
-    if entries.is_empty() {
-        return None;
-    }
-
+fn selected_status_entry(
+    repo_mode: &RepoModeState,
+    pane: PaneId,
+) -> Option<crate::state::VisibleStatusEntry> {
+    let entries = crate::state::visible_status_entries(repo_mode, pane);
     let selected_index = match pane {
         PaneId::RepoUnstaged => repo_mode.status_view.selected_index,
         PaneId::RepoStaged => repo_mode.staged_view.selected_index,
@@ -4458,7 +4698,20 @@ fn selected_status_path(repo_mode: &RepoModeState, pane: PaneId) -> Option<std::
     .filter(|index| *index < entries.len())
     .unwrap_or(0);
 
-    entries.get(selected_index).map(|item| item.path.clone())
+    entries.get(selected_index).cloned()
+}
+
+fn selected_status_display_path(
+    repo_mode: &RepoModeState,
+    pane: PaneId,
+) -> Option<std::path::PathBuf> {
+    selected_status_entry(repo_mode, pane).map(|entry| entry.path)
+}
+
+fn selected_status_path(repo_mode: &RepoModeState, pane: PaneId) -> Option<std::path::PathBuf> {
+    selected_status_entry(repo_mode, pane)
+        .filter(|entry| entry.is_file())
+        .map(|entry| entry.path)
 }
 
 fn selected_status_detail_request(
@@ -4466,6 +4719,178 @@ fn selected_status_detail_request(
     pane: PaneId,
 ) -> Option<(std::path::PathBuf, DiffPresentation)> {
     selected_status_path(repo_mode, pane).map(|path| (path, diff_presentation_for_pane(pane)))
+}
+
+fn update_status_directory_collapse(
+    repo_mode: &mut RepoModeState,
+    pane: PaneId,
+    collapse: bool,
+) -> bool {
+    let Some(entry) = selected_status_entry(repo_mode, pane) else {
+        return false;
+    };
+    let directory = if entry.is_directory() {
+        Some(entry.path)
+    } else {
+        entry.path.parent().map(std::path::Path::to_path_buf)
+    };
+    let Some(directory) = directory else {
+        return false;
+    };
+    update_status_directory_for_path(repo_mode, directory, collapse)
+}
+
+fn update_status_directory_for_path(
+    repo_mode: &mut RepoModeState,
+    directory: std::path::PathBuf,
+    collapse: bool,
+) -> bool {
+    if directory.as_os_str().is_empty() {
+        return false;
+    }
+    if collapse {
+        repo_mode.collapsed_status_dirs.insert(directory)
+    } else {
+        repo_mode.collapsed_status_dirs.remove(&directory)
+    }
+}
+
+fn selected_status_shell_target(
+    state: &AppState,
+    allow_directories: bool,
+) -> Result<
+    Option<(
+        crate::state::RepoId,
+        std::path::PathBuf,
+        bool,
+        std::path::PathBuf,
+    )>,
+    String,
+> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(entry) = selected_status_entry(repo_mode, state.focused_pane) else {
+        return Err("Select a file or directory before using that action.".to_string());
+    };
+    if !allow_directories && entry.is_directory() {
+        return Err("Select a file before using that action.".to_string());
+    }
+    let repo_root = repo_root_for_id(state, &repo_mode.current_repo_id);
+    let absolute_path = if entry.path.is_absolute() {
+        entry.path.clone()
+    } else {
+        repo_root.join(&entry.path)
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        absolute_path,
+        entry.is_directory(),
+        entry.path,
+    )))
+}
+
+fn selected_status_ignore_target(
+    state: &AppState,
+    exclude_only: bool,
+) -> Result<Option<(crate::state::RepoId, std::path::PathBuf, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(entry) = selected_status_entry(repo_mode, state.focused_pane) else {
+        return Err("Select a file or directory before ignoring it.".to_string());
+    };
+    let ignored_path = status_clipboard_path(&entry.path, entry.is_directory());
+    let target_file = if exclude_only {
+        ".git/info/exclude"
+    } else {
+        ".gitignore"
+    };
+    let command = format!(
+        "mkdir -p .git/info && touch {target_file} && grep -Fqx -- {entry} {target_file} || printf '%s\\n' {entry} >> {target_file}",
+        entry = shell_quote(ignored_path.as_os_str()),
+    );
+    let summary = if exclude_only {
+        format!("Exclude {}", ignored_path.display())
+    } else {
+        format!("Ignore {}", ignored_path.display())
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        ignored_path,
+        command,
+        summary,
+    )))
+}
+
+fn status_clipboard_path(path: &std::path::Path, is_directory: bool) -> std::path::PathBuf {
+    if !is_directory {
+        return path.to_path_buf();
+    }
+    let mut display_path = path.to_path_buf();
+    display_path.push("");
+    display_path
+}
+
+fn clipboard_shell_command(path: &std::path::Path) -> String {
+    let quoted = shell_quote(path.as_os_str());
+    format!(
+        "printf '%s' {quoted} | if command -v wl-copy >/dev/null 2>&1; then wl-copy; elif command -v xclip >/dev/null 2>&1; then xclip -selection clipboard; elif command -v pbcopy >/dev/null 2>&1; then pbcopy; else exit 1; fi"
+    )
+}
+
+fn open_in_default_app_command(path: &std::path::Path) -> String {
+    let quoted = shell_quote(path.as_os_str());
+    format!(
+        "if command -v xdg-open >/dev/null 2>&1; then xdg-open {quoted}; elif command -v open >/dev/null 2>&1; then open {quoted}; else exit 1; fi >/dev/null 2>&1"
+    )
+}
+
+fn external_difftool_command(path: &std::path::Path, pane: PaneId) -> String {
+    let quoted = shell_quote(path.as_os_str());
+    let cached = if pane == PaneId::RepoStaged {
+        "--cached "
+    } else {
+        ""
+    };
+    format!("git difftool {cached}--no-prompt -- {quoted}")
+}
+
+fn shell_quote(value: &std::ffi::OsStr) -> String {
+    let text = value.to_string_lossy();
+    format!("'{}'", text.replace('\'', "'\"'\"'"))
+}
+
+fn repo_tracking_branch(state: &AppState, repo_id: &crate::state::RepoId) -> Option<String> {
+    state
+        .workspace
+        .repo_summaries
+        .get(repo_id)
+        .and_then(|summary| summary.remote_summary.tracking_branch.clone())
+}
+
+fn open_upstream_reset_confirmation(state: &mut AppState, mode: ResetMode) -> bool {
+    let Some(repo_id) = state
+        .repo_mode
+        .as_ref()
+        .map(|repo_mode| repo_mode.current_repo_id.clone())
+    else {
+        return false;
+    };
+    let Some(tracking_branch) = repo_tracking_branch(state, &repo_id) else {
+        push_warning(state, "Current branch has no upstream to reset against.");
+        return false;
+    };
+    open_confirmation_modal(
+        state,
+        repo_id,
+        ConfirmableOperation::ResetToCommit {
+            mode,
+            commit: "@{upstream}".to_string(),
+            summary: tracking_branch,
+        },
+    );
+    true
 }
 
 fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::state::RepoSubview) {
@@ -4485,9 +4910,8 @@ fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::st
         crate::state::RepoSubview::Reflog => sync_reflog_selection(repo_mode),
         crate::state::RepoSubview::Worktrees => sync_worktree_selection(repo_mode),
         crate::state::RepoSubview::Submodules => sync_submodule_selection(repo_mode),
-        crate::state::RepoSubview::Status
-        | crate::state::RepoSubview::Compare
-        | crate::state::RepoSubview::Rebase => {}
+        crate::state::RepoSubview::Status => sync_status_selection(repo_mode),
+        crate::state::RepoSubview::Compare | crate::state::RepoSubview::Rebase => {}
     }
 }
 
@@ -4557,8 +4981,8 @@ fn selected_repo_editor_path(
     repo_root: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
     let path = match state.focused_pane {
-        PaneId::RepoUnstaged => selected_status_path(repo_mode, PaneId::RepoUnstaged),
-        PaneId::RepoStaged => selected_status_path(repo_mode, PaneId::RepoStaged),
+        PaneId::RepoUnstaged => selected_status_display_path(repo_mode, PaneId::RepoUnstaged),
+        PaneId::RepoStaged => selected_status_display_path(repo_mode, PaneId::RepoStaged),
         PaneId::RepoDetail if repo_mode.active_subview == crate::state::RepoSubview::Status => {
             repo_mode
                 .detail
@@ -5172,12 +5596,12 @@ fn select_status_edge(
     focused_pane: PaneId,
     select_last: bool,
 ) -> bool {
-    let Some(detail) = repo_mode.detail.as_ref() else {
+    if repo_mode.detail.is_none() {
         clear_status_selection(repo_mode, focused_pane);
         return false;
-    };
+    }
 
-    let len = status_entries_len(detail, focused_pane);
+    let len = status_entries_len(repo_mode, focused_pane);
     if len == 0 {
         clear_status_selection(repo_mode, focused_pane);
         return false;
@@ -5838,6 +6262,7 @@ fn selected_line_patch_job(
 fn job_suffix(command: &GitCommand) -> &'static str {
     match command {
         GitCommand::StageSelection => "stage-selection",
+        GitCommand::UnstageSelection => "unstage-selection",
         GitCommand::StageFile { .. } => "stage-file",
         GitCommand::DiscardFile { .. } => "discard-file",
         GitCommand::UnstageFile { .. } => "unstage-file",
@@ -7375,6 +7800,7 @@ mod tests {
                     selected_index: Some(1),
                 },
                 detail: Some(RepoDetail {
+                    file_tree: repo_detail_with_file_tree().file_tree,
                     commits: vec![crate::state::CommitItem {
                         oid: "abcdef1234567890".to_string(),
                         short_oid: "abcdef1".to_string(),
@@ -12255,7 +12681,7 @@ mod tests {
             Some((
                 repo_id,
                 ConfirmableOperation::DiscardFile {
-                    path: std::path::PathBuf::from("README.md")
+                    path: std::path::PathBuf::from("src/lib.rs")
                 }
             ))
         );
@@ -12347,7 +12773,7 @@ mod tests {
                 job_id: job_id.clone(),
                 repo_id,
                 command: GitCommand::StageFile {
-                    path: std::path::PathBuf::from("README.md"),
+                    path: std::path::PathBuf::from("src/lib.rs"),
                 },
             })]
         );
@@ -12359,9 +12785,67 @@ mod tests {
                 .map(|repo_mode| repo_mode.operation_progress.clone()),
             Some(crate::state::OperationProgress::Running {
                 job_id,
-                summary: "Stage README.md".to_string(),
+                summary: "Stage src/lib.rs".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn open_selected_status_entry_collapses_selected_directory() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                status_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedStatusEntry));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoUnstaged);
+        assert_eq!(
+            result.state.repo_mode.as_ref().map(|repo_mode| repo_mode
+                .collapsed_status_dirs
+                .contains(std::path::Path::new("src"))),
+            Some(true)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn open_selected_status_entry_focuses_detail_for_files() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(repo_detail_with_file_tree()),
+                status_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedStatusEntry));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.collapsed_status_dirs.is_empty()),
+            Some(true)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
@@ -12648,7 +13132,7 @@ mod tests {
                 job_id: job_id.clone(),
                 repo_id,
                 command: GitCommand::UnstageFile {
-                    path: std::path::PathBuf::from("Cargo.toml"),
+                    path: std::path::PathBuf::from("src/lib.rs"),
                 },
             })]
         );
@@ -12660,7 +13144,7 @@ mod tests {
                 .map(|repo_mode| repo_mode.operation_progress.clone()),
             Some(crate::state::OperationProgress::Running {
                 job_id,
-                summary: "Unstage Cargo.toml".to_string(),
+                summary: "Unstage src/lib.rs".to_string(),
             })
         );
     }

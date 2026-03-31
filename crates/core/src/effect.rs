@@ -77,6 +77,7 @@ pub enum RebaseStartMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GitCommand {
     StageSelection,
+    UnstageSelection,
     StageFile {
         path: PathBuf,
     },

@@ -660,7 +660,7 @@ mod tests {
         harness.assert_latest_contains("Repository shell");
         harness.assert_latest_contains("tracked.txt");
 
-        harness.press("stage selected file", "enter");
+        harness.press("stage selected file", "space");
         assert_eq!(
             repo_status_without_app_cache(&repo).expect("status after staging"),
             "M  tracked.txt",
