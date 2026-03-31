@@ -444,6 +444,65 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(load_repo_detail_effect(state, repo_id));
             effects.push(Effect::ScheduleRender);
         }
+        Action::CopySelectedReflogCommitHash => {
+            let Some((repo_id, value)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_reflog_entry(repo_mode).and_then(|(_, entry)| {
+                    let value = if entry.short_oid.is_empty() {
+                        entry.oid.clone()
+                    } else {
+                        entry.short_oid.clone()
+                    };
+                    (!value.is_empty()).then_some((repo_mode.current_repo_id.clone(), value))
+                })
+            }) else {
+                push_warning(
+                    state,
+                    "Select a reflog entry that still points to a commit before copying it.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            let command = clipboard_shell_command(std::ffi::OsStr::new(&value));
+            let job = shell_job(repo_id, command);
+            enqueue_shell_job(state, &job, &format!("Copy {value}"));
+            effects.push(Effect::RunShellCommand(job));
+        }
+        Action::OpenSelectedReflogInBrowser => {
+            let Some((repo_id, url, label)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                let detail = repo_mode.detail.as_ref()?;
+                let (_, entry) = selected_reflog_entry(repo_mode)?;
+                let url = selected_commit_browser_url(detail, &entry.oid)?;
+                Some((
+                    repo_mode.current_repo_id.clone(),
+                    url,
+                    reflog_commit_label(entry),
+                ))
+            }) else {
+                push_warning(
+                    state,
+                    "No browser-compatible remote URL found for the selected reflog entry.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+            let job = shell_job(repo_id, command);
+            enqueue_shell_job(state, &job, &format!("Open {label} in browser"));
+            effects.push(Effect::RunShellCommand(job));
+        }
+        Action::OpenReflogResetOptions => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_reflog_entry(repo_mode)
+                    .filter(|(_, entry)| !entry.selector.is_empty())
+                    .map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(state, "Select a reflog entry before opening reset options.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::ReflogResetOptions);
+            effects.push(Effect::ScheduleRender);
+        }
         Action::OpenSelectedCommitFiles => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 match repo_mode.commit_subview_mode {
@@ -1696,6 +1755,40 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         },
+        Action::OpenConfigFileInDefaultApp => match selected_config_target(state) {
+            Ok(Some((repo_id, _, target))) => {
+                let command = open_in_default_app_command(target.as_os_str());
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &format!("Open config {}", target.display()));
+                effects.push(Effect::RunShellCommand(job));
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::OpenConfigFileInEditor => match selected_config_target(state) {
+            Ok(Some((_, cwd, target))) => effects.push(Effect::OpenEditor { cwd, target }),
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::CheckForUpdates => match selected_update_check_target(state) {
+            Ok(Some((repo_id, url))) => {
+                let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, "Open release page");
+                effects.push(Effect::RunShellCommand(job));
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
         Action::RefreshSelectedRepo => {
             if let Some(repo_id) = state.workspace.selected_repo_id.clone() {
                 effects.push(Effect::RefreshRepoSummary {
@@ -2409,6 +2502,31 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::CopySelectedTagName => {
+            if let Some((repo_id, tag_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_tag_item(repo_mode)
+                    .map(|tag| (repo_mode.current_repo_id.clone(), tag.name.clone()))
+            }) {
+                let command = clipboard_shell_command(std::ffi::OsStr::new(&tag_name));
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &format!("Copy tag {tag_name}"));
+                effects.push(Effect::RunShellCommand(job));
+            } else {
+                push_warning(state, "Select a tag before copying it.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenTagResetOptions => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_tag_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(state, "Select a tag before opening reset options.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::TagResetOptions);
+            effects.push(Effect::ScheduleRender);
+        }
         Action::FetchSelectedRemote => {
             if let Some((repo_id, remote_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_remote_item(repo_mode)
@@ -2594,6 +2712,31 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 );
                 effects.push(Effect::ScheduleRender);
             }
+        }
+        Action::CopySelectedSubmoduleName => {
+            if let Some((repo_id, name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_submodule_item(repo_mode)
+                    .map(|item| (repo_mode.current_repo_id.clone(), item.name.clone()))
+            }) {
+                let command = clipboard_shell_command(std::ffi::OsStr::new(&name));
+                let job = shell_job(repo_id, command);
+                enqueue_shell_job(state, &job, &format!("Copy submodule {name}"));
+                effects.push(Effect::RunShellCommand(job));
+            } else {
+                push_warning(state, "Select a submodule before copying it.");
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::OpenSubmoduleOptions => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_submodule_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(state, "Select a submodule before opening options.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            open_menu(state, repo_id, MenuOperation::SubmoduleOptions);
+            effects.push(Effect::ScheduleRender);
         }
         Action::InitSelectedSubmodule => {
             if let Some((repo_id, path)) = state.repo_mode.as_ref().and_then(|repo_mode| {
@@ -4530,6 +4673,8 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::DiffOptions => "Diffing options",
         MenuOperation::CommitLogOptions => "Commit log options",
         MenuOperation::CommitCopyOptions => "Copy commit attribute",
+        MenuOperation::TagResetOptions => "Tag reset options",
+        MenuOperation::ReflogResetOptions => "Reflog reset options",
         MenuOperation::CommitAmendAttributeOptions => "Amend commit attributes",
         MenuOperation::CommitFixupOptions => "Fixup options",
         MenuOperation::BisectOptions => "Bisect options",
@@ -4538,6 +4683,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::IgnoreOptions => "Ignore options",
         MenuOperation::StatusResetOptions => "Reset options",
         MenuOperation::PatchOptions => "Patch options",
+        MenuOperation::SubmoduleOptions => "Submodule options",
         MenuOperation::RecentRepos => "Recent repositories",
         MenuOperation::CommandLog => "Command log",
     }
@@ -4550,6 +4696,8 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::CommitLogOptions => commit_log_menu_entries(state).len(),
         MenuOperation::CommitCopyOptions => 5,
+        MenuOperation::TagResetOptions => tag_reset_menu_entries(state).len(),
+        MenuOperation::ReflogResetOptions => reflog_reset_menu_entries(state).len(),
         MenuOperation::CommitAmendAttributeOptions => 2,
         MenuOperation::CommitFixupOptions => 3,
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
@@ -4558,6 +4706,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
         MenuOperation::StatusResetOptions => status_reset_menu_entries(state).len(),
         MenuOperation::PatchOptions => patch_menu_entries(state).len(),
+        MenuOperation::SubmoduleOptions => submodule_menu_entries(state).len(),
         MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
         MenuOperation::CommandLog => state.status_messages.len(),
     }
@@ -4587,6 +4736,92 @@ fn branch_upstream_menu_entries(state: &AppState) -> Vec<MenuEntry> {
         MenuEntry {
             label: format!("Fast-forward current branch from upstream ({upstream_label})"),
             action: Action::FastForwardSelectedBranchFromUpstream,
+        },
+    ]
+}
+
+fn tag_reset_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(tag) = selected_tag_item(repo_mode) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("Soft reset to {}", tag.name),
+            action: Action::SoftResetToSelectedTag,
+        },
+        MenuEntry {
+            label: format!("Mixed reset to {}", tag.name),
+            action: Action::MixedResetToSelectedTag,
+        },
+        MenuEntry {
+            label: format!("Hard reset to {}", tag.name),
+            action: Action::HardResetToSelectedTag,
+        },
+    ]
+}
+
+fn reflog_reset_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some((_, entry)) = selected_reflog_entry(repo_mode) else {
+        return Vec::new();
+    };
+    let target = if entry.selector.is_empty() {
+        reflog_commit_label(entry)
+    } else {
+        entry.selector.clone()
+    };
+    vec![
+        MenuEntry {
+            label: format!("Soft reset to {target}"),
+            action: Action::SoftResetToSelectedCommit,
+        },
+        MenuEntry {
+            label: format!("Mixed reset to {target}"),
+            action: Action::MixedResetToSelectedCommit,
+        },
+        MenuEntry {
+            label: format!("Hard reset to {target}"),
+            action: Action::HardResetToSelectedCommit,
+        },
+    ]
+}
+
+fn submodule_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(submodule) = selected_submodule_item(repo_mode) else {
+        return Vec::new();
+    };
+    vec![
+        MenuEntry {
+            label: format!("Copy submodule {}", submodule.name),
+            action: Action::CopySelectedSubmoduleName,
+        },
+        MenuEntry {
+            label: format!("Open {} in editor", submodule.path.display()),
+            action: Action::OpenInEditor,
+        },
+        MenuEntry {
+            label: format!("Edit URL for {}", submodule.name),
+            action: Action::EditSelectedSubmodule,
+        },
+        MenuEntry {
+            label: format!("Initialize {}", submodule.path.display()),
+            action: Action::InitSelectedSubmodule,
+        },
+        MenuEntry {
+            label: format!("Update {}", submodule.path.display()),
+            action: Action::UpdateSelectedSubmodule,
+        },
+        MenuEntry {
+            label: format!("Remove {}", submodule.path.display()),
+            action: Action::RemoveSelectedSubmodule,
         },
     ]
 }
@@ -4679,6 +4914,42 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
         }
         MenuOperation::DiffOptions => {
             let entries = diff_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::TagResetOptions => {
+            let entries = tag_reset_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::ReflogResetOptions => {
+            let entries = reflog_reset_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -4976,6 +5247,24 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
         }
         MenuOperation::PatchOptions => {
             let entries = patch_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::SubmoduleOptions => {
+            let entries = submodule_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -6083,6 +6372,39 @@ fn open_in_default_app_command(target: &std::ffi::OsStr) -> String {
     )
 }
 
+fn selected_config_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, std::path::PathBuf, std::path::PathBuf)>, String> {
+    let Some(config_path) = state.config_path.clone() else {
+        return Err("No config file is loaded; built-in defaults are active.".to_string());
+    };
+    let Some(repo_id) = active_repo_id(state) else {
+        return Ok(None);
+    };
+    let repo_root = repo_root_for_id(state, &repo_id);
+    Ok(Some((repo_id, repo_root, config_path)))
+}
+
+fn selected_update_check_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String)>, String> {
+    let Some(repository_url) = state.repository_url.as_deref() else {
+        return Err("No repository URL is configured for update checks.".to_string());
+    };
+    let Some(repo_id) = active_repo_id(state) else {
+        return Ok(None);
+    };
+    Ok(Some((repo_id, repository_release_url(repository_url))))
+}
+
+fn repository_release_url(repository_url: &str) -> String {
+    let repository_url = repository_url.trim().trim_end_matches('/');
+    let repository_url = repository_url
+        .strip_suffix(".git")
+        .unwrap_or(repository_url);
+    format!("{repository_url}/releases")
+}
+
 fn selected_commit_browser_target(
     state: &AppState,
 ) -> Result<Option<(crate::state::RepoId, String)>, String> {
@@ -6269,6 +6591,14 @@ fn external_difftool_command(path: &std::path::Path, pane: PaneId) -> String {
 fn shell_quote(value: &std::ffi::OsStr) -> String {
     let text = value.to_string_lossy();
     format!("'{}'", text.replace('\'', "'\"'\"'"))
+}
+
+fn active_repo_id(state: &AppState) -> Option<crate::state::RepoId> {
+    state
+        .repo_mode
+        .as_ref()
+        .map(|repo_mode| repo_mode.current_repo_id.clone())
+        .or_else(|| state.workspace.selected_repo_id.clone())
 }
 
 fn repo_tracking_branch(state: &AppState, repo_id: &crate::state::RepoId) -> Option<String> {
@@ -8267,6 +8597,86 @@ mod tests {
     }
 
     #[test]
+    fn open_config_file_actions_use_loaded_config_path() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let config_path = std::path::PathBuf::from("/tmp/configs/super-lazygit.toml");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            config_path: Some(config_path.clone()),
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..crate::state::WorkspaceState::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let opened = reduce(
+            state.clone(),
+            Event::Action(Action::OpenConfigFileInDefaultApp),
+        );
+        assert!(matches!(
+            opened.effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id
+                    && command.contains("xdg-open")
+                    && command.contains(config_path.to_string_lossy().as_ref())
+        ));
+
+        let edited = reduce(state, Event::Action(Action::OpenConfigFileInEditor));
+        assert_eq!(
+            edited.effects,
+            vec![Effect::OpenEditor {
+                cwd: repo_root,
+                target: config_path,
+            }]
+        );
+    }
+
+    #[test]
+    fn check_for_updates_opens_release_page() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repository_url: Some("https://github.com/quangdang/super_lazygit_rust".to_string()),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CheckForUpdates));
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id
+                    && command.contains("https://github.com/quangdang/super_lazygit_rust/releases")
+        ));
+    }
+
+    #[test]
     fn copy_selected_status_path_from_commit_file_mode_queues_shell_job() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let repo_root = std::path::PathBuf::from("/tmp/repo-1");
@@ -8363,6 +8773,131 @@ mod tests {
                 command: super::clipboard_shell_command(std::ffi::OsStr::new("abcdef1")),
             })]
         );
+    }
+
+    #[test]
+    fn copy_selected_tag_name_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Tags,
+                detail: Some(RepoDetail {
+                    tags: vec![crate::state::TagItem {
+                        name: "snapshot".to_string(),
+                        target_oid: "1234567890abcdef".to_string(),
+                        target_short_oid: "1234567".to_string(),
+                        summary: "second".to_string(),
+                        annotated: false,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                tags_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CopySelectedTagName));
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id && command.contains("snapshot")
+        ));
+    }
+
+    #[test]
+    fn copy_selected_reflog_commit_hash_and_open_browser_queue_shell_jobs() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Reflog,
+                detail: Some(RepoDetail {
+                    remotes: vec![crate::state::RemoteItem {
+                        name: "upstream".to_string(),
+                        fetch_url: "git@github.com:example/repo.git".to_string(),
+                        push_url: "git@github.com:example/repo.git".to_string(),
+                        branch_count: 0,
+                    }],
+                    reflog_items: vec![ReflogItem {
+                        selector: "HEAD@{1}".to_string(),
+                        oid: "1234567890abcdef".to_string(),
+                        short_oid: "1234567".to_string(),
+                        summary: "commit: prior".to_string(),
+                        description: "HEAD@{1}: commit: prior".to_string(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                reflog_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let copied = reduce(
+            state.clone(),
+            Event::Action(Action::CopySelectedReflogCommitHash),
+        );
+        assert!(matches!(
+            copied.effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id && command.contains("1234567")
+        ));
+
+        let opened = reduce(state, Event::Action(Action::OpenSelectedReflogInBrowser));
+        assert!(matches!(
+            opened.effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id
+                    && command.contains("github.com/example/repo/commit/1234567890abcdef")
+        ));
+    }
+
+    #[test]
+    fn copy_selected_submodule_name_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                detail: Some(RepoDetail {
+                    submodules: vec![SubmoduleItem {
+                        name: "child-module".to_string(),
+                        path: std::path::PathBuf::from("vendor/child-module"),
+                        url: "../child-module.git".to_string(),
+                        branch: Some("main".to_string()),
+                        short_oid: Some("abcdef1".to_string()),
+                        initialized: true,
+                        dirty: false,
+                        conflicted: false,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                submodules_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CopySelectedSubmoduleName));
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id && command.contains("child-module")
+        ));
     }
 
     #[test]

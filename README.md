@@ -29,15 +29,16 @@ That means:
 - Branch detail view with checkout, create, rename, delete, and upstream-setting actions
 - Remotes detail view with filtering, remote-branches drill-down, and add/edit/remove/fetch actions
 - Remote-branch detail view with filtering, commit-history drill-down, tracking checkout, local-branch creation, and remote deletion
-- Tags detail view with filtering, commit-history drill-down, detached checkout, create/delete/push flows, and reset-on-tag actions
+- Tags detail view with filtering, commit-history drill-down, detached checkout, copy/reset-menu affordances, and create/delete/push flows
 - Compare, rebase, stash, reflog, and worktree detail subviews
-- Submodules detail view with filtering, nested repo entry/return flow, and add/edit-url/init/update/remove actions
-- Stash create/apply/pop/drop/rename/new-branch, stash-options menu parity for tracked, keep-index, include-untracked, staged, and lazygit-style unstaged creation, plus stash changed-file drill-down inspection before apply and reflog commit-history handoff, detached checkout, branch-off, cherry-pick, restore, and reset flows
+- Submodules detail view with filtering, nested repo entry/return flow, copy/options affordances, and add/edit-url/init/update/remove actions
+- Stash create/apply/pop/drop/rename/new-branch, stash-options menu parity for tracked, keep-index, include-untracked, staged, and lazygit-style unstaged creation, plus stash changed-file drill-down inspection before apply and reflog commit-history handoff, copy/browser/reset-menu affordances, detached checkout, branch-off, cherry-pick, restore, and reset flows
+- Status detail shortcuts for config open/edit and release-page update checks
 - Keybinding overrides for routed command keys across modal, workspace, repo, and commit-box actions
 - Watcher health reporting with degraded fallback polling
 - Fixture-heavy Git integration coverage for dirty repos, conflicts, upstream divergence, stashes, reflog, worktrees, and submodules
 
-Current submodule scope intentionally does not include lazygit's broader bulk submodule option menus. The shipped surface is the per-submodule panel and lifecycle actions listed above, and unsupported bulk behavior is left explicit rather than silently implied.
+Current submodule scope now includes a lightweight options entry for the selected submodule. Broader multi-submodule batch operations still remain explicit rather than silently implied.
 
 ## Running the current build
 

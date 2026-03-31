@@ -1281,6 +1281,24 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "copy_selected_tag_name",
+                            raw,
+                            normalized,
+                            &["ctrl+o", "y"],
+                        ) {
+                            return Some(Action::CopySelectedTagName);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_tag_reset_options",
+                            raw,
+                            normalized,
+                            &["g"],
+                        ) {
+                            return Some(Action::OpenTagResetOptions);
+                        }
+
+                        if self.binding_matches_action(
                             "soft_reset_to_selected_tag",
                             raw,
                             normalized,
@@ -1410,8 +1428,27 @@ impl TuiApp {
                             return Some(Action::DiscardSelectedFile);
                         }
 
-                        if self.binding_matches_action("open_in_editor", raw, normalized, &["e"]) {
-                            return Some(Action::OpenInEditor);
+                        if self.binding_matches_action(
+                            "open_config_file_in_default_app",
+                            raw,
+                            normalized,
+                            &["o"],
+                        ) {
+                            return Some(Action::OpenConfigFileInDefaultApp);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_config_file_in_editor",
+                            raw,
+                            normalized,
+                            &["e"],
+                        ) {
+                            return Some(Action::OpenConfigFileInEditor);
+                        }
+
+                        if self.binding_matches_action("check_for_updates", raw, normalized, &["u"])
+                        {
+                            return Some(Action::CheckForUpdates);
                         }
 
                         if self.binding_matches_action("nuke_working_tree", raw, normalized, &["X"])
@@ -2210,6 +2247,33 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "copy_selected_reflog_commit_hash",
+                            raw,
+                            normalized,
+                            &["ctrl+o", "y"],
+                        ) {
+                            return Some(Action::CopySelectedReflogCommitHash);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_selected_reflog_in_browser",
+                            raw,
+                            normalized,
+                            &["o"],
+                        ) {
+                            return Some(Action::OpenSelectedReflogInBrowser);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_reflog_reset_options",
+                            raw,
+                            normalized,
+                            &["g"],
+                        ) {
+                            return Some(Action::OpenReflogResetOptions);
+                        }
+
+                        if self.binding_matches_action(
                             "soft_reset_to_selected_commit",
                             raw,
                             normalized,
@@ -2326,6 +2390,24 @@ impl TuiApp {
                         if self.binding_matches_action("create_submodule", raw, normalized, &["n"])
                         {
                             return Some(Action::CreateSubmodule);
+                        }
+
+                        if self.binding_matches_action(
+                            "copy_selected_submodule_name",
+                            raw,
+                            normalized,
+                            &["ctrl+o", "y"],
+                        ) {
+                            return Some(Action::CopySelectedSubmoduleName);
+                        }
+
+                        if self.binding_matches_action(
+                            "open_submodule_options",
+                            raw,
+                            normalized,
+                            &["b"],
+                        ) {
+                            return Some(Action::OpenSubmoduleOptions);
                         }
 
                         if self.binding_matches_action(
@@ -4036,7 +4118,9 @@ fn repo_tag_lines(
         lines.push(filter_line);
     }
     lines.extend([
-        Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
+        Line::from(
+            "Context: Enter commits. Space checkout. Ctrl+O copy tag. g reset menu. 0 main. / filter. w worktrees.",
+        ),
         Line::from("Other: n create tag. d delete tag. P push tag. S/M/H reset to tag."),
         Line::from(""),
     ]);
@@ -4418,9 +4502,11 @@ fn repo_reflog_lines(
         lines.push(filter_line);
     }
     lines.extend([
-        Line::from("Context: Enter commits. Space checkout. n branch. C cherry-pick."),
         Line::from(
-            "Context: S/M/H reset by reflog target. u restore HEAD. 0 main. / filter. w worktrees.",
+            "Context: Enter commits. Space checkout. Ctrl+O copy hash. o browser. n branch. T tag. C cherry-pick.",
+        ),
+        Line::from(
+            "Context: g reset menu. S/M/H reset by reflog target. u restore HEAD. 0 main. / filter. w worktrees.",
         ),
         Line::from("Use j/k to inspect recent HEAD and ref movement."),
         Line::from("Limits: no working tree undo; redo is manual by selecting another entry."),
@@ -4613,7 +4699,7 @@ fn repo_submodule_lines(
         lines.push(filter_line);
     }
     lines.extend([
-        Line::from("Context: Enter/Space open nested repo. 0 main. / filter."),
+        Line::from("Context: Enter/Space open nested repo. Ctrl+O copy submodule. b options menu. 0 main. / filter."),
         Line::from("Other: n add. e edit URL. i init. u update. o open path. d remove."),
         Line::from(""),
     ]);
@@ -5909,6 +5995,12 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::CommitCopyOptions => {
             "Choose which selected commit attribute to copy to the clipboard."
         }
+        super_lazygit_core::MenuOperation::TagResetOptions => {
+            "Choose how aggressively to reset the current branch to the selected tag."
+        }
+        super_lazygit_core::MenuOperation::ReflogResetOptions => {
+            "Choose how aggressively to reset the current branch to the selected reflog entry."
+        }
         super_lazygit_core::MenuOperation::CommitAmendAttributeOptions => {
             "Choose which amend-only metadata change to apply to the selected commit."
         }
@@ -5932,6 +6024,9 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         }
         super_lazygit_core::MenuOperation::PatchOptions => {
             "Jump directly into the shipped hunk/line patch flows for the current status diff."
+        }
+        super_lazygit_core::MenuOperation::SubmoduleOptions => {
+            "Choose a lifecycle or clipboard action for the selected submodule."
         }
         super_lazygit_core::MenuOperation::RecentRepos => {
             "Switch directly to one of the repositories you visited recently."
@@ -5965,6 +6060,16 @@ fn menu_lines(
             "Copy diff".to_string(),
             "Copy browser URL".to_string(),
         ],
+        super_lazygit_core::MenuOperation::TagResetOptions => vec![
+            "Soft reset to selected tag".to_string(),
+            "Mixed reset to selected tag".to_string(),
+            "Hard reset to selected tag".to_string(),
+        ],
+        super_lazygit_core::MenuOperation::ReflogResetOptions => vec![
+            "Soft reset to selected reflog target".to_string(),
+            "Mixed reset to selected reflog target".to_string(),
+            "Hard reset to selected reflog target".to_string(),
+        ],
         super_lazygit_core::MenuOperation::CommitAmendAttributeOptions => {
             vec!["Reset author".to_string(), "Set co-author".to_string()]
         }
@@ -5986,6 +6091,14 @@ fn menu_lines(
         ],
         super_lazygit_core::MenuOperation::StatusResetOptions => status_reset_menu_lines(state),
         super_lazygit_core::MenuOperation::PatchOptions => patch_menu_lines(state),
+        super_lazygit_core::MenuOperation::SubmoduleOptions => vec![
+            "Copy selected submodule".to_string(),
+            "Open selected submodule in editor".to_string(),
+            "Edit selected submodule URL".to_string(),
+            "Initialize selected submodule".to_string(),
+            "Update selected submodule".to_string(),
+            "Remove selected submodule".to_string(),
+        ],
         super_lazygit_core::MenuOperation::RecentRepos => recent_repo_menu_lines(state),
         super_lazygit_core::MenuOperation::CommandLog => command_log_menu_lines(state),
     };
@@ -6812,13 +6925,13 @@ fn default_status_text(state: &AppState) -> String {
                             }
                         }
                     } else if repo_mode.active_subview == RepoSubview::Reflog {
-                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, n branches off it, T tags it, C cherry-picks, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and u preserves the explicit restore flow."
+                        "Reflog detail focus; Enter opens commit history, Space detaches to the selected target, Ctrl+O copies the selected hash, o opens the selected target in the browser, n branches off it, T tags it, C cherry-picks, g opens reset options, S/M/H reset via the selector, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and u preserves the explicit restore flow."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Worktrees {
                         "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, b opens submodules, and n/o/d manage the selected worktree."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Submodules {
-                        "Submodules detail focus; Enter opens the selected nested repo, Esc returns to the parent repo, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, and n/e/i/u/o/d manage the selected submodule."
+                        "Submodules detail focus; Enter opens the selected nested repo, Ctrl+O copies the selected submodule name, b opens the submodule options menu, Esc returns to the parent repo, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, and n/e/i/u/o/d manage the selected submodule."
                             .to_string()
                     } else {
                         format!(
@@ -6855,7 +6968,7 @@ fn status_detail_focus_help(repo_mode: &RepoModeState) -> String {
     };
 
     format!(
-        "Status diff focus; {action_copy}, Ctrl+W toggles whitespace, {{/}} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, a/A open the all-branches graph, Esc or 0 returns to the main pane, w opens worktrees, b opens submodules, D discards the current file, and X nukes the working tree."
+        "Status diff focus; {action_copy}, Ctrl+W toggles whitespace, {{/}} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, a/A open the all-branches graph, o opens the config file, e edits it, u checks for updates, Esc or 0 returns to the main pane, w opens worktrees, b opens submodules, D discards the current file, and X nukes the working tree."
     )
 }
 
@@ -6901,7 +7014,7 @@ fn repo_help_text(state: &AppState) -> String {
             || "Repository shell".to_string(),
             |repo_mode| {
                 if repo_mode.active_subview == RepoSubview::Status {
-                    "Status diff pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Enter apply hunk  Ctrl+P patch menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Status diff pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Enter apply hunk  Ctrl+P patch menu  o open config  e edit config  u check updates  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
                     "Branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream menu  y copy  r rebase current  M merge into current  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
@@ -6909,7 +7022,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::RemoteBranches {
                     "Remote branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  n local branch  d delete  y copy  u set upstream  r rebase current  M merge into current  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Tags {
-                    "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
+                    "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+O copy tag  g reset menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
                     "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  c set fixup msg  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  r reword  R reword editor  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
@@ -6926,11 +7039,11 @@ fn repo_help_text(state: &AppState) -> String {
                         }
                     }
                 } else if repo_mode.active_subview == RepoSubview::Reflog {
-                    "Reflog pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Reflog pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+O copy hash  o browser  g reset menu  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  n branch  C cherry-pick  S/M/H reset  u restore  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Worktrees {
                     "Worktrees pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter switch  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  b submodules  n create  o open  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Submodules {
-                    "Submodules pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter nested repo  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  n add  e edit-url  i init  u update  o open  d remove  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Submodules pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter nested repo  Ctrl+O copy submodule  b options menu  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  / filter  n add  e edit-url  i init  u update  o open  d remove  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else {
                     format!(
                         "{} detail pane  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace",
@@ -8005,14 +8118,15 @@ mod tests {
     }
 
     #[test]
-    fn route_repo_editor_binding_opens_selected_status_file() {
+    fn route_status_detail_config_bindings_open_and_edit_loaded_config() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let repo_root = std::path::PathBuf::from(&repo_id.0);
-        let mut detail = sample_repo_detail();
-        detail.diff.selected_path = Some(std::path::PathBuf::from("src/lib.rs"));
+        let config_path = std::path::PathBuf::from("/tmp/configs/super-lazygit.toml");
         let mut state = AppState {
             mode: AppMode::Repository,
             focused_pane: PaneId::RepoDetail,
+            config_path: Some(config_path.clone()),
+            repository_url: Some("https://github.com/quangdang/super_lazygit_rust".to_string()),
             workspace: WorkspaceState {
                 discovered_repo_ids: vec![repo_id.clone()],
                 selected_repo_id: Some(repo_id.clone()),
@@ -8021,7 +8135,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Status,
-                detail: Some(detail),
+                detail: Some(sample_repo_detail()),
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..Default::default()
@@ -8032,17 +8146,43 @@ mod tests {
         );
         let mut app = TuiApp::new(state.clone(), AppConfig::default());
 
-        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+        let open = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert!(matches!(
+            open.effects.as_slice(),
+            [super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { job_id, repo_id: actual_repo_id, command }
+            )]
+                if job_id == &super_lazygit_core::JobId::new("shell:/tmp/repo-1:run-command")
+                    && actual_repo_id == &repo_id
+                    && command.contains("xdg-open")
+                    && command.contains(config_path.to_string_lossy().as_ref())
+        ));
+
+        let edit = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "e".to_string(),
         })));
-
         assert_eq!(
-            result.effects,
+            edit.effects,
             vec![super_lazygit_core::Effect::OpenEditor {
                 cwd: repo_root.clone(),
-                target: repo_root.join("src/lib.rs"),
+                target: config_path,
             }]
         );
+
+        let update = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "u".to_string(),
+        })));
+        assert!(matches!(
+            update.effects.as_slice(),
+            [super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { job_id, repo_id: actual_repo_id, command }
+            )]
+                if job_id == &super_lazygit_core::JobId::new("shell:/tmp/repo-1:run-command")
+                    && actual_repo_id == &repo_id
+                    && command.contains("https://github.com/quangdang/super_lazygit_rust/releases")
+        ));
     }
 
     #[test]
@@ -10014,6 +10154,17 @@ mod tests {
             })
         );
 
+        let mut copy_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+o".to_string(),
+        })));
+        assert!(matches!(
+            copied.effects.as_slice(),
+            [super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            )] if command.contains("snapshot")
+        ));
+
         let mut push_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
         let push = push_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "P".to_string(),
@@ -10028,6 +10179,18 @@ mod tests {
                 remote_name: "origin".to_string(),
                 tag_name: "snapshot".to_string(),
             })
+        );
+
+        let mut menu_app = TuiApp::new(blurred.state.clone(), AppConfig::default());
+        let menu = menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert_eq!(
+            menu.state
+                .pending_menu
+                .as_ref()
+                .map(|pending| pending.operation),
+            Some(super_lazygit_core::MenuOperation::TagResetOptions)
         );
 
         for (key, mode) in [
@@ -12184,6 +12347,40 @@ mod tests {
             })
         );
 
+        let mut copy_app = TuiApp::new(state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+o".to_string(),
+        })));
+        assert!(matches!(
+            copied.effects.as_slice(),
+            [super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            )] if command.contains("1234567")
+        ));
+
+        let mut browser_app = TuiApp::new(state.clone(), AppConfig::default());
+        let browser = browser_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert!(matches!(
+            browser.effects.as_slice(),
+            [super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            )] if command.contains("github.com/example/upstream/commit/1234567890abcdef")
+        ));
+
+        let mut menu_app = TuiApp::new(state.clone(), AppConfig::default());
+        let menu = menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert_eq!(
+            menu.state
+                .pending_menu
+                .as_ref()
+                .map(|pending| pending.operation),
+            Some(super_lazygit_core::MenuOperation::ReflogResetOptions)
+        );
+
         let mut reset_app = TuiApp::new(state, AppConfig::default());
         let reset = reset_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "S".to_string(),
@@ -13022,6 +13219,8 @@ mod tests {
             status_detail_focus_help(&repo_mode).contains("Enter/Space stages the current hunk")
         );
         assert!(status_detail_focus_help(&repo_mode).contains("Esc or 0 returns to the main pane"));
+        assert!(status_detail_focus_help(&repo_mode).contains("o opens the config file"));
+        assert!(status_detail_focus_help(&repo_mode).contains("u checks for updates"));
 
         if let Some(detail) = repo_mode.detail.as_mut() {
             detail.merge_state = super_lazygit_core::MergeState::MergeInProgress;
@@ -13736,6 +13935,11 @@ mod tests {
         app.resize(100, 18);
 
         let rendered = app.render_to_string();
+        let mut help_state = app.state().clone();
+        if let Some(repo_mode) = help_state.repo_mode.as_mut() {
+            repo_mode.tags_filter.focused = false;
+        }
+        let help = repo_help_text(&help_state);
 
         assert!(rendered.contains("Detail: Tags"));
         assert!(rendered.contains("Selected: v1.0.0"));
@@ -13743,8 +13947,9 @@ mod tests {
         assert!(rendered.contains("Type: annotated"));
         assert!(rendered.contains("Summary: release v1.0.0"));
         assert!(rendered.contains("Filter /v1_  Matches: 1/2  (focused)"));
-        assert!(rendered.contains("Context: Enter commits. Space checkout."));
+        assert!(rendered.contains("Ctrl+O copy tag."));
         assert!(rendered.contains("n create tag"));
+        assert!(help.contains("g reset menu"));
         assert!(rendered.contains("P push tag"));
     }
 
@@ -13889,12 +14094,14 @@ mod tests {
         app.resize(100, 18);
 
         let rendered = app.render_to_string();
+        let help = repo_help_text(app.state());
 
         assert!(rendered.contains("Detail: Reflog"));
         assert!(rendered.contains("Selected 2/2"));
         assert!(rendered.contains("HEAD@{1}  1234567 commit: add repo-mode stash flows"));
-        assert!(rendered.contains("Context: Enter commits. Space checkout."));
-        assert!(rendered.contains("Context: S/M/H reset by reflog target. u restore HEAD."));
+        assert!(help.contains("Ctrl+O copy hash"));
+        assert!(help.contains("o browser"));
+        assert!(help.contains("g reset menu"));
         assert!(rendered.contains("Use j/k to inspect recent HEAD and ref movement."));
         assert!(rendered.contains("Limits: no working tree undo"));
         assert!(rendered.contains("HEAD@{0}: checkout: moving from feature to main"));
@@ -14113,12 +14320,14 @@ mod tests {
         app.resize(100, 18);
 
         let rendered = app.render_to_string();
+        let help = repo_help_text(app.state());
 
         assert!(rendered.contains("Detail: Submodules"));
         assert!(rendered.contains("Selected: vendor/ui-kit"));
         assert!(rendered.contains("State: uninitialized"));
         assert!(rendered.contains("URL: git@github.com:example/ui-kit.git"));
-        assert!(rendered.contains("Context: Enter/Space open nested repo. 0 main. / filter."));
+        assert!(help.contains("Ctrl+O copy submodule"));
+        assert!(help.contains("b options menu"));
         assert!(rendered.contains("n add."));
         assert!(rendered.contains("e edit URL."));
         assert!(rendered.contains("i init."));
@@ -14274,6 +14483,29 @@ mod tests {
                 .as_ref()
                 .map(|prompt| prompt.operation.clone()),
             Some(super_lazygit_core::InputPromptOperation::CreateSubmodule)
+        );
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let copied = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+o".to_string(),
+        })));
+        assert!(matches!(
+            copied.effects.as_slice(),
+            [super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            )] if command.contains("child-module")
+        ));
+
+        let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());
+        let menu = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "b".to_string(),
+        })));
+        assert_eq!(
+            menu.state
+                .pending_menu
+                .as_ref()
+                .map(|pending| pending.operation),
+            Some(super_lazygit_core::MenuOperation::SubmoduleOptions)
         );
 
         let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());

@@ -144,9 +144,11 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `W` or `Ctrl+E` | Open the diffing-options menu for the current status diff |
 | `Ctrl+P` | Open the patch-options menu for the currently selected diff |
 | `D` | Open discard confirmation for the selected file |
-| `e` | Open the selected diff file in the configured editor |
 | `a` | Open the all-branches commit graph, newest first |
 | `A` | Open the all-branches commit graph, oldest first |
+| `o` | Open the discovered config file in the default app |
+| `e` | Open the discovered config file in the configured editor |
+| `u` | Open the project release page to check for updates |
 | `X` | Open destructive confirmation for nuking the working tree |
 | `Esc` / `0` | Return to the last focused files pane |
 
@@ -232,6 +234,8 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Space` | Check out the selected tag in detached-HEAD mode |
 | `n` | Open create-tag prompt |
 | `d` | Open delete-tag confirmation |
+| `Ctrl+O` | Copy the selected tag name to the clipboard |
+| `g` | Open the tag-reset options menu |
 | `P` | Open push-tag confirmation |
 | `S` | Open soft-reset-to-tag confirmation |
 | `M` | Open mixed-reset-to-tag confirmation |
@@ -386,6 +390,9 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `n` | Open create-branch-from-commit prompt for the selected reflog target |
 | `T` | Open create-tag-from-commit prompt for the selected reflog target |
 | `C` | Open cherry-pick confirmation for the selected reflog target |
+| `Ctrl+O` | Copy the selected reflog target hash to the clipboard |
+| `o` | Open the selected reflog target in the browser when a browser-compatible remote is configured |
+| `g` | Open the reflog-reset options menu |
 | `S` | Open soft-reset confirmation using the selected reflog selector |
 | `M` | Open mixed-reset confirmation using the selected reflog selector |
 | `H` | Open hard-reset confirmation using the selected reflog selector |
@@ -423,6 +430,8 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `[` / `]` | Move to the previous or next detail tab |
 | `Enter` / `Space` | Enter the selected submodule as a nested repo |
 | `n` | Open add-submodule prompt (`<path> <url>`) |
+| `Ctrl+O` | Copy the selected submodule name to the clipboard |
+| `b` | Open the submodule options menu |
 | `e` | Open edit-submodule-URL prompt |
 | `i` | Initialize the selected submodule |
 | `u` | Update the selected submodule |

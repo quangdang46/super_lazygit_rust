@@ -27,9 +27,17 @@ struct Cli {
 fn main() -> Result<()> {
     let startup_started_at = Instant::now();
     let cli = Cli::parse();
-    let config = AppConfig::load()?.config;
+    let loaded_config = AppConfig::load()?;
+    let config = loaded_config.config;
     let workspace_root = resolve_workspace_root(cli.workspace, &config);
-    let state = AppState::default();
+    let state = AppState {
+        config_path: loaded_config
+            .source
+            .path()
+            .map(std::path::Path::to_path_buf),
+        repository_url: option_env!("CARGO_PKG_REPOSITORY").map(str::to_string),
+        ..AppState::default()
+    };
     let app = TuiApp::new(state, config.clone());
     let workspace = WorkspaceRegistry::new(workspace_root);
     let git = GitFacade::default();
