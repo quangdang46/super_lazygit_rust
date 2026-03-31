@@ -4604,6 +4604,7 @@ fn repo_commit_lines(
         Line::from(history_operation_state_line(&detail.merge_state)),
         Line::from(repo_commit_context_line(
             repo_mode.commit_history_mode,
+            repo_mode.commit_history_ref.as_deref(),
             repo_mode.commits_filter.query.as_str(),
             repo_mode.commits_filter.focused,
             visible_indices.len(),
@@ -4976,15 +4977,20 @@ fn repo_filter_summary_line(
 
 fn repo_commit_context_line(
     commit_history_mode: CommitHistoryMode,
+    commit_history_ref: Option<&str>,
     filter_query: &str,
     filter_focused: bool,
     visible_count: usize,
     total_count: usize,
 ) -> String {
     let mut line = if commit_history_mode.is_graph() {
-        "Context: Enter files. a newest-first. 0 main. / filter. w worktrees.".to_string()
+        "Context: Enter files. 3 current branch. a/A graph. 0 main. / filter. w worktrees."
+            .to_string()
+    } else if commit_history_ref.is_some() {
+        "Context: Enter files. 3 current branch. a graph. 0 main. / filter. w worktrees."
+            .to_string()
     } else {
-        "Context: 0 main. / filter. w worktrees. a graph.".to_string()
+        "Context: Enter files. a graph. 0 main. / filter. w worktrees.".to_string()
     };
     if let Some(filter_line) =
         repo_filter_summary_line(filter_query, filter_focused, visible_count, total_count)
@@ -6531,7 +6537,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                        "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                        "Commits detail focus; 3 returns to current-branch history, a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
@@ -6650,7 +6656,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  a graph  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  3 current branch  a graph  n branch  T tag  b bisect menu  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -9073,6 +9079,29 @@ mod tests {
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
             Some("feature")
+        );
+
+        let mut current_branch_app =
+            TuiApp::new(branch_commits.state.clone(), AppConfig::default());
+        let current_branch =
+            current_branch_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "3".to_string(),
+            })));
+        assert_eq!(
+            current_branch
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Linear)
+        );
+        assert_eq!(
+            current_branch
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            None
         );
 
         let mut checkout_app = TuiApp::new(blurred.state, AppConfig::default());
@@ -12345,7 +12374,7 @@ mod tests {
 
         assert!(rendered.contains("Detail: Commits"));
         assert!(rendered.contains("* abcdef1 (HEAD -> main) add lib"));
-        assert!(rendered.contains("a newest-first"));
+        assert!(rendered.contains("3 current branch. a/A graph"));
         assert!(!rendered.contains("A oldest-first"));
     }
 
@@ -13486,6 +13515,41 @@ mod tests {
                 .map(|menu| menu.operation),
             Some(super_lazygit_core::MenuOperation::BisectOptions)
         );
+    }
+
+    #[test]
+    fn render_commit_history_explicit_ref_surfaces_current_branch_shortcut() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let mut app = TuiApp::new(
+            AppState {
+                mode: AppMode::Repository,
+                focused_pane: PaneId::RepoDetail,
+                settings: super_lazygit_core::SettingsSnapshot {
+                    show_help_footer: true,
+                    ..Default::default()
+                },
+                workspace: WorkspaceState {
+                    discovered_repo_ids: vec![repo_id.clone()],
+                    selected_repo_id: Some(repo_id.clone()),
+                    ..Default::default()
+                },
+                repo_mode: Some(RepoModeState {
+                    current_repo_id: repo_id,
+                    active_subview: RepoSubview::Commits,
+                    commit_history_ref: Some("feature".to_string()),
+                    detail: Some(sample_repo_detail()),
+                    ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+                }),
+                ..Default::default()
+            },
+            AppConfig::default(),
+        );
+        app.resize(100, 22);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Context: Enter files. 3 current branch."));
+        assert!(rendered.contains("3 returns to current-branch history"));
     }
 
     #[test]

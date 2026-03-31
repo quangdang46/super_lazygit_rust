@@ -2450,6 +2450,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::SwitchRepoSubview(subview) => {
             let mut repo_detail_reload = None;
             if let Some(repo_mode) = state.repo_mode.as_mut() {
+                let reset_explicit_commit_history =
+                    matches!(repo_mode.active_subview, crate::state::RepoSubview::Commits)
+                        && (repo_mode.commit_history_ref.is_some()
+                            || repo_mode.commit_history_mode != CommitHistoryMode::Linear
+                            || repo_mode.pending_commit_selection_oid.is_some());
                 clear_repo_subview_filter_focus(repo_mode);
                 repo_mode.commit_history_ref = None;
                 repo_mode.commit_history_mode = CommitHistoryMode::Linear;
@@ -2473,10 +2478,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     && repo_mode.comparison_target.is_some()
                 {
                     effects.push(load_comparison_diff_effect(repo_mode));
-                } else if matches!(subview, crate::state::RepoSubview::Status)
-                    && repo_mode.detail.as_ref().is_some_and(|detail| {
-                        detail.diff.presentation == DiffPresentation::Comparison
-                    })
+                } else if reset_explicit_commit_history
+                    || (matches!(subview, crate::state::RepoSubview::Status)
+                        && repo_mode.detail.as_ref().is_some_and(|detail| {
+                            detail.diff.presentation == DiffPresentation::Comparison
+                        }))
                 {
                     repo_detail_reload = Some(repo_mode.current_repo_id.clone());
                 }
@@ -8027,6 +8033,73 @@ mod tests {
                 Effect::ScheduleRender,
             ]
         );
+    }
+
+    #[test]
+    fn switch_repo_subview_commits_resets_explicit_history_to_current_branch() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::History,
+                commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                commit_history_ref: Some("feature".to_string()),
+                pending_commit_selection_oid: Some("deadbeef".to_string()),
+                detail: Some(RepoDetail::default()),
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SwitchRepoSubview(RepoSubview::Commits)),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Linear)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            None
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.pending_commit_selection_oid.as_deref()),
+            None
+        );
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LoadRepoDetail {
+                repo_id: effect_repo_id,
+                commit_ref,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ..
+            } if effect_repo_id == &repo_id && commit_ref.is_none()
+        )));
     }
 
     #[test]

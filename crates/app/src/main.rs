@@ -80,9 +80,9 @@ mod tests {
     use super::watcher::{ScriptedWatcherBackend, ScriptedWatcherHandle};
     use super::*;
     use super_lazygit_core::{
-        AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, Event, PaneId, RepoId,
-        RepoSubview, RepoSummary, ScanStatus, TimerEvent, Timestamp, WatcherEventKind,
-        WatcherHealth, WorkerEvent, WorkspaceState,
+        AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, CommitHistoryMode, Event,
+        PaneId, RepoId, RepoSubview, RepoSummary, ScanStatus, TimerEvent, Timestamp,
+        WatcherEventKind, WatcherHealth, WorkerEvent, WorkspaceState,
     };
     use super_lazygit_test_support::{clean_repo, TempRepo};
 
@@ -836,6 +836,18 @@ mod tests {
                 })
             },
             "enter from branches should drill into the selected branch history",
+        );
+
+        harness.press("reset commits view to current branch history", "3");
+        harness.assert_state(
+            |state| {
+                state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                    repo_mode.active_subview == RepoSubview::Commits
+                        && repo_mode.commit_history_mode == CommitHistoryMode::Linear
+                        && repo_mode.commit_history_ref.is_none()
+                })
+            },
+            "3 from an explicit branch history should reset the commits pane to the current branch",
         );
 
         harness.press("return to branches detail", "2");
