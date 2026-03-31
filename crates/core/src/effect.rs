@@ -259,6 +259,10 @@ pub enum GitCommand {
     UpdateSubmodule {
         path: PathBuf,
     },
+    InitAllSubmodules,
+    UpdateAllSubmodules,
+    UpdateAllSubmodulesRecursively,
+    DeinitAllSubmodules,
     RemoveSubmodule {
         path: PathBuf,
     },

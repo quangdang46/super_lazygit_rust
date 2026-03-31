@@ -6211,8 +6211,8 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::PatchOptions => {
             "Jump directly into the shipped hunk/line patch flows for the current status diff."
         }
-        super_lazygit_core::MenuOperation::SubmoduleOptions => {
-            "Choose a lifecycle or clipboard action for the selected submodule."
+        super_lazygit_core::MenuOperation::BulkSubmoduleOptions => {
+            "Run bulk initialization, update, recursive update, or deinit across submodules."
         }
         super_lazygit_core::MenuOperation::RecentRepos => {
             "Switch directly to one of the repositories you visited recently."
@@ -6294,13 +6294,11 @@ fn menu_lines(
             remote_branch_sort_menu_lines(state)
         }
         super_lazygit_core::MenuOperation::PatchOptions => patch_menu_lines(state),
-        super_lazygit_core::MenuOperation::SubmoduleOptions => vec![
-            "Copy selected submodule".to_string(),
-            "Open selected submodule in editor".to_string(),
-            "Edit selected submodule URL".to_string(),
-            "Initialize selected submodule".to_string(),
-            "Update selected submodule".to_string(),
-            "Remove selected submodule".to_string(),
+        super_lazygit_core::MenuOperation::BulkSubmoduleOptions => vec![
+            "Initialize all submodules".to_string(),
+            "Update all submodules".to_string(),
+            "Update all submodules recursively".to_string(),
+            "Deinitialize all submodules".to_string(),
         ],
         super_lazygit_core::MenuOperation::RecentRepos => recent_repo_menu_lines(state),
         super_lazygit_core::MenuOperation::CommandLog => command_log_menu_lines(state),
@@ -7269,7 +7267,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Worktrees detail focus; Enter/Space switches worktrees, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, b opens submodules, and n/o/d manage the selected worktree."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Submodules {
-                        "Submodules detail focus; Enter opens the selected nested repo, Ctrl+O copies the selected submodule name, b opens the submodule options menu, Esc returns to the parent repo, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, and n/e/i/u/o/d manage the selected submodule."
+                        "Submodules detail focus; Enter opens the selected nested repo, Ctrl+O copies the selected submodule name, b opens the bulk submodule options menu, Esc returns to the parent repo, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, and n/e/i/u/o/d manage the selected submodule."
                             .to_string()
                     } else {
                         format!(
@@ -15132,7 +15130,7 @@ mod tests {
                 .pending_menu
                 .as_ref()
                 .map(|pending| pending.operation),
-            Some(super_lazygit_core::MenuOperation::SubmoduleOptions)
+            Some(super_lazygit_core::MenuOperation::BulkSubmoduleOptions)
         );
 
         let mut app = TuiApp::new(base_state(RepoSubview::Submodules), AppConfig::default());

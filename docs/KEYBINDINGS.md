@@ -442,7 +442,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Enter` / `Space` | Enter the selected submodule as a nested repo |
 | `n` | Open add-submodule prompt (`<path> <url>`) |
 | `Ctrl+O` | Copy the selected submodule name to the clipboard |
-| `b` | Open the submodule options menu |
+| `b` | Open the bulk submodule options menu |
 | `e` | Open edit-submodule-URL prompt |
 | `i` | Initialize the selected submodule |
 | `u` | Update the selected submodule |

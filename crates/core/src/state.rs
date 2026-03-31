@@ -370,7 +370,7 @@ pub enum MenuOperation {
     IgnoreOptions,
     StatusResetOptions,
     PatchOptions,
-    SubmoduleOptions,
+    BulkSubmoduleOptions,
     RecentRepos,
     CommandLog,
 }

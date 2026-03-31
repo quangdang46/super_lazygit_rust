@@ -3004,15 +3004,65 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::OpenSubmoduleOptions => {
-            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
-                selected_submodule_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
-            }) else {
-                push_warning(state, "Select a submodule before opening options.");
+            let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            else {
+                push_warning(state, "Open bulk submodule options from repo mode.");
                 effects.push(Effect::ScheduleRender);
                 return;
             };
-            open_menu(state, repo_id, MenuOperation::SubmoduleOptions);
+            open_menu(state, repo_id, MenuOperation::BulkSubmoduleOptions);
             effects.push(Effect::ScheduleRender);
+        }
+        Action::InitAllSubmodules => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                let summary = "Initialize all submodules".to_string();
+                let job = git_job(repo_id, GitCommand::InitAllSubmodules);
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::UpdateAllSubmodules => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                let summary = "Update all submodules".to_string();
+                let job = git_job(repo_id, GitCommand::UpdateAllSubmodules);
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::UpdateAllSubmodulesRecursively => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                let summary = "Update all submodules recursively".to_string();
+                let job = git_job(repo_id, GitCommand::UpdateAllSubmodulesRecursively);
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
+        }
+        Action::DeinitAllSubmodules => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                let summary = "Deinitialize all submodules".to_string();
+                let job = git_job(repo_id, GitCommand::DeinitAllSubmodules);
+                enqueue_git_job(state, &job, &summary);
+                effects.push(Effect::RunGitCommand(job));
+            }
         }
         Action::InitSelectedSubmodule => {
             if let Some((repo_id, path)) = state.repo_mode.as_ref().and_then(|repo_mode| {
@@ -5016,7 +5066,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::IgnoreOptions => "Ignore options",
         MenuOperation::StatusResetOptions => "Reset options",
         MenuOperation::PatchOptions => "Patch options",
-        MenuOperation::SubmoduleOptions => "Submodule options",
+        MenuOperation::BulkSubmoduleOptions => "Bulk submodule options",
         MenuOperation::RecentRepos => "Recent repositories",
         MenuOperation::CommandLog => "Command log",
     }
@@ -5048,7 +5098,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
         MenuOperation::StatusResetOptions => status_reset_menu_entries(state).len(),
         MenuOperation::PatchOptions => patch_menu_entries(state).len(),
-        MenuOperation::SubmoduleOptions => submodule_menu_entries(state).len(),
+        MenuOperation::BulkSubmoduleOptions => bulk_submodule_menu_entries().len(),
         MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
         MenuOperation::CommandLog => state.status_messages.len(),
     }
@@ -5300,37 +5350,23 @@ fn remote_branch_sort_menu_entries(state: &AppState) -> Vec<MenuEntry> {
     ]
 }
 
-fn submodule_menu_entries(state: &AppState) -> Vec<MenuEntry> {
-    let Some(repo_mode) = state.repo_mode.as_ref() else {
-        return Vec::new();
-    };
-    let Some(submodule) = selected_submodule_item(repo_mode) else {
-        return Vec::new();
-    };
+fn bulk_submodule_menu_entries() -> Vec<MenuEntry> {
     vec![
         MenuEntry {
-            label: format!("Copy submodule {}", submodule.name),
-            action: Action::CopySelectedSubmoduleName,
+            label: "Initialize all submodules".to_string(),
+            action: Action::InitAllSubmodules,
         },
         MenuEntry {
-            label: format!("Open {} in editor", submodule.path.display()),
-            action: Action::OpenInEditor,
+            label: "Update all submodules".to_string(),
+            action: Action::UpdateAllSubmodules,
         },
         MenuEntry {
-            label: format!("Edit URL for {}", submodule.name),
-            action: Action::EditSelectedSubmodule,
+            label: "Update all submodules recursively".to_string(),
+            action: Action::UpdateAllSubmodulesRecursively,
         },
         MenuEntry {
-            label: format!("Initialize {}", submodule.path.display()),
-            action: Action::InitSelectedSubmodule,
-        },
-        MenuEntry {
-            label: format!("Update {}", submodule.path.display()),
-            action: Action::UpdateSelectedSubmodule,
-        },
-        MenuEntry {
-            label: format!("Remove {}", submodule.path.display()),
-            action: Action::RemoveSelectedSubmodule,
+            label: "Deinitialize all submodules".to_string(),
+            action: Action::DeinitAllSubmodules,
         },
     ]
 }
@@ -5898,8 +5934,8 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
             reduce_action(state, action, effects);
             true
         }
-        MenuOperation::SubmoduleOptions => {
-            let entries = submodule_menu_entries(state);
+        MenuOperation::BulkSubmoduleOptions => {
+            let entries = bulk_submodule_menu_entries();
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -9058,6 +9094,10 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::EditSubmoduleUrl { .. } => "edit-submodule-url",
         GitCommand::InitSubmodule { .. } => "init-submodule",
         GitCommand::UpdateSubmodule { .. } => "update-submodule",
+        GitCommand::InitAllSubmodules => "init-all-submodules",
+        GitCommand::UpdateAllSubmodules => "update-all-submodules",
+        GitCommand::UpdateAllSubmodulesRecursively => "update-all-submodules-recursively",
+        GitCommand::DeinitAllSubmodules => "deinit-all-submodules",
         GitCommand::RemoveSubmodule { .. } => "remove-submodule",
         GitCommand::SetBranchUpstream { .. } => "set-branch-upstream",
         GitCommand::FetchSelectedRepo => "fetch-selected-repo",
@@ -20514,6 +20554,185 @@ mod tests {
                 .as_ref()
                 .map(|repo_mode| repo_mode.submodules_view.selected_index),
             Some(Some(0))
+        );
+    }
+
+    #[test]
+    fn open_bulk_submodule_options_opens_menu_without_selection() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSubmoduleOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(MenuOperation::BulkSubmoduleOptions)
+        );
+    }
+
+    #[test]
+    fn init_all_submodules_enqueues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::InitAllSubmodules));
+        let job_id = JobId::new("git:repo-1:init-all-submodules");
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Initialize all submodules".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::InitAllSubmodules,
+            })]
+        );
+    }
+
+    #[test]
+    fn update_all_submodules_enqueues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::UpdateAllSubmodules));
+        let job_id = JobId::new("git:repo-1:update-all-submodules");
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Update all submodules".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::UpdateAllSubmodules,
+            })]
+        );
+    }
+
+    #[test]
+    fn update_all_submodules_recursively_enqueues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::UpdateAllSubmodulesRecursively));
+        let job_id = JobId::new("git:repo-1:update-all-submodules-recursively");
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Update all submodules recursively".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::UpdateAllSubmodulesRecursively,
+            })]
+        );
+    }
+
+    #[test]
+    fn deinit_all_submodules_enqueues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Submodules,
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DeinitAllSubmodules));
+        let job_id = JobId::new("git:repo-1:deinit-all-submodules");
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(crate::state::OperationProgress::Running {
+                job_id: job_id.clone(),
+                summary: "Deinitialize all submodules".to_string(),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::DeinitAllSubmodules,
+            })]
         );
     }
 

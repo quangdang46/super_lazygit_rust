@@ -1093,6 +1093,22 @@ impl GitBackend for CliGitBackend {
                 )?;
                 format!("Updated submodule {}", path.display())
             }
+            GitCommand::InitAllSubmodules => {
+                git(&repo_path, ["submodule", "init"])?;
+                "Initialized all submodules".to_string()
+            }
+            GitCommand::UpdateAllSubmodules => {
+                git(&repo_path, ["submodule", "update"])?;
+                "Updated all submodules".to_string()
+            }
+            GitCommand::UpdateAllSubmodulesRecursively => {
+                git(&repo_path, ["submodule", "update", "--init", "--recursive"])?;
+                "Updated all submodules recursively".to_string()
+            }
+            GitCommand::DeinitAllSubmodules => {
+                git(&repo_path, ["submodule", "deinit", "--all", "--force"])?;
+                "Deinitialized all submodules".to_string()
+            }
             GitCommand::RemoveSubmodule { path } => {
                 remove_submodule(&repo_path, path)?;
                 format!("Removed submodule {}", path.display())
@@ -1321,6 +1337,10 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::EditSubmoduleUrl { .. } => "edit_submodule_url",
         GitCommand::InitSubmodule { .. } => "init_submodule",
         GitCommand::UpdateSubmodule { .. } => "update_submodule",
+        GitCommand::InitAllSubmodules => "init_all_submodules",
+        GitCommand::UpdateAllSubmodules => "update_all_submodules",
+        GitCommand::UpdateAllSubmodulesRecursively => "update_all_submodules_recursively",
+        GitCommand::DeinitAllSubmodules => "deinit_all_submodules",
         GitCommand::RemoveSubmodule { .. } => "remove_submodule",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
         GitCommand::UnsetBranchUpstream { .. } => "unset_branch_upstream",
