@@ -1828,6 +1828,17 @@ impl TuiApp {
                                 "reword_selected_commit",
                                 raw,
                                 normalized,
+                                &["r"],
+                            )
+                        {
+                            return Some(Action::RewordSelectedCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "reword_selected_commit_with_editor",
+                                raw,
+                                normalized,
                                 &["R"],
                             )
                         {
@@ -4675,7 +4686,7 @@ fn repo_commit_lines(
         )),
         Line::from("Actions: Enter files  Space checkout  n branch  T tag  b bisect  i rebase"),
         Line::from("         A amend  f fixup menu  F fixup  g apply-fixups  s squash  d drop"),
-        Line::from("         Ctrl+K/Ctrl+J move  R reword  y copy menu  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"),
+        Line::from("         Ctrl+K/Ctrl+J move  r reword  R reword editor  y copy menu  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"),
         Line::from("History:"),
     ];
 
@@ -6794,7 +6805,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  r reword  R reword editor  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8705,6 +8716,53 @@ mod tests {
                 .as_ref()
                 .map(|menu| menu.operation),
             Some(super_lazygit_core::MenuOperation::CommitAmendAttributeOptions)
+        );
+    }
+
+    #[test]
+    fn route_repository_commit_history_r_opens_reword_prompt() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut app = TuiApp::new(state, AppConfig::default());
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "r".to_string(),
+        })));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.operation.clone()),
+            Some(super_lazygit_core::InputPromptOperation::RewordCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+                initial_message: "second".to_string(),
+            })
         );
     }
 
@@ -12786,13 +12844,16 @@ mod tests {
         assert!(rendered.contains("T tag"));
         assert!(rendered.contains("A amend"));
         assert!(rendered.contains("F fixup"));
-        assert!(rendered.contains("R reword"));
+        assert!(rendered.contains("r reword"));
+        assert!(rendered.contains("R reword editor"));
         assert!(
             repo_commit_context_line(CommitHistoryMode::Linear, None, "", false, 2, 2)
                 .contains("a amend attrs")
         );
         let help = repo_help_text(app.state());
         assert!(help.contains("a amend attrs"));
+        assert!(help.contains("r reword"));
+        assert!(help.contains("R reword editor"));
         assert!(help.contains("y copy menu"));
         assert!(help.contains("C copy"));
         assert!(help.contains("V paste copied"));

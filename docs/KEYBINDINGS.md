@@ -265,6 +265,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Ctrl+K` | Open move-selected-commit-up confirmation for the selected commit |
 | `Ctrl+J` | Open move-selected-commit-down confirmation for the selected commit |
 | `m` | Open the merge/rebase options menu for the selected commit or active rebase |
+| `r` | Open the prompt-based reword flow for the selected commit |
 | `R` | Reword the selected commit using the configured Git editor |
 | `t` | Open revert confirmation |
 | `S` | Open soft-reset confirmation |
