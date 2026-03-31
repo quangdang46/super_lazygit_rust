@@ -266,6 +266,18 @@ pub enum GitCommand {
         branch_name: String,
         upstream_ref: String,
     },
+    UnsetBranchUpstream {
+        branch_name: String,
+    },
+    FastForwardCurrentBranchFromUpstream {
+        upstream_ref: String,
+    },
+    MergeRefIntoCurrent {
+        target_ref: String,
+    },
+    RebaseCurrentOntoRef {
+        target_ref: String,
+    },
     FetchRemote {
         remote_name: String,
     },

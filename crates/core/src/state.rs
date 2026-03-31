@@ -208,6 +208,21 @@ pub enum ConfirmableOperation {
     DeleteBranch {
         branch_name: String,
     },
+    UnsetBranchUpstream {
+        branch_name: String,
+    },
+    FastForwardCurrentBranchFromUpstream {
+        branch_name: String,
+        upstream_ref: String,
+    },
+    MergeRefIntoCurrent {
+        target_ref: String,
+        source_label: String,
+    },
+    RebaseCurrentBranchOntoRef {
+        target_ref: String,
+        source_label: String,
+    },
     RemoveRemote {
         remote_name: String,
     },
@@ -327,6 +342,7 @@ pub enum MenuOperation {
     CommitAmendAttributeOptions,
     CommitFixupOptions,
     BisectOptions,
+    BranchUpstreamOptions,
     MergeRebaseOptions,
     IgnoreOptions,
     StatusResetOptions,

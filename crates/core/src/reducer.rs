@@ -2164,6 +2164,33 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::RunGitCommand(job));
             }
         }
+        Action::OpenBranchUpstreamOptions => {
+            let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode).map(|_| repo_mode.current_repo_id.clone())
+            }) else {
+                push_warning(state, "Select a branch before opening upstream options.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            open_menu(state, repo_id, MenuOperation::BranchUpstreamOptions);
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::CopySelectedBranchName => {
+            let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) else {
+                push_warning(state, "Select a branch before copying its name.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            let command = clipboard_shell_command(std::ffi::OsStr::new(&branch_name));
+            let job = shell_job(repo_id, command);
+            enqueue_shell_job(state, &job, &format!("Copy {branch_name}"));
+            effects.push(Effect::RunShellCommand(job));
+        }
         Action::DeleteSelectedBranch => {
             if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_branch_item(repo_mode)
@@ -2175,6 +2202,79 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     ConfirmableOperation::DeleteBranch { branch_name },
                 );
                 effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::UnsetSelectedBranchUpstream => match selected_branch_upstream_target(state) {
+            Ok(Some((repo_id, branch_name))) => {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::UnsetBranchUpstream { branch_name },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::FastForwardSelectedBranchFromUpstream => {
+            match selected_branch_fast_forward_target(state) {
+                Ok(Some((repo_id, branch_name, upstream_ref))) => {
+                    open_confirmation_modal(
+                        state,
+                        repo_id,
+                        ConfirmableOperation::FastForwardCurrentBranchFromUpstream {
+                            branch_name,
+                            upstream_ref,
+                        },
+                    );
+                    effects.push(Effect::ScheduleRender);
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::MergeSelectedBranchIntoCurrent => match selected_non_head_branch_ref(state) {
+            Ok(Some((repo_id, target_ref))) => {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::MergeRefIntoCurrent {
+                        source_label: target_ref.clone(),
+                        target_ref,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::RebaseCurrentBranchOntoSelectedBranch => {
+            match selected_non_head_branch_ref(state) {
+                Ok(Some((repo_id, target_ref))) => {
+                    open_confirmation_modal(
+                        state,
+                        repo_id,
+                        ConfirmableOperation::RebaseCurrentBranchOntoRef {
+                            source_label: target_ref.clone(),
+                            target_ref,
+                        },
+                    );
+                    effects.push(Effect::ScheduleRender);
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
             }
         }
         Action::DeleteSelectedRemote => {
@@ -2217,6 +2317,80 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             } else {
                 push_warning(state, "Select a remote branch before deleting it.");
                 effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::CopySelectedRemoteBranchName => {
+            let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_remote_branch_item(repo_mode)
+                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
+            }) else {
+                push_warning(state, "Select a remote branch before copying its name.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            let command = clipboard_shell_command(std::ffi::OsStr::new(&branch_name));
+            let job = shell_job(repo_id, command);
+            enqueue_shell_job(state, &job, &format!("Copy {branch_name}"));
+            effects.push(Effect::RunShellCommand(job));
+        }
+        Action::SetCurrentBranchUpstreamToSelectedRemoteBranch => {
+            match selected_remote_branch_upstream_target(state) {
+                Ok(Some((repo_id, branch_name, upstream_ref))) => {
+                    let summary = format!("Set upstream for {branch_name} to {upstream_ref}");
+                    let job = git_job(
+                        repo_id,
+                        GitCommand::SetBranchUpstream {
+                            branch_name,
+                            upstream_ref,
+                        },
+                    );
+                    enqueue_git_job(state, &job, &summary);
+                    effects.push(Effect::RunGitCommand(job));
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::MergeSelectedRemoteBranchIntoCurrent => match selected_remote_branch_ref(state) {
+            Ok(Some((repo_id, target_ref))) => {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::MergeRefIntoCurrent {
+                        source_label: target_ref.clone(),
+                        target_ref,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
+                effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::RebaseCurrentBranchOntoSelectedRemoteBranch => {
+            match selected_remote_branch_ref(state) {
+                Ok(Some((repo_id, target_ref))) => {
+                    open_confirmation_modal(
+                        state,
+                        repo_id,
+                        ConfirmableOperation::RebaseCurrentBranchOntoRef {
+                            source_label: target_ref.clone(),
+                            target_ref,
+                        },
+                    );
+                    effects.push(Effect::ScheduleRender);
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                    effects.push(Effect::ScheduleRender);
+                }
             }
         }
         Action::DeleteSelectedTag => {
@@ -3636,6 +3810,19 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::DeleteBranch { branch_name } => {
             format!("Delete branch {branch_name}")
         }
+        ConfirmableOperation::UnsetBranchUpstream { branch_name } => {
+            format!("Unset upstream for {branch_name}")
+        }
+        ConfirmableOperation::FastForwardCurrentBranchFromUpstream {
+            branch_name,
+            upstream_ref,
+        } => format!("Fast-forward {branch_name} from {upstream_ref}"),
+        ConfirmableOperation::MergeRefIntoCurrent { source_label, .. } => {
+            format!("Merge {source_label} into current branch")
+        }
+        ConfirmableOperation::RebaseCurrentBranchOntoRef { source_label, .. } => {
+            format!("Rebase current branch onto {source_label}")
+        }
         ConfirmableOperation::RemoveRemote { remote_name } => {
             format!("Remove remote {remote_name}")
         }
@@ -3783,6 +3970,30 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 branch_name: branch_name.clone(),
             },
             "Delete branch",
+        ),
+        ConfirmableOperation::UnsetBranchUpstream { branch_name } => (
+            GitCommand::UnsetBranchUpstream {
+                branch_name: branch_name.clone(),
+            },
+            "Unset branch upstream",
+        ),
+        ConfirmableOperation::FastForwardCurrentBranchFromUpstream { upstream_ref, .. } => (
+            GitCommand::FastForwardCurrentBranchFromUpstream {
+                upstream_ref: upstream_ref.clone(),
+            },
+            "Fast-forward current branch from upstream",
+        ),
+        ConfirmableOperation::MergeRefIntoCurrent { target_ref, .. } => (
+            GitCommand::MergeRefIntoCurrent {
+                target_ref: target_ref.clone(),
+            },
+            "Merge selected ref into current branch",
+        ),
+        ConfirmableOperation::RebaseCurrentBranchOntoRef { target_ref, .. } => (
+            GitCommand::RebaseCurrentOntoRef {
+                target_ref: target_ref.clone(),
+            },
+            "Rebase current branch onto selected ref",
         ),
         ConfirmableOperation::RemoveRemote { remote_name } => (
             GitCommand::RemoveRemote {
@@ -4322,6 +4533,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::CommitAmendAttributeOptions => "Amend commit attributes",
         MenuOperation::CommitFixupOptions => "Fixup options",
         MenuOperation::BisectOptions => "Bisect options",
+        MenuOperation::BranchUpstreamOptions => "Branch upstream options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
         MenuOperation::IgnoreOptions => "Ignore options",
         MenuOperation::StatusResetOptions => "Reset options",
@@ -4341,6 +4553,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::CommitAmendAttributeOptions => 2,
         MenuOperation::CommitFixupOptions => 3,
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
+        MenuOperation::BranchUpstreamOptions => branch_upstream_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
         MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
         MenuOperation::StatusResetOptions => status_reset_menu_entries(state).len(),
@@ -4348,6 +4561,34 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
         MenuOperation::CommandLog => state.status_messages.len(),
     }
+}
+
+fn branch_upstream_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(branch) = selected_branch_item(repo_mode) else {
+        return Vec::new();
+    };
+    let upstream_label = branch.upstream.as_deref().unwrap_or("none");
+    vec![
+        MenuEntry {
+            label: format!("Set upstream for {}...", branch.name),
+            action: Action::OpenInputPrompt {
+                operation: InputPromptOperation::SetBranchUpstream {
+                    branch_name: branch.name.clone(),
+                },
+            },
+        },
+        MenuEntry {
+            label: format!("Unset upstream ({upstream_label})"),
+            action: Action::UnsetSelectedBranchUpstream,
+        },
+        MenuEntry {
+            label: format!("Fast-forward current branch from upstream ({upstream_label})"),
+            action: Action::FastForwardSelectedBranchFromUpstream,
+        },
+    ]
 }
 
 fn step_menu_selection(state: &mut AppState, step: isize) -> bool {
@@ -4627,6 +4868,24 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
         }
         MenuOperation::CommitLogOptions => {
             let entries = commit_log_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::BranchUpstreamOptions => {
+            let entries = branch_upstream_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -6224,6 +6483,116 @@ fn selected_remote_branch_item(
     detail.remote_branches.get(selected_index)
 }
 
+fn current_branch_item(repo_mode: &RepoModeState) -> Option<&crate::state::BranchItem> {
+    repo_mode
+        .detail
+        .as_ref()?
+        .branches
+        .iter()
+        .find(|branch| branch.is_head)
+}
+
+fn selected_branch_upstream_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(branch) = selected_branch_item(repo_mode) else {
+        return Err("Select a branch before unsetting its upstream.".to_string());
+    };
+    if branch.upstream.is_none() {
+        return Err(format!("Branch {} does not have an upstream.", branch.name));
+    }
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        branch.name.clone(),
+    )))
+}
+
+fn selected_branch_fast_forward_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(branch) = selected_branch_item(repo_mode) else {
+        return Err("Select a branch before fast-forwarding it.".to_string());
+    };
+    if !branch.is_head {
+        return Err(format!(
+            "Checkout {} before fast-forwarding it from upstream.",
+            branch.name
+        ));
+    }
+    let Some(upstream_ref) = branch.upstream.clone() else {
+        return Err(format!("Branch {} does not have an upstream.", branch.name));
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        branch.name.clone(),
+        upstream_ref,
+    )))
+}
+
+fn selected_non_head_branch_ref(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(branch) = selected_branch_item(repo_mode) else {
+        return Err("Select a branch before using it as the target ref.".to_string());
+    };
+    if branch.is_head {
+        return Err("Select a non-current branch for that action.".to_string());
+    }
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        branch.name.clone(),
+    )))
+}
+
+fn selected_remote_branch_ref(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(branch) = selected_remote_branch_item(repo_mode) else {
+        return Err("Select a remote branch before using it as the target ref.".to_string());
+    };
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        branch.name.clone(),
+    )))
+}
+
+fn selected_remote_branch_upstream_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    let Some(current_branch) = current_branch_item(repo_mode) else {
+        return Err("Attach HEAD to a local branch before setting an upstream.".to_string());
+    };
+    let Some(remote_branch) = selected_remote_branch_item(repo_mode) else {
+        return Err("Select a remote branch before setting it as upstream.".to_string());
+    };
+    if current_branch.upstream.as_deref() == Some(remote_branch.name.as_str()) {
+        return Err(format!(
+            "Branch {} already tracks {}.",
+            current_branch.name, remote_branch.name
+        ));
+    }
+    Ok(Some((
+        repo_mode.current_repo_id.clone(),
+        current_branch.name.clone(),
+        remote_branch.name.clone(),
+    )))
+}
+
 fn selected_tag_item(repo_mode: &RepoModeState) -> Option<&crate::state::TagItem> {
     let detail = repo_mode.detail.as_ref()?;
     let visible_indices = filtered_tag_indices(repo_mode);
@@ -7536,6 +7905,12 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::RenameStash { .. } => "rename-stash",
         GitCommand::CreateBranchFromStash { .. } => "create-branch-from-stash",
         GitCommand::DeleteBranch { .. } => "delete-branch",
+        GitCommand::UnsetBranchUpstream { .. } => "unset-branch-upstream",
+        GitCommand::FastForwardCurrentBranchFromUpstream { .. } => {
+            "fast-forward-selected-branch-from-upstream"
+        }
+        GitCommand::MergeRefIntoCurrent { .. } => "merge-ref-into-current",
+        GitCommand::RebaseCurrentOntoRef { .. } => "rebase-current-onto-ref",
         GitCommand::DeleteRemoteBranch { .. } => "delete-remote-branch",
         GitCommand::DeleteTag { .. } => "delete-tag",
         GitCommand::PushTag { .. } => "push-tag",
@@ -8911,6 +9286,221 @@ mod tests {
     }
 
     #[test]
+    fn open_branch_upstream_options_opens_menu_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![crate::state::BranchItem {
+                        name: "main".to_string(),
+                        is_head: true,
+                        upstream: Some("origin/main".to_string()),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenBranchUpstreamOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(MenuOperation::BranchUpstreamOptions)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn copy_selected_branch_name_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![crate::state::BranchItem {
+                        name: "feature".to_string(),
+                        is_head: false,
+                        upstream: Some("origin/feature".to_string()),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CopySelectedBranchName));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunShellCommand(ShellCommandRequest {
+                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+                repo_id,
+                command: super::clipboard_shell_command(std::ffi::OsStr::new("feature")),
+            })]
+        );
+    }
+
+    #[test]
+    fn unset_selected_branch_upstream_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![crate::state::BranchItem {
+                        name: "feature".to_string(),
+                        is_head: false,
+                        upstream: Some("origin/feature".to_string()),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::UnsetSelectedBranchUpstream));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::UnsetBranchUpstream {
+                    branch_name: "feature".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn fast_forward_selected_branch_from_upstream_opens_confirmation_for_head_branch() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: Some("origin/feature".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::FastForwardSelectedBranchFromUpstream),
+        );
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::FastForwardCurrentBranchFromUpstream {
+                    branch_name: "main".to_string(),
+                    upstream_ref: "origin/main".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn merge_selected_branch_into_current_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: Some("origin/feature".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::MergeSelectedBranchIntoCurrent));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::MergeRefIntoCurrent {
+                    target_ref: "feature".to_string(),
+                    source_label: "feature".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
     fn switch_repo_subview_commits_resets_explicit_history_to_current_branch() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -9276,6 +9866,115 @@ mod tests {
                 Effect::ScheduleRender,
             ]
         );
+    }
+
+    #[test]
+    fn set_current_branch_upstream_to_selected_remote_branch_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(RepoDetail {
+                    branches: vec![crate::state::BranchItem {
+                        name: "main".to_string(),
+                        is_head: true,
+                        upstream: Some("origin/main".to_string()),
+                    }],
+                    remote_branches: vec![
+                        crate::state::RemoteBranchItem {
+                            name: "origin/main".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "main".to_string(),
+                        },
+                        crate::state::RemoteBranchItem {
+                            name: "origin/feature".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "feature".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                remote_branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SetCurrentBranchUpstreamToSelectedRemoteBranch),
+        );
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: JobId::new("git:repo-1:set-branch-upstream"),
+                repo_id,
+                command: GitCommand::SetBranchUpstream {
+                    branch_name: "main".to_string(),
+                    upstream_ref: "origin/feature".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn rebase_current_branch_onto_selected_remote_branch_opens_confirmation_modal() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(RepoDetail {
+                    remote_branches: vec![
+                        crate::state::RemoteBranchItem {
+                            name: "origin/main".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "main".to_string(),
+                        },
+                        crate::state::RemoteBranchItem {
+                            name: "origin/feature".to_string(),
+                            remote_name: "origin".to_string(),
+                            branch_name: "feature".to_string(),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                remote_branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::RebaseCurrentBranchOntoSelectedRemoteBranch),
+        );
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| (pending.repo_id.clone(), pending.operation.clone())),
+            Some((
+                repo_id,
+                ConfirmableOperation::RebaseCurrentBranchOntoRef {
+                    target_ref: "origin/feature".to_string(),
+                    source_label: "origin/feature".to_string(),
+                }
+            ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]

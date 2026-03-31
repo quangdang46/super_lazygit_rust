@@ -1104,6 +1104,25 @@ impl GitBackend for CliGitBackend {
                 )?;
                 format!("Set upstream for {branch_name} to {upstream_ref}")
             }
+            GitCommand::UnsetBranchUpstream { branch_name } => {
+                git(
+                    &repo_path,
+                    ["branch", "--unset-upstream", branch_name.as_str()],
+                )?;
+                format!("Unset upstream for {branch_name}")
+            }
+            GitCommand::FastForwardCurrentBranchFromUpstream { upstream_ref } => {
+                git(&repo_path, ["merge", "--ff-only", upstream_ref.as_str()])?;
+                format!("Fast-forwarded current branch from {upstream_ref}")
+            }
+            GitCommand::MergeRefIntoCurrent { target_ref } => {
+                git(&repo_path, ["merge", target_ref.as_str()])?;
+                format!("Merged {target_ref} into current branch")
+            }
+            GitCommand::RebaseCurrentOntoRef { target_ref } => {
+                git(&repo_path, ["rebase", target_ref.as_str()])?;
+                format!("Rebased current branch onto {target_ref}")
+            }
             GitCommand::FetchRemote { remote_name } => {
                 git(&repo_path, ["fetch", remote_name.as_str()])?;
                 format!("Fetched {remote_name}")
@@ -1299,6 +1318,12 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::UpdateSubmodule { .. } => "update_submodule",
         GitCommand::RemoveSubmodule { .. } => "remove_submodule",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
+        GitCommand::UnsetBranchUpstream { .. } => "unset_branch_upstream",
+        GitCommand::FastForwardCurrentBranchFromUpstream { .. } => {
+            "fast_forward_current_branch_from_upstream"
+        }
+        GitCommand::MergeRefIntoCurrent { .. } => "merge_ref_into_current",
+        GitCommand::RebaseCurrentOntoRef { .. } => "rebase_current_onto_ref",
         GitCommand::FetchRemote { .. } => "fetch_remote",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
@@ -6035,6 +6060,24 @@ mod tests {
             .any(|branch| branch.name == "feature"
                 && branch.upstream.as_deref() == Some("origin/main")));
 
+        let unset = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-unset-upstream"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::UnsetBranchUpstream {
+                    branch_name: "feature".to_string(),
+                },
+            })
+            .expect("unset upstream should succeed");
+        assert_eq!(unset.summary, "Unset upstream for feature");
+        repo.git_expect_failure([
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "feature@{upstream}",
+        ])
+        .expect("feature upstream should be cleared");
+
         let renamed = backend
             .run_command(GitCommandRequest {
                 job_id: super_lazygit_core::JobId::new("job-rename-branch"),
@@ -6074,6 +6117,62 @@ mod tests {
         )
         .expect("branch output");
         assert!(!branch_list.contains("topic"));
+    }
+
+    #[test]
+    fn cli_backend_fast_forwards_current_branch_from_upstream() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("shared.txt", "base\n")
+            .expect("write tracked file");
+        seed.commit_all("initial").expect("seed initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("attach remote");
+        seed.push("origin", "HEAD:main").expect("push main");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        let upstream = TempRepo::clone_from(remote.path()).expect("upstream fixture");
+        upstream
+            .append_file("shared.txt", "remote\n")
+            .expect("append remote change");
+        upstream
+            .commit_all("remote change")
+            .expect("commit remote change");
+        upstream
+            .push("origin", "HEAD:main")
+            .expect("push updated main");
+        repo.fetch("origin").expect("fetch origin");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-fast-forward-upstream"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::FastForwardCurrentBranchFromUpstream {
+                    upstream_ref: "origin/main".to_string(),
+                },
+            })
+            .expect("fast-forward should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(
+            outcome.summary,
+            "Fast-forwarded current branch from origin/main"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "-s", "--format=%s", "HEAD"])
+                    .expect("head subject")
+            )
+            .expect("head subject text"),
+            "remote change"
+        );
+        assert_eq!(
+            repo.rev_parse("HEAD").expect("head"),
+            upstream.rev_parse("HEAD").expect("upstream head")
+        );
     }
 
     #[test]
@@ -6216,6 +6315,97 @@ mod tests {
         remote
             .git_expect_failure(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
             .expect("remote branch should be deleted");
+    }
+
+    #[test]
+    fn cli_backend_merges_selected_ref_into_current_branch() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+
+        repo.checkout_new_branch("feature")
+            .expect("create feature branch");
+        repo.write_file("feature.txt", "feature\n")
+            .expect("write feature file");
+        repo.commit_all("feature change").expect("feature commit");
+
+        repo.checkout("main").expect("checkout main");
+        repo.write_file("main.txt", "main\n")
+            .expect("write main file");
+        repo.commit_all("main change").expect("main commit");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-merge-ref"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::MergeRefIntoCurrent {
+                    target_ref: "feature".to_string(),
+                },
+            })
+            .expect("merge should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Merged feature into current branch");
+        assert!(repo.path().join("feature.txt").exists());
+        assert_eq!(repo.current_branch().expect("current branch"), "main");
+    }
+
+    #[test]
+    fn cli_backend_rebases_current_branch_onto_selected_ref() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+
+        repo.checkout_new_branch("feature")
+            .expect("create feature branch");
+        repo.write_file("feature.txt", "feature\n")
+            .expect("write feature file");
+        repo.commit_all("feature change").expect("feature commit");
+
+        repo.checkout("main").expect("checkout main");
+        repo.write_file("main.txt", "main\n")
+            .expect("write main file");
+        repo.commit_all("main change").expect("main commit");
+
+        repo.checkout("feature").expect("checkout feature");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-rebase-ref"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::RebaseCurrentOntoRef {
+                    target_ref: "main".to_string(),
+                },
+            })
+            .expect("rebase should succeed");
+
+        assert_eq!(outcome.repo_id, repo_id);
+        assert_eq!(outcome.summary, "Rebased current branch onto main");
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "-s", "--format=%s", "HEAD"])
+                    .expect("head subject")
+            )
+            .expect("head subject text"),
+            "feature change"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "-s", "--format=%s", "HEAD~1"])
+                    .expect("previous subject")
+            )
+            .expect("previous subject text"),
+            "main change"
+        );
+        assert_eq!(repo.current_branch().expect("current branch"), "feature");
     }
 
     #[test]

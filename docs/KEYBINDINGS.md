@@ -168,7 +168,10 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `n` | Open create-branch prompt |
 | `R` | Open rename-branch prompt |
 | `d` | Open delete-branch confirmation |
-| `u` | Open set-upstream prompt |
+| `u` | Open the branch-upstream options menu for set/unset/fast-forward flows |
+| `y` | Copy the selected branch name to the clipboard |
+| `r` | Open rebase-current-onto-selected-branch confirmation |
+| `M` | Open merge-selected-branch-into-current confirmation |
 | `v` | Toggle comparison selection |
 | `x` | Clear comparison when one is active |
 | `Ctrl+S` | Open the filter-options menu for the branch list |
@@ -208,6 +211,10 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Space` | Check out the selected remote branch as a local tracking branch |
 | `n` | Open create-local-branch-from-remote prompt |
 | `d` | Open delete-remote-branch confirmation |
+| `y` | Copy the selected remote branch name to the clipboard |
+| `u` | Set the current branch upstream to the selected remote branch |
+| `r` | Open rebase-current-onto-selected-remote-branch confirmation |
+| `M` | Open merge-selected-remote-branch-into-current confirmation |
 | `w` | Switch to the worktrees subview |
 
 ### Tags detail subview

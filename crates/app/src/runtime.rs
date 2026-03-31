@@ -730,6 +730,12 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::UpdateSubmodule { .. } => "update_submodule",
         GitCommand::RemoveSubmodule { .. } => "remove_submodule",
         GitCommand::SetBranchUpstream { .. } => "set_branch_upstream",
+        GitCommand::UnsetBranchUpstream { .. } => "unset_branch_upstream",
+        GitCommand::FastForwardCurrentBranchFromUpstream { .. } => {
+            "fast_forward_current_branch_from_upstream"
+        }
+        GitCommand::MergeRefIntoCurrent { .. } => "merge_ref_into_current",
+        GitCommand::RebaseCurrentOntoRef { .. } => "rebase_current_onto_ref",
         GitCommand::FetchRemote { .. } => "fetch_remote",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",

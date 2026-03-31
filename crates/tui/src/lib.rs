@@ -1009,21 +1009,39 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
-                            "open_set_branch_upstream_prompt",
+                            "open_branch_upstream_options",
                             raw,
                             normalized,
                             &["u"],
                         ) {
-                            if let Some(branch) = selected_branch(
-                                repo_mode.detail.as_ref(),
-                                repo_mode.branches_view.selected_index,
-                            ) {
-                                return Some(Action::OpenInputPrompt {
-                                    operation: super_lazygit_core::InputPromptOperation::SetBranchUpstream {
-                                        branch_name: branch.name.clone(),
-                                    },
-                                });
-                            }
+                            return Some(Action::OpenBranchUpstreamOptions);
+                        }
+
+                        if self.binding_matches_action(
+                            "copy_selected_branch_name",
+                            raw,
+                            normalized,
+                            &["y"],
+                        ) {
+                            return Some(Action::CopySelectedBranchName);
+                        }
+
+                        if self.binding_matches_action(
+                            "rebase_current_branch_onto_selected_branch",
+                            raw,
+                            normalized,
+                            &["r"],
+                        ) {
+                            return Some(Action::RebaseCurrentBranchOntoSelectedBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "merge_selected_branch_into_current",
+                            raw,
+                            normalized,
+                            &["M"],
+                        ) {
+                            return Some(Action::MergeSelectedBranchIntoCurrent);
                         }
                     }
                     RepoSubview::Remotes => {
@@ -1167,6 +1185,42 @@ impl TuiApp {
                             &["d"],
                         ) {
                             return Some(Action::DeleteSelectedRemoteBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "copy_selected_remote_branch_name",
+                            raw,
+                            normalized,
+                            &["y"],
+                        ) {
+                            return Some(Action::CopySelectedRemoteBranchName);
+                        }
+
+                        if self.binding_matches_action(
+                            "set_current_branch_upstream_to_selected_remote_branch",
+                            raw,
+                            normalized,
+                            &["u"],
+                        ) {
+                            return Some(Action::SetCurrentBranchUpstreamToSelectedRemoteBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "rebase_current_branch_onto_selected_remote_branch",
+                            raw,
+                            normalized,
+                            &["r"],
+                        ) {
+                            return Some(Action::RebaseCurrentBranchOntoSelectedRemoteBranch);
+                        }
+
+                        if self.binding_matches_action(
+                            "merge_selected_remote_branch_into_current",
+                            raw,
+                            normalized,
+                            &["M"],
+                        ) {
+                            return Some(Action::MergeSelectedRemoteBranchIntoCurrent);
                         }
                     }
                     RepoSubview::Tags => {
@@ -3707,7 +3761,8 @@ fn repo_branch_lines(
         )),
         Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
         Line::from("Other: - previous. c checkout by name. n create. R rename."),
-        Line::from("       d delete. u upstream. v compare."),
+        Line::from("       d delete. u upstream menu. y copy. r rebase current."),
+        Line::from("       M merge into current. v compare."),
         Line::from(""),
     ]);
 
@@ -3790,7 +3845,8 @@ fn repo_remote_branch_lines(
     }
     lines.extend([
         Line::from("Context: Enter commits. Space checkout. 0 main. / filter. w worktrees."),
-        Line::from("Other: n create local branch. d delete remote branch."),
+        Line::from("Other: n create local branch. d delete remote branch. y copy."),
+        Line::from("       u set upstream. r rebase current. M merge into current."),
         Line::from(""),
     ]);
 
@@ -5622,6 +5678,29 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Delete local branch {branch_name}? Git will refuse if it is not safely merged."
             )
         }
+        super_lazygit_core::ConfirmableOperation::UnsetBranchUpstream { branch_name } => {
+            format!(
+                "Unset upstream for {branch_name}? Future pulls and pushes will stop using its configured tracking branch."
+            )
+        }
+        super_lazygit_core::ConfirmableOperation::FastForwardCurrentBranchFromUpstream {
+            branch_name,
+            upstream_ref,
+        } => format!(
+            "Fast-forward {branch_name} from {upstream_ref}? This runs git merge --ff-only {upstream_ref} on the current branch."
+        ),
+        super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
+            source_label,
+            target_ref,
+        } => format!(
+            "Merge {source_label} into the current branch? This runs git merge {target_ref}."
+        ),
+        super_lazygit_core::ConfirmableOperation::RebaseCurrentBranchOntoRef {
+            source_label,
+            target_ref,
+        } => format!(
+            "Rebase the current branch onto {source_label}? This runs git rebase {target_ref} and rewrites local history."
+        ),
         super_lazygit_core::ConfirmableOperation::RemoveRemote { remote_name } => {
             format!("Remove remote {remote_name}? This deletes the configured remote entry.")
         }
@@ -5839,6 +5918,9 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         super_lazygit_core::MenuOperation::BisectOptions => {
             "Open the shipped bisect flows for the selected commit or the active bisect candidate."
         }
+        super_lazygit_core::MenuOperation::BranchUpstreamOptions => {
+            "Choose whether to set, unset, or fast-forward the selected branch's upstream relationship."
+        }
         super_lazygit_core::MenuOperation::MergeRebaseOptions => {
             "Open the shipped merge/rebase flows that make sense in the current repository context."
         }
@@ -5892,6 +5974,11 @@ fn menu_lines(
             "Create amend! commit without file changes".to_string(),
         ],
         super_lazygit_core::MenuOperation::BisectOptions => bisect_menu_lines(state),
+        super_lazygit_core::MenuOperation::BranchUpstreamOptions => vec![
+            "Set upstream...".to_string(),
+            "Unset upstream".to_string(),
+            "Fast-forward current branch from upstream".to_string(),
+        ],
         super_lazygit_core::MenuOperation::MergeRebaseOptions => merge_rebase_menu_lines(state),
         super_lazygit_core::MenuOperation::IgnoreOptions => vec![
             "Add selected path to .gitignore".to_string(),
@@ -6696,10 +6783,13 @@ fn default_status_text(state: &AppState) -> String {
                     if repo_mode.active_subview == RepoSubview::Status {
                         status_detail_focus_help(repo_mode)
                     } else if repo_mode.active_subview == RepoSubview::Branches {
-                        "Branches detail focus; Enter/Space checks out, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, v compares refs, x clears compare, c creates, R renames, d deletes, and u sets upstream."
+                        "Branches detail focus; Enter opens commits, Space checks out, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, v compares refs, x clears compare, c creates, R renames, d deletes, u opens upstream options, y copies, r rebases current onto the selected branch, and M merges the selected branch into the current branch."
                             .to_string()
                     } else if repo_mode.active_subview == RepoSubview::Remotes {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
+                            .to_string()
+                    } else if repo_mode.active_subview == RepoSubview::RemoteBranches {
+                        "Remote branches detail focus; Enter opens commits, Space checks out, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, n creates a local branch, d deletes the selected remote branch, y copies, u sets the current branch upstream, r rebases the current branch onto the selected remote branch, and M merges the selected remote branch into the current branch."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
                         "Commits detail focus; 3 returns to current-branch history, Ctrl+L opens log options, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens bisect options, n branches off the selected commit, T tags it, i starts a rebase, m opens merge/rebase options, A amends with staged changes, a opens amend attribute options, f opens fixup options, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, y opens copy options, C cherry-picks, V pastes the copied commit, t reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
@@ -6813,11 +6903,11 @@ fn repo_help_text(state: &AppState) -> String {
                 if repo_mode.active_subview == RepoSubview::Status {
                     "Status diff pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Enter apply hunk  Ctrl+P patch menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  D discard file  X nuke working tree  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Branches {
-                    "Branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  v compare  x clear compare  c create  R rename  d delete  u upstream menu  y copy  r rebase current  M merge into current  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Remotes {
                     "Remotes pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter branches  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  f fetch remote  0 main pane  / filter  w worktrees  b submodules  n add  e edit  d remove  h left pane  1-9/t/m/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::RemoteBranches {
-                    "Remote branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  n local branch  d delete  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Remote branches pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+S filter menu  Ctrl+R recent repos  : shell  @ command log  0 main pane  / filter  w worktrees  b submodules  n local branch  d delete  y copy  u set upstream  r rebase current  M merge into current  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
@@ -10756,6 +10846,70 @@ mod tests {
             }) if branch_ref == "feature"
         )));
 
+        let mut upstream_menu_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let upstream_menu =
+            upstream_menu_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+                key: "u".to_string(),
+            })));
+        assert_eq!(upstream_menu.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            upstream_menu
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::BranchUpstreamOptions)
+        );
+
+        let mut copy_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "y".to_string(),
+        })));
+        assert!(copied.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            ) if command.contains("feature")
+        )));
+
+        let mut rebase_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let rebase = rebase_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "r".to_string(),
+        })));
+        assert_eq!(rebase.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            rebase
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::RebaseCurrentBranchOntoRef {
+                    target_ref: "feature".to_string(),
+                    source_label: "feature".to_string(),
+                }
+            )
+        );
+
+        let mut merge_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let merge = merge_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "M".to_string(),
+        })));
+        assert_eq!(merge.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            merge
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
+                    target_ref: "feature".to_string(),
+                    source_label: "feature".to_string(),
+                }
+            )
+        );
+
         let rename = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "R".to_string(),
         })));
@@ -10883,7 +11037,7 @@ mod tests {
             })
         );
 
-        let mut delete_app = TuiApp::new(down.state, AppConfig::default());
+        let mut delete_app = TuiApp::new(down.state.clone(), AppConfig::default());
         let delete = delete_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "d".to_string(),
         })));
@@ -11026,7 +11180,7 @@ mod tests {
             ))
         );
 
-        let mut delete_app = TuiApp::new(down.state, AppConfig::default());
+        let mut delete_app = TuiApp::new(down.state.clone(), AppConfig::default());
         let delete = delete_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "d".to_string(),
         })));
@@ -11041,6 +11195,70 @@ mod tests {
                 super_lazygit_core::ConfirmableOperation::DeleteRemoteBranch {
                     remote_name: "origin".to_string(),
                     branch_name: "feature".to_string(),
+                }
+            )
+        );
+
+        let mut copy_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "y".to_string(),
+        })));
+        assert!(copied.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunShellCommand(
+                super_lazygit_core::ShellCommandRequest { command, .. }
+            ) if command.contains("origin/feature")
+        )));
+
+        let mut upstream_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let upstream = upstream_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "u".to_string(),
+        })));
+        assert!(upstream.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunGitCommand(super_lazygit_core::GitCommandRequest {
+                command: super_lazygit_core::GitCommand::SetBranchUpstream {
+                    branch_name,
+                    upstream_ref,
+                },
+                ..
+            }) if branch_name == "main" && upstream_ref == "origin/feature"
+        )));
+
+        let mut rebase_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let rebase = rebase_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "r".to_string(),
+        })));
+        assert_eq!(rebase.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            rebase
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::RebaseCurrentBranchOntoRef {
+                    target_ref: "origin/feature".to_string(),
+                    source_label: "origin/feature".to_string(),
+                }
+            )
+        );
+
+        let mut merge_app = TuiApp::new(down.state.clone(), AppConfig::default());
+        let merge = merge_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "M".to_string(),
+        })));
+        assert_eq!(merge.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            merge
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(
+                super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
+                    target_ref: "origin/feature".to_string(),
+                    source_label: "origin/feature".to_string(),
                 }
             )
         );
@@ -13302,6 +13520,11 @@ mod tests {
         assert!(rendered.contains("u upstream"));
         assert!(rendered.contains("* main"));
         assert!(rendered.contains("feature"));
+        let help = repo_help_text(app.state());
+        assert!(help.contains("u upstream menu"));
+        assert!(help.contains("y copy"));
+        assert!(help.contains("r rebase current"));
+        assert!(help.contains("M merge into current"));
     }
 
     #[test]
@@ -13459,6 +13682,15 @@ mod tests {
         assert!(rendered.contains("Context: Enter commits. Space checkout."));
         assert!(rendered.contains("n create local branch"));
         assert!(rendered.contains("d delete remote branch"));
+        let mut help_state = app.state().clone();
+        if let Some(repo_mode) = help_state.repo_mode.as_mut() {
+            repo_mode.remote_branches_filter.focused = false;
+        }
+        let help = repo_help_text(&help_state);
+        assert!(help.contains("y copy"));
+        assert!(help.contains("u set upstream"));
+        assert!(help.contains("r rebase current"));
+        assert!(help.contains("M merge into current"));
     }
 
     #[test]
@@ -13718,6 +13950,40 @@ mod tests {
         assert!(fetch.contains("Fetch updates from remote upstream?"));
         assert!(remove.contains("Remove remote upstream?"));
         assert!(remove.contains("configured remote entry"));
+    }
+
+    #[test]
+    fn branch_ref_confirmation_copy_mentions_upstream_merge_and_rebase_commands() {
+        let unset = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::UnsetBranchUpstream {
+                branch_name: "feature".to_string(),
+            },
+        );
+        let fast_forward = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::FastForwardCurrentBranchFromUpstream {
+                branch_name: "main".to_string(),
+                upstream_ref: "origin/main".to_string(),
+            },
+        );
+        let merge = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
+                target_ref: "feature".to_string(),
+                source_label: "feature".to_string(),
+            },
+        );
+        let rebase = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::RebaseCurrentBranchOntoRef {
+                target_ref: "origin/feature".to_string(),
+                source_label: "origin/feature".to_string(),
+            },
+        );
+
+        assert!(unset.contains("Unset upstream for feature?"));
+        assert!(unset.contains("tracking branch"));
+        assert!(fast_forward.contains("git merge --ff-only origin/main"));
+        assert!(merge.contains("git merge feature"));
+        assert!(rebase.contains("git rebase origin/feature"));
+        assert!(rebase.contains("rewrites local history"));
     }
 
     #[test]
