@@ -308,6 +308,7 @@ pub enum MenuOperation {
     StashOptions,
     FilterOptions,
     DiffOptions,
+    CommitLogOptions,
     BisectOptions,
     MergeRebaseOptions,
     IgnoreOptions,

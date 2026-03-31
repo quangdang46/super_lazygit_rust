@@ -115,6 +115,7 @@ pub enum Action {
     OpenStashOptions,
     OpenFilterOptions,
     OpenDiffOptions,
+    OpenCommitLogOptions,
     ToggleWhitespaceInDiff,
     IncreaseDiffContext,
     DecreaseDiffContext,

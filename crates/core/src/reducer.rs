@@ -1373,6 +1373,23 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::OpenCommitLogOptions => {
+            if let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            {
+                if commit_log_menu_entries(state).is_empty() {
+                    push_warning(
+                        state,
+                        "Commit log options are only available from commit history.",
+                    );
+                } else {
+                    open_menu(state, repo_id, MenuOperation::CommitLogOptions);
+                }
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::ToggleWhitespaceInDiff => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.ignore_whitespace_in_diff = !repo_mode.ignore_whitespace_in_diff;
@@ -4069,6 +4086,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::StashOptions => "Stash options",
         MenuOperation::FilterOptions => "Filter options",
         MenuOperation::DiffOptions => "Diffing options",
+        MenuOperation::CommitLogOptions => "Commit log options",
         MenuOperation::BisectOptions => "Bisect options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
         MenuOperation::IgnoreOptions => "Ignore options",
@@ -4084,6 +4102,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::StashOptions => 5,
         MenuOperation::FilterOptions => filter_menu_entries(state).len(),
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
+        MenuOperation::CommitLogOptions => commit_log_menu_entries(state).len(),
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
         MenuOperation::IgnoreOptions => ignore_menu_entries(state).len(),
@@ -4182,6 +4201,24 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
         }
         MenuOperation::DiffOptions => {
             let entries = diff_menu_entries(state);
+            let Some(action) = entries
+                .get(selected_index)
+                .map(|entry| entry.action.clone())
+            else {
+                return false;
+            };
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            reduce_action(state, action, effects);
+            true
+        }
+        MenuOperation::CommitLogOptions => {
+            let entries = commit_log_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
                 .map(|entry| entry.action.clone())
@@ -4459,6 +4496,33 @@ fn diff_menu_entries(state: &AppState) -> Vec<MenuEntry> {
     });
 
     entries
+}
+
+fn commit_log_menu_entries(state: &AppState) -> Vec<MenuEntry> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+
+    if repo_mode.active_subview != crate::state::RepoSubview::Commits
+        || repo_mode.commit_subview_mode != crate::state::CommitSubviewMode::History
+    {
+        return Vec::new();
+    }
+
+    vec![
+        MenuEntry {
+            label: "Show current branch history".to_string(),
+            action: Action::SwitchRepoSubview(crate::state::RepoSubview::Commits),
+        },
+        MenuEntry {
+            label: "Show whole git graph (newest first)".to_string(),
+            action: Action::OpenAllBranchGraph { reverse: false },
+        },
+        MenuEntry {
+            label: "Show whole git graph (oldest first)".to_string(),
+            action: Action::OpenAllBranchGraph { reverse: true },
+        },
+    ]
 }
 
 fn comparison_target_menu_label(target: &ComparisonTarget) -> String {
@@ -10914,6 +10978,105 @@ mod tests {
                 .map(|menu| menu.operation),
             Some(MenuOperation::FilterOptions)
         );
+    }
+
+    #[test]
+    fn open_commit_log_options_opens_menu_from_commit_history() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::History,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenCommitLogOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                repo_id,
+                MenuOperation::CommitLogOptions,
+                0,
+                PaneId::RepoDetail
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_commit_log_options_selection_dispatches_current_branch_history_action() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Commit log options",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitLogOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::History,
+                commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                commit_history_ref: Some("feature".to_string()),
+                pending_commit_selection_oid: Some("deadbeef".to_string()),
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert!(result.state.pending_menu.is_none());
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_history_mode),
+            Some(CommitHistoryMode::Linear)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commit_history_ref.as_deref()),
+            None
+        );
+        assert!(result.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                Effect::LoadRepoDetail {
+                    repo_id: effect_repo_id,
+                    selected_path: None,
+                    diff_presentation: DiffPresentation::Unstaged,
+                    commit_ref: None,
+                    commit_history_mode: CommitHistoryMode::Linear,
+                    ..
+                } if effect_repo_id == &repo_id
+            )
+        }));
     }
 
     #[test]

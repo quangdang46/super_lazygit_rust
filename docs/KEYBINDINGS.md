@@ -270,6 +270,7 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Ctrl+W` | Toggle whitespace visibility in the current diff |
 | `}` / `{` | Increase or decrease diff context lines |
 | `)` / `(` | Increase or decrease rename similarity threshold |
+| `Ctrl+L` | Open the commit log options menu for current-branch and whole-graph history views |
 | `Ctrl+S` | Open the filter-options menu for the commit history or commit-files list |
 | `W` or `Ctrl+E` | Open the diffing-options menu for commit comparison flows and diff settings |
 | `/` | Focus the commit-history filter |
