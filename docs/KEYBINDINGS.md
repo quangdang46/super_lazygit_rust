@@ -254,6 +254,8 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `g` | Open apply-fixups confirmation for the selected commit |
 | `s` | Open squash-selected-commit confirmation |
 | `d` | Open drop-selected-commit confirmation |
+| `Ctrl+K` | Open move-selected-commit-up confirmation for the selected commit |
+| `Ctrl+J` | Open move-selected-commit-down confirmation for the selected commit |
 | `m` | Open the merge/rebase options menu for the selected commit or active rebase |
 | `R` | Reword the selected commit using the configured Git editor |
 | `C` | Open cherry-pick confirmation |

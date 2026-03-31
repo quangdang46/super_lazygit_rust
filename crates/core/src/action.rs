@@ -65,6 +65,8 @@ pub enum Action {
     ApplyFixupCommits,
     SquashSelectedCommit,
     DropSelectedCommit,
+    MoveSelectedCommitUp,
+    MoveSelectedCommitDown,
     RewordSelectedCommit,
     RewordSelectedCommitWithEditor,
     CherryPickSelectedCommit,

@@ -749,6 +749,51 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::MoveSelectedCommitUp => {
+            match pending_history_commit_operation(state, |detail, commit, selected_index| {
+                if selected_index == 0 {
+                    return Err(
+                        "Select a commit below another commit before moving it up.".to_string()
+                    );
+                }
+                let adjacent = detail.commits.get(selected_index - 1).ok_or_else(|| {
+                    "Select a commit below another commit before moving it up.".to_string()
+                })?;
+                Ok(ConfirmableOperation::MoveCommitUp {
+                    commit: commit.oid.clone(),
+                    adjacent_commit: adjacent.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                    adjacent_summary: format!("{} {}", adjacent.short_oid, adjacent.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before moving it up."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
+        Action::MoveSelectedCommitDown => {
+            match pending_history_commit_operation(state, |detail, commit, selected_index| {
+                let adjacent = detail.commits.get(selected_index + 1).ok_or_else(|| {
+                    "Select a commit above another commit before moving it down.".to_string()
+                })?;
+                Ok(ConfirmableOperation::MoveCommitDown {
+                    commit: commit.oid.clone(),
+                    adjacent_commit: adjacent.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                    adjacent_summary: format!("{} {}", adjacent.short_oid, adjacent.summary),
+                })
+            }) {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
+                }
+                Ok(None) => push_warning(state, "Select a commit before moving it down."),
+                Err(message) => push_warning(state, message),
+            }
+            effects.push(Effect::ScheduleRender);
+        }
         Action::RewordSelectedCommit => {
             match pending_history_commit_operation(state, |_, commit, selected_index| {
                 if selected_index == 0 {
@@ -3243,6 +3288,20 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::DropCommit { summary, .. } => {
             format!("Drop {summary}")
         }
+        ConfirmableOperation::MoveCommitUp {
+            summary,
+            adjacent_summary,
+            ..
+        } => {
+            format!("Move {summary} above {adjacent_summary}")
+        }
+        ConfirmableOperation::MoveCommitDown {
+            summary,
+            adjacent_summary,
+            ..
+        } => {
+            format!("Move {summary} below {adjacent_summary}")
+        }
         ConfirmableOperation::CherryPickCommit { summary, .. } => {
             format!("Cherry-pick {summary}")
         }
@@ -3343,6 +3402,28 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 mode: RebaseStartMode::Drop,
             },
             "Drop selected commit",
+        ),
+        ConfirmableOperation::MoveCommitUp {
+            commit,
+            adjacent_commit,
+            ..
+        } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::MoveUp { adjacent_commit },
+            },
+            "Move selected commit up",
+        ),
+        ConfirmableOperation::MoveCommitDown {
+            commit,
+            adjacent_commit,
+            ..
+        } => (
+            GitCommand::StartCommitRebase {
+                commit,
+                mode: RebaseStartMode::MoveDown { adjacent_commit },
+            },
+            "Move selected commit down",
         ),
         ConfirmableOperation::CherryPickCommit { commit, .. } => (
             GitCommand::CherryPickCommit { commit },
@@ -4272,6 +4353,14 @@ fn merge_rebase_menu_entries(state: &AppState) -> Vec<MenuEntry> {
                 MenuEntry {
                     label: "Drop selected commit".to_string(),
                     action: Action::DropSelectedCommit,
+                },
+                MenuEntry {
+                    label: "Move selected commit up".to_string(),
+                    action: Action::MoveSelectedCommitUp,
+                },
+                MenuEntry {
+                    label: "Move selected commit down".to_string(),
+                    action: Action::MoveSelectedCommitDown,
                 },
                 MenuEntry {
                     label: "Reword selected commit".to_string(),
@@ -6459,6 +6548,8 @@ fn job_suffix(command: &GitCommand) -> &'static str {
             RebaseStartMode::ApplyFixups => "apply-fixups-rebase",
             RebaseStartMode::Squash => "start-squash-rebase",
             RebaseStartMode::Drop => "start-drop-rebase",
+            RebaseStartMode::MoveUp { .. } => "move-commit-up-rebase",
+            RebaseStartMode::MoveDown { .. } => "move-commit-down-rebase",
             RebaseStartMode::Reword { .. } => "start-reword-rebase",
         },
         GitCommand::CherryPickCommit { .. } => "cherry-pick-commit",
@@ -11786,6 +11877,88 @@ mod tests {
     }
 
     #[test]
+    fn confirm_pending_operation_queues_move_up_rebase_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Move old1234 older commit above head HEAD",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::MoveCommitUp {
+                    commit: "older".to_string(),
+                    adjacent_commit: "head".to_string(),
+                    summary: "old1234 older commit".to_string(),
+                    adjacent_summary: "head HEAD".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:move-commit-up-rebase");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::StartCommitRebase {
+                    commit: "older".to_string(),
+                    mode: RebaseStartMode::MoveUp {
+                        adjacent_commit: "head".to_string(),
+                    },
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_move_down_rebase_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Move head HEAD below old1234 older commit",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::MoveCommitDown {
+                    commit: "head".to_string(),
+                    adjacent_commit: "older".to_string(),
+                    summary: "head HEAD".to_string(),
+                    adjacent_summary: "old1234 older commit".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+        let job_id = JobId::new("git:repo-1:move-commit-down-rebase");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::StartCommitRebase {
+                    commit: "head".to_string(),
+                    mode: RebaseStartMode::MoveDown {
+                        adjacent_commit: "older".to_string(),
+                    },
+                },
+            })]
+        );
+    }
+
+    #[test]
     fn confirm_pending_operation_queues_reset_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -14629,6 +14802,186 @@ mod tests {
             Some(ConfirmableOperation::DropCommit {
                 commit: "older".to_string(),
                 summary: "old1234 older commit".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn move_selected_commit_up_requires_commit_above_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "head".to_string(),
+                        short_oid: "head".to_string(),
+                        summary: "HEAD".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::MoveSelectedCommitUp));
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select a commit below another commit before moving it up.")
+        );
+    }
+
+    #[test]
+    fn move_selected_commit_up_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::MoveSelectedCommitUp));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::MoveCommitUp {
+                commit: "older".to_string(),
+                adjacent_commit: "head".to_string(),
+                summary: "old1234 older commit".to_string(),
+                adjacent_summary: "head HEAD".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn move_selected_commit_down_requires_commit_below_selection() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::MoveSelectedCommitDown));
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select a commit above another commit before moving it down.")
+        );
+    }
+
+    #[test]
+    fn move_selected_commit_down_opens_confirmation_for_selected_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::MoveSelectedCommitDown));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::MoveCommitDown {
+                commit: "head".to_string(),
+                adjacent_commit: "older".to_string(),
+                summary: "head HEAD".to_string(),
+                adjacent_summary: "old1234 older commit".to_string(),
             })
         );
     }

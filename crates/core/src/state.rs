@@ -169,6 +169,18 @@ pub enum ConfirmableOperation {
         commit: String,
         summary: String,
     },
+    MoveCommitUp {
+        commit: String,
+        adjacent_commit: String,
+        summary: String,
+        adjacent_summary: String,
+    },
+    MoveCommitDown {
+        commit: String,
+        adjacent_commit: String,
+        summary: String,
+        adjacent_summary: String,
+    },
     CherryPickCommit {
         commit: String,
         summary: String,

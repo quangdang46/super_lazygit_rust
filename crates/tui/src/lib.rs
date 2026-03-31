@@ -1708,6 +1708,28 @@ impl TuiApp {
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
                             && self.binding_matches_action(
+                                "move_selected_commit_up",
+                                raw,
+                                normalized,
+                                &["ctrl+k"],
+                            )
+                        {
+                            return Some(Action::MoveSelectedCommitUp);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "move_selected_commit_down",
+                                raw,
+                                normalized,
+                                &["ctrl+j"],
+                            )
+                        {
+                            return Some(Action::MoveSelectedCommitDown);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
                                 "reword_selected_commit",
                                 raw,
                                 normalized,
@@ -4577,8 +4599,8 @@ fn repo_commit_lines(
             detail.commits.len(),
         )),
         Line::from("Actions: Enter files  Space checkout  n branch  i rebase"),
-        Line::from("         A amend  F fixup  R reword  C cherry-pick"),
-        Line::from("         V revert  S soft  M mixed  H hard"),
+        Line::from("         A amend  F fixup  s squash  d drop  Ctrl+K/Ctrl+J move"),
+        Line::from("         R reword  C cherry-pick  V revert  S soft  M mixed  H hard"),
         Line::from("History:"),
     ];
 
@@ -5426,6 +5448,24 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Drop {summary} from history? Git will rewrite the current branch and remove that commit."
             )
         }
+        super_lazygit_core::ConfirmableOperation::MoveCommitUp {
+            summary,
+            adjacent_summary,
+            ..
+        } => {
+            format!(
+                "Move {summary} above {adjacent_summary}? Git will rewrite the current branch and swap those adjacent commits."
+            )
+        }
+        super_lazygit_core::ConfirmableOperation::MoveCommitDown {
+            summary,
+            adjacent_summary,
+            ..
+        } => {
+            format!(
+                "Move {summary} below {adjacent_summary}? Git will rewrite the current branch and swap those adjacent commits."
+            )
+        }
         super_lazygit_core::ConfirmableOperation::CherryPickCommit { summary, .. } => {
             format!("Cherry-pick {summary} onto the current HEAD?")
         }
@@ -5988,6 +6028,8 @@ fn merge_rebase_menu_lines(state: &AppState) -> Vec<String> {
             "Interactive rebase from selected commit".to_string(),
             "Amend older commit at selection".to_string(),
             "Fixup onto selected commit".to_string(),
+            "Move selected commit up".to_string(),
+            "Move selected commit down".to_string(),
             "Reword selected commit".to_string(),
             "Reword selected commit in editor".to_string(),
         ]);
@@ -6443,7 +6485,7 @@ fn default_status_text(state: &AppState) -> String {
                         "Remotes detail focus; Enter opens remote branches, f fetches the selected remote, 0 returns to the main pane, / filters this panel, Ctrl+S opens filter options, w opens worktrees, b opens submodules, and n/e/d manage remotes."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, n branches off the selected commit, T tags it, i starts a rebase, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
+                    "Commits detail focus; a/A switch the all-branches graph direction, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, 0 returns to the main pane, / filters history, Ctrl+S opens filter options, W/Ctrl+E opens diff options, w opens worktrees, b opens submodules, n branches off the selected commit, T tags it, i starts a rebase, A amends, f creates a fixup commit, F fixups, g applies fixups, s squashes, d drops, Ctrl+K/Ctrl+J move the selected commit, C cherry-picks, V reverts, S/M/H reset HEAD, v compares commits, and x clears compare."
                             .to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                         "Compare detail focus; j/k scroll the comparison diff, Ctrl+W toggles whitespace, {/} change diff context, (/) change rename similarity, W/Ctrl+E opens diff options, 0 returns to the main pane, and x clears compare."
@@ -6562,7 +6604,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  a graph  n branch  T tag  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  a graph  n branch  T tag  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8791,6 +8833,12 @@ mod tests {
             commit: "1234567890abcdef".to_string(),
             summary: "1234567 second".to_string(),
         });
+        let move_up = confirmation_copy(&super_lazygit_core::ConfirmableOperation::MoveCommitUp {
+            commit: "1234567890abcdef".to_string(),
+            adjacent_commit: "fedcba0987654321".to_string(),
+            summary: "1234567 second".to_string(),
+            adjacent_summary: "fedcba0 add lib".to_string(),
+        });
         let cherry_pick = confirmation_copy(
             &super_lazygit_core::ConfirmableOperation::CherryPickCommit {
                 commit: "1234567890abcdef".to_string(),
@@ -8804,6 +8852,7 @@ mod tests {
 
         assert!(amend.contains("older-commit amend"));
         assert!(fixup.contains("fixup commit"));
+        assert!(move_up.contains("swap those adjacent commits"));
         assert!(cherry_pick.contains("Cherry-pick 1234567 second"));
         assert!(revert.contains("Revert 1234567 second"));
     }
@@ -9750,6 +9799,54 @@ mod tests {
             Some(super_lazygit_core::ConfirmableOperation::DropCommit {
                 commit: "1234567890abcdef".to_string(),
                 summary: "1234567 second".to_string(),
+            })
+        );
+
+        let mut move_up_app = TuiApp::new(state.clone(), AppConfig::default());
+        let move_up = move_up_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+k".to_string(),
+        })));
+        assert_eq!(
+            move_up
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::MoveCommitUp {
+                commit: "1234567890abcdef".to_string(),
+                adjacent_commit: "abcdef1234567890".to_string(),
+                summary: "1234567 second".to_string(),
+                adjacent_summary: "abcdef1 add lib".to_string(),
+            })
+        );
+
+        let move_down_state = AppState {
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..state.clone()
+        };
+        let mut move_down_app = TuiApp::new(move_down_state, AppConfig::default());
+        let move_down = move_down_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+j".to_string(),
+        })));
+        assert_eq!(
+            move_down
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(super_lazygit_core::ConfirmableOperation::MoveCommitDown {
+                commit: "abcdef1234567890".to_string(),
+                adjacent_commit: "1234567890abcdef".to_string(),
+                summary: "abcdef1 add lib".to_string(),
+                adjacent_summary: "1234567 second".to_string(),
             })
         );
 

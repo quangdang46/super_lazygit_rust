@@ -74,6 +74,8 @@ pub enum RebaseStartMode {
     ApplyFixups,
     Squash,
     Drop,
+    MoveUp { adjacent_commit: String },
+    MoveDown { adjacent_commit: String },
     Reword { message: String },
 }
 

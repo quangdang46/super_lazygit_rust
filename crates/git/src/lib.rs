@@ -658,6 +658,12 @@ impl GitBackend for CliGitBackend {
                     RebaseStartMode::Drop => {
                         format!("Dropped {short} {subject} from history")
                     }
+                    RebaseStartMode::MoveUp { .. } => {
+                        format!("Moved {short} {subject} up in history")
+                    }
+                    RebaseStartMode::MoveDown { .. } => {
+                        format!("Moved {short} {subject} down in history")
+                    }
                     RebaseStartMode::Reword { .. } => {
                         format!("Reworded {short} {subject}")
                     }
@@ -1128,6 +1134,8 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
             RebaseStartMode::ApplyFixups => "apply_fixups_rebase",
             RebaseStartMode::Squash => "start_squash_rebase",
             RebaseStartMode::Drop => "start_drop_rebase",
+            RebaseStartMode::MoveUp { .. } => "move_commit_up_rebase",
+            RebaseStartMode::MoveDown { .. } => "move_commit_down_rebase",
             RebaseStartMode::Reword { .. } => "start_reword_rebase",
         },
         GitCommand::CherryPickCommit { .. } => "cherry_pick_commit",
@@ -2051,6 +2059,12 @@ fn start_commit_rebase(repo_path: &Path, commit: &str, mode: &RebaseStartMode) -
         RebaseStartMode::ApplyFixups => run_scripted_rebase(repo_path, commit, "pick", None, true),
         RebaseStartMode::Squash => run_scripted_rebase(repo_path, commit, "squash", None, false),
         RebaseStartMode::Drop => run_scripted_rebase(repo_path, commit, "drop", None, false),
+        RebaseStartMode::MoveUp { adjacent_commit } => {
+            run_reordered_rebase(repo_path, commit, adjacent_commit, true)
+        }
+        RebaseStartMode::MoveDown { adjacent_commit } => {
+            run_reordered_rebase(repo_path, commit, adjacent_commit, false)
+        }
         RebaseStartMode::Reword { message } => {
             run_scripted_rebase(repo_path, commit, "reword", Some(message.as_str()), false)
         }
@@ -2100,6 +2114,33 @@ fn run_scripted_rebase(
         args.extend(rebase_base_args(repo_path, commit));
     }
 
+    git_with_env(repo_path, args.iter().map(String::as_str), &envs)
+}
+
+fn run_reordered_rebase(
+    repo_path: &Path,
+    commit: &str,
+    adjacent_commit: &str,
+    move_up: bool,
+) -> GitResult<()> {
+    let (older, newer) = if move_up {
+        (commit, adjacent_commit)
+    } else {
+        (adjacent_commit, commit)
+    };
+    let tempdir = tempfile::tempdir().map_err(io_error)?;
+    let sequence_editor = tempdir.path().join("sequence-editor.sh");
+    let sequence_script = format!(
+        "#!/bin/sh\nset -eu\nfile=\"$1\"\ntmp=\"$1.tmp\"\nawk 'BEGIN{{swapped=0; older=\"{older}\"; newer=\"{newer}\"}} {{ if (!swapped && $1 == \"pick\" && index(older, $2) == 1) {{ older_line=$0; if ((getline newer_line) <= 0) {{ print older_line; next }} split(newer_line, newer_fields, \" \"); if (newer_fields[1] == \"pick\" && index(newer, newer_fields[2]) == 1) {{ print newer_line; print older_line; swapped=1; next }} print older_line; print newer_line; next }} print }} END {{ if (!swapped) exit 3 }}' \"$file\" > \"$tmp\"\nmv \"$tmp\" \"$file\"\n"
+    );
+    write_executable_script(&sequence_editor, &sequence_script)?;
+
+    let envs: Vec<(&str, &OsStr)> = vec![
+        ("GIT_SEQUENCE_EDITOR", sequence_editor.as_os_str()),
+        ("GIT_EDITOR", OsStr::new(":")),
+    ];
+    let mut args = vec!["rebase".to_string(), "-i".to_string()];
+    args.extend(rebase_base_args(repo_path, older));
     git_with_env(repo_path, args.iter().map(String::as_str), &envs)
 }
 
@@ -4678,6 +4719,72 @@ mod tests {
                 .as_ref()
                 .and_then(|state| state.current_commit.as_deref()),
             Some(target.as_str())
+        );
+    }
+
+    #[test]
+    fn cli_backend_moves_selected_commit_up_in_history() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD~1").expect("target commit");
+        let adjacent = repo.rev_parse("HEAD").expect("adjacent commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:move-commit-up-rebase"),
+                repo_id,
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::MoveUp {
+                        adjacent_commit: adjacent,
+                    },
+                },
+            })
+            .expect("move up should succeed");
+
+        assert!(outcome.summary.contains("up in history"));
+        let log = stdout_string(
+            repo.git_capture(["log", "--format=%s", "-n", "3"])
+                .expect("log"),
+        )
+        .expect("utf8 log");
+        assert_eq!(
+            log.lines().collect::<Vec<_>>(),
+            vec!["second", "add lib", "initial"]
+        );
+    }
+
+    #[test]
+    fn cli_backend_moves_selected_commit_down_in_history() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD").expect("target commit");
+        let adjacent = repo.rev_parse("HEAD~1").expect("adjacent commit");
+
+        let outcome = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:move-commit-down-rebase"),
+                repo_id,
+                command: GitCommand::StartCommitRebase {
+                    commit: target,
+                    mode: RebaseStartMode::MoveDown {
+                        adjacent_commit: adjacent,
+                    },
+                },
+            })
+            .expect("move down should succeed");
+
+        assert!(outcome.summary.contains("down in history"));
+        let log = stdout_string(
+            repo.git_capture(["log", "--format=%s", "-n", "3"])
+                .expect("log"),
+        )
+        .expect("utf8 log");
+        assert_eq!(
+            log.lines().collect::<Vec<_>>(),
+            vec!["second", "add lib", "initial"]
         );
     }
 

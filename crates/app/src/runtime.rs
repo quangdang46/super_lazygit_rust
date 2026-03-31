@@ -639,6 +639,8 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
             super_lazygit_core::RebaseStartMode::ApplyFixups => "apply_fixups_rebase",
             super_lazygit_core::RebaseStartMode::Squash => "start_squash_rebase",
             super_lazygit_core::RebaseStartMode::Drop => "start_drop_rebase",
+            super_lazygit_core::RebaseStartMode::MoveUp { .. } => "move_commit_up_rebase",
+            super_lazygit_core::RebaseStartMode::MoveDown { .. } => "move_commit_down_rebase",
             super_lazygit_core::RebaseStartMode::Reword { .. } => "start_reword_rebase",
         },
         GitCommand::CherryPickCommit { .. } => "cherry_pick_commit",
