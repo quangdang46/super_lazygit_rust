@@ -1546,7 +1546,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         },
-        Action::CopySelectedStatusPath => match selected_status_shell_target(state, false) {
+        Action::CopySelectedStatusPath => match selected_repo_shell_target(state, false) {
             Ok(Some((repo_id, path, is_directory, _))) => {
                 let display_path = status_clipboard_path(&path, is_directory);
                 let command = clipboard_shell_command(&display_path);
@@ -1561,7 +1561,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         },
         Action::OpenSelectedStatusPathInDefaultApp => {
-            match selected_status_shell_target(state, true) {
+            match selected_repo_shell_target(state, true) {
                 Ok(Some((repo_id, path, _, _))) => {
                     let command = open_in_default_app_command(&path);
                     let job = shell_job(repo_id, command);
@@ -1576,7 +1576,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::OpenSelectedStatusPathInExternalDiffTool => {
-            match selected_status_shell_target(state, false) {
+            match selected_repo_shell_target(state, false) {
                 Ok(Some((repo_id, _path, is_directory, relative_path))) => {
                     if is_directory {
                         push_warning(state, "Select a file before opening the external difftool.");
@@ -4915,7 +4915,7 @@ fn update_status_directory_for_path(
     }
 }
 
-fn selected_status_shell_target(
+fn selected_repo_shell_target(
     state: &AppState,
     allow_directories: bool,
 ) -> Result<
@@ -4930,23 +4930,41 @@ fn selected_status_shell_target(
     let Some(repo_mode) = state.repo_mode.as_ref() else {
         return Ok(None);
     };
-    let Some(entry) = selected_status_entry(repo_mode, state.focused_pane) else {
-        return Err("Select a file or directory before using that action.".to_string());
+    let (relative_path, is_directory) = match state.focused_pane {
+        PaneId::RepoUnstaged | PaneId::RepoStaged | PaneId::RepoDetail
+            if repo_mode.active_subview == crate::state::RepoSubview::Status =>
+        {
+            let Some(entry) = selected_status_entry(repo_mode, state.focused_pane) else {
+                return Err("Select a file or directory before using that action.".to_string());
+            };
+            (entry.path.clone(), entry.is_directory())
+        }
+        PaneId::RepoDetail
+            if repo_mode.active_subview == crate::state::RepoSubview::Commits
+                && repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::Files
+                && repo_mode.commit_files_mode == crate::state::CommitFilesMode::List =>
+        {
+            let Some(file) = selected_commit_file_item(repo_mode) else {
+                return Err("Select a file before using that action.".to_string());
+            };
+            (file.path.clone(), false)
+        }
+        _ => return Ok(None),
     };
-    if !allow_directories && entry.is_directory() {
+    if !allow_directories && is_directory {
         return Err("Select a file before using that action.".to_string());
     }
     let repo_root = repo_root_for_id(state, &repo_mode.current_repo_id);
-    let absolute_path = if entry.path.is_absolute() {
-        entry.path.clone()
+    let absolute_path = if relative_path.is_absolute() {
+        relative_path.clone()
     } else {
-        repo_root.join(&entry.path)
+        repo_root.join(&relative_path)
     };
     Ok(Some((
         repo_mode.current_repo_id.clone(),
         absolute_path,
-        entry.is_directory(),
-        entry.path,
+        is_directory,
+        relative_path,
     )))
 }
 
@@ -5119,7 +5137,9 @@ fn selected_editor_target(
             };
             let repo_root = repo_root_for_id(state, &repo_mode.current_repo_id);
             let Some(target) = selected_repo_editor_path(state, repo_mode, &repo_root) else {
-                return Err("Select a status file before opening it in the editor.".to_string());
+                return Err(
+                    "Select a file or directory before opening it in the editor.".to_string(),
+                );
             };
             Ok((repo_root, target))
         }
@@ -6818,6 +6838,195 @@ mod tests {
                 cwd: repo_root.clone(),
                 target: repo_root.join(selected_path),
             }]
+        );
+    }
+
+    #[test]
+    fn copy_selected_status_path_from_commit_file_mode_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let selected_path = std::path::PathBuf::from("src/lib.rs");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..crate::state::WorkspaceState::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                commit_files_mode: crate::state::CommitFilesMode::List,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: selected_path.clone(),
+                            kind: FileStatusKind::Added,
+                        }],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commit_files_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CopySelectedStatusPath));
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunShellCommand(ShellCommandRequest {
+                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+                repo_id,
+                command: super::clipboard_shell_command(&repo_root.join(selected_path)),
+            })]
+        );
+    }
+
+    #[test]
+    fn open_selected_status_path_in_default_app_from_commit_file_mode_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let selected_path = std::path::PathBuf::from("src/lib.rs");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root.clone(),
+                        display_path: repo_root.display().to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..crate::state::WorkspaceState::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                commit_files_mode: crate::state::CommitFilesMode::List,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: selected_path.clone(),
+                            kind: FileStatusKind::Added,
+                        }],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commit_files_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::OpenSelectedStatusPathInDefaultApp),
+        );
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunShellCommand(ShellCommandRequest {
+                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+                repo_id,
+                command: super::open_in_default_app_command(&repo_root.join(selected_path)),
+            })]
+        );
+    }
+
+    #[test]
+    fn open_selected_status_path_in_external_difftool_from_commit_file_mode_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let repo_root = std::path::PathBuf::from("/tmp/repo-1");
+        let selected_path = std::path::PathBuf::from("src/lib.rs");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: crate::state::WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    RepoSummary {
+                        repo_id: repo_id.clone(),
+                        display_name: "repo-1".to_string(),
+                        real_path: repo_root,
+                        display_path: "/tmp/repo-1".to_string(),
+                        ..RepoSummary::default()
+                    },
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..crate::state::WorkspaceState::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::Files,
+                commit_files_mode: crate::state::CommitFilesMode::List,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        changed_files: vec![CommitFileItem {
+                            path: selected_path.clone(),
+                            kind: FileStatusKind::Added,
+                        }],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commit_files_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::OpenSelectedStatusPathInExternalDiffTool),
+        );
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunShellCommand(ShellCommandRequest {
+                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+                repo_id,
+                command: super::external_difftool_command(&selected_path, PaneId::RepoDetail),
+            })]
         );
     }
 

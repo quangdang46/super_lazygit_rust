@@ -245,7 +245,6 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `Enter` | Open the selected commit's changed-files view |
 | `Space` | Check out the selected commit in detached-HEAD mode |
 | `a` | Switch to the all-branches commit graph, newest first |
-| `A` | Switch to the all-branches commit graph, oldest first |
 | `n` | Open create-branch-from-commit prompt |
 | `T` | Open create-tag-from-commit prompt |
 | `i` | Start interactive rebase from the selected commit |
@@ -284,9 +283,13 @@ When focus is in `Repo detail`, the shared lazygit-style contract is:
 | `<` / `Home` | Jump to the first visible changed file |
 | `>` / `End` | Jump to the last visible changed file |
 | `[` / `]` | Move to the previous or next detail tab |
-| `Enter` | Return to commit history for the same selected commit |
+| `Enter` | Open the selected changed file's diff; when already viewing that diff, return to the changed-files list |
+| `Backspace` / `Left` | Return to commit history from the changed-files list, or back to the changed-files list from file diff |
 | `Space` | Check out the selected file from the selected commit |
 | `e` | Open the selected file in the configured editor |
+| `y` / `Ctrl+O` | Copy the selected file path to the clipboard |
+| `o` | Open the selected file in the default app |
+| `Ctrl+T` | Open the selected file in the external difftool |
 | `/` | Focus the changed-files filter |
 | `0` | Return focus to the last active main pane |
 | `w` | Switch to the worktrees subview |

@@ -1569,6 +1569,42 @@ impl TuiApp {
                             {
                                 return Some(Action::OpenInEditor);
                             }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && repo_mode.commit_files_mode == CommitFilesMode::List
+                                && self.binding_matches_action(
+                                    "copy_selected_status_path",
+                                    raw,
+                                    normalized,
+                                    &["y", "ctrl+o"],
+                                )
+                            {
+                                return Some(Action::CopySelectedStatusPath);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && repo_mode.commit_files_mode == CommitFilesMode::List
+                                && self.binding_matches_action(
+                                    "open_selected_status_path_in_default_app",
+                                    raw,
+                                    normalized,
+                                    &["o"],
+                                )
+                            {
+                                return Some(Action::OpenSelectedStatusPathInDefaultApp);
+                            }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && repo_mode.commit_files_mode == CommitFilesMode::List
+                                && self.binding_matches_action(
+                                    "open_selected_status_path_in_external_difftool",
+                                    raw,
+                                    normalized,
+                                    &["ctrl+t"],
+                                )
+                            {
+                                return Some(Action::OpenSelectedStatusPathInExternalDiffTool);
+                            }
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
@@ -4642,7 +4678,7 @@ fn repo_commit_file_list_lines(
     }
     lines.extend([
         Line::from("Context: Enter file diff. Left/backspace history. Space checkout file."),
-        Line::from("Editor: e open editor. Other: 0 main. / filter. w worktrees."),
+        Line::from("Actions: e editor. y copy path. o open. Ctrl+T difftool. 0 main. / filter. w worktrees."),
         Line::from(""),
     ]);
 
@@ -4913,10 +4949,9 @@ fn repo_commit_context_line(
     total_count: usize,
 ) -> String {
     let mut line = if commit_history_mode.is_graph() {
-        "Context: Enter files. a newest-first. A oldest-first. 0 main. / filter. w worktrees."
-            .to_string()
+        "Context: Enter files. a newest-first. 0 main. / filter. w worktrees.".to_string()
     } else {
-        "Context: 0 main. / filter. w worktrees. a graph. A reverse graph.".to_string()
+        "Context: 0 main. / filter. w worktrees. a graph.".to_string()
     };
     if let Some(filter_line) =
         repo_filter_summary_line(filter_query, filter_focused, visible_count, total_count)
@@ -6527,7 +6562,7 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  h left pane  1-9/t/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  a graph  n branch  T tag  i start rebase  A amend  f create-fixup  F fixup+autosquash  g apply-fixups  s squash  d drop  R reword  C cherry-pick  V revert  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  Ctrl+R recent repos  : shell  @ command log  r refresh  0 main pane  / filter  w worktrees  b submodules  h left pane  1-9/t/b switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -8218,6 +8253,63 @@ mod tests {
                 .map(|menu| menu.operation),
             Some(super_lazygit_core::MenuOperation::FilterOptions)
         );
+    }
+
+    #[test]
+    fn route_repository_commit_file_shell_keys() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: CommitSubviewMode::Files,
+                commit_files_mode: CommitFilesMode::List,
+                detail: Some(sample_repo_detail()),
+                commit_files_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut copy_app = TuiApp::new(state.clone(), AppConfig::default());
+        let copied = copy_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "y".to_string(),
+        })));
+        assert!(copied
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
+
+        let mut open_app = TuiApp::new(state.clone(), AppConfig::default());
+        let opened = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "o".to_string(),
+        })));
+        assert!(opened
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
+
+        let mut difftool_app = TuiApp::new(state, AppConfig::default());
+        let difftool = difftool_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+t".to_string(),
+        })));
+        assert!(difftool
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, super_lazygit_core::Effect::RunShellCommand(_))));
     }
 
     #[test]
@@ -12028,6 +12120,9 @@ mod tests {
         assert!(rendered.contains("Compare base: abcdef1234567890"));
         assert!(rendered.contains("State: idle"));
         assert!(rendered.contains("> abcdef1 add lib"));
+        assert!(rendered.contains("a graph"));
+        assert!(rendered.contains("n branch"));
+        assert!(rendered.contains("T tag"));
         assert!(rendered.contains("A amend"));
         assert!(rendered.contains("F fixup"));
         assert!(rendered.contains("R reword"));
@@ -12083,7 +12178,7 @@ mod tests {
         assert!(rendered.contains("Detail: Commits"));
         assert!(rendered.contains("* abcdef1 (HEAD -> main) add lib"));
         assert!(rendered.contains("a newest-first"));
-        assert!(rendered.contains("A oldest-first"));
+        assert!(!rendered.contains("A oldest-first"));
     }
 
     #[test]
@@ -12129,7 +12224,9 @@ mod tests {
 
         assert!(rendered.contains("Commit files  abcdef1  add lib"));
         assert!(rendered.contains("Left/backspace history."));
-        assert!(rendered.contains("Editor: e open editor."));
+        assert!(rendered.contains("Actions: e editor."));
+        assert!(rendered.contains("y copy path"));
+        assert!(rendered.contains("Ctrl+T difftool"));
         assert!(rendered.contains("> A src/lib.rs"));
     }
 
