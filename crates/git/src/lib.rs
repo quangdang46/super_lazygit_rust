@@ -2200,6 +2200,69 @@ fn existing_main_branch_refs(repo_path: &Path) -> GitResult<Vec<String>> {
     Ok(refs)
 }
 
+#[allow(dead_code)]
+fn branch_base_reference(repo_path: &Path, branch: &BranchItem) -> GitResult<Option<String>> {
+    let main_branches = existing_main_branch_refs(repo_path)?;
+    if main_branches.is_empty() {
+        return Ok(None);
+    }
+
+    let branch_ref = if branch.detached_head {
+        branch.name.clone()
+    } else {
+        format!("refs/heads/{}", branch.name)
+    };
+    let mut args = vec![OsString::from("merge-base"), OsString::from(branch_ref)];
+    args.extend(main_branches.iter().map(OsString::from));
+    let merge_base = git_stdout_allow_failure(repo_path, args)?;
+    let merge_base = merge_base.trim();
+    if merge_base.is_empty() {
+        return Ok(None);
+    }
+
+    let mut args = vec![
+        OsString::from("for-each-ref"),
+        OsString::from("--contains"),
+        OsString::from(merge_base),
+        OsString::from("--format=%(refname)"),
+    ];
+    args.extend(main_branches.iter().map(OsString::from));
+    let output = git_stdout_allow_failure(repo_path, args)?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned))
+}
+
+#[allow(dead_code)]
+fn branch_behind_base_count(
+    repo_path: &Path,
+    branch: &BranchItem,
+    base_branch: &str,
+) -> GitResult<i32> {
+    let branch_ref = if branch.detached_head {
+        branch.name.clone()
+    } else {
+        format!("refs/heads/{}", branch.name)
+    };
+    let output = git_stdout_allow_failure(
+        repo_path,
+        [
+            "rev-list",
+            "--left-right",
+            "--count",
+            format!("{branch_ref}...{base_branch}").as_str(),
+        ],
+    )?;
+    let mut counts = output.trim().split('\t');
+    let _ahead = counts.next();
+    Ok(counts
+        .next()
+        .and_then(|value| value.parse::<i32>().ok())
+        .unwrap_or(0))
+}
+
 fn resolve_main_branch_ref(repo_path: &Path, branch_name: &str) -> GitResult<Option<String>> {
     let upstream = format!("{branch_name}@{{u}}");
     if let Ok(reference) = git_stdout(
@@ -3140,27 +3203,37 @@ fn status_code_kind(code: char) -> Option<FileStatusKind> {
 }
 
 fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
+    let branch_configs = read_branch_configs(repo_path);
     git_stdout(
         repo_path,
         [
             "for-each-ref",
-            "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)",
+            "--sort=refname",
+            "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(upstream:track)%00%(push:track)%00%(subject)%00%(objectname)%00%(committerdate:unix)",
             "refs/heads",
         ],
     )
     .map(|output| {
-        let mut branches: Vec<_> = output.lines().filter_map(parse_branch_line).collect();
+        let mut branches: Vec<_> = output
+            .lines()
+            .filter_map(|line| parse_branch_line(line, &branch_configs))
+            .collect();
 
         if let Some(head_index) = branches.iter().position(|branch| branch.is_head) {
-            let head_branch = branches.remove(head_index);
+            let mut head_branch = branches.remove(head_index);
+            head_branch.recency = "  *".to_string();
             branches.insert(0, head_branch);
         } else if let Some(current_ref) = current_branch_list_entry(repo_path) {
             branches.insert(
                 0,
                 BranchItem {
                     name: current_ref,
+                    display_name: None,
                     is_head: true,
+                    detached_head: true,
                     upstream: None,
+                    recency: "  *".to_string(),
+                    ..BranchItem::default()
                 },
             );
         }
@@ -3170,25 +3243,85 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
     .unwrap_or_default()
 }
 
-fn parse_branch_line(line: &str) -> Option<BranchItem> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct BranchConfig {
+    remote: Option<String>,
+    merge: Option<String>,
+}
+
+fn parse_branch_line(
+    line: &str,
+    branch_configs: &BTreeMap<String, BranchConfig>,
+) -> Option<BranchItem> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    let mut parts = trimmed.split('\0');
-    let head = parts.next().unwrap_or_default().trim();
-    let name = normalize_local_branch_name(parts.next().unwrap_or_default().trim());
-    let upstream = parts.next().unwrap_or_default().trim();
+    let parts: Vec<_> = trimmed.split('\0').collect();
+    if parts.len() != 8 {
+        return None;
+    }
+
+    let head = parts[0].trim();
+    let name = normalize_local_branch_name(parts[1].trim());
+    let upstream = parts[2].trim();
+    let track = parts[3].trim();
+    let push_track = parts[4].trim();
+    let subject = parts[5].trim();
+    let commit_hash = parts[6].trim();
+    let commit_timestamp = parse_branch_commit_timestamp(parts[7].trim());
 
     if name.is_empty() {
         return None;
     }
 
+    let config = branch_configs.get(name);
+    let upstream_remote = config
+        .and_then(|config| config.remote.clone())
+        .or_else(|| parse_upstream_remote(upstream));
+    let upstream_branch = config
+        .and_then(|config| config.merge.as_deref())
+        .map(normalize_local_branch_name)
+        .map(ToOwned::to_owned)
+        .or_else(|| parse_upstream_branch(upstream));
+    let upstream = if upstream.is_empty() {
+        upstream_remote
+            .as_deref()
+            .zip(upstream_branch.as_deref())
+            .map(|(remote, branch)| format!("{remote}/{branch}"))
+    } else {
+        Some(upstream.to_string())
+    };
+    let (ahead_for_pull, behind_for_pull, upstream_gone) = parse_upstream_info(
+        (!parts[2].trim().is_empty()).then_some(parts[2].trim()),
+        track,
+    );
+    let (ahead_for_push, behind_for_push, _) = parse_upstream_info(
+        (!parts[2].trim().is_empty()).then_some(parts[2].trim()),
+        push_track,
+    );
+
     Some(BranchItem {
         name: name.to_string(),
+        display_name: None,
         is_head: head == "*",
-        upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
+        detached_head: false,
+        upstream,
+        recency: commit_timestamp
+            .map(|timestamp| unix_to_time_ago(timestamp.0))
+            .unwrap_or_default(),
+        ahead_for_pull,
+        behind_for_pull,
+        ahead_for_push,
+        behind_for_push,
+        upstream_gone,
+        upstream_remote,
+        upstream_branch,
+        subject: subject.to_string(),
+        commit_hash: commit_hash.to_string(),
+        commit_timestamp,
+        behind_base_branch: 0,
     })
 }
 
@@ -3196,6 +3329,126 @@ fn normalize_local_branch_name(name: &str) -> &str {
     name.strip_prefix("refs/heads/")
         .or_else(|| name.strip_prefix("heads/"))
         .unwrap_or(name)
+}
+
+fn parse_branch_commit_timestamp(raw: &str) -> Option<Timestamp> {
+    raw.parse::<u64>().ok().map(Timestamp)
+}
+
+fn parse_upstream_remote(upstream: &str) -> Option<String> {
+    let (remote, _) = upstream.split_once('/')?;
+    (!remote.is_empty()).then(|| remote.to_string())
+}
+
+fn parse_upstream_branch(upstream: &str) -> Option<String> {
+    let (_, branch) = upstream.split_once('/')?;
+    (!branch.is_empty()).then(|| branch.to_string())
+}
+
+fn parse_upstream_info(upstream_name: Option<&str>, track: &str) -> (String, String, bool) {
+    if upstream_name.is_none_or(str::is_empty) {
+        return ("?".to_string(), "?".to_string(), false);
+    }
+
+    if track == "[gone]" {
+        return ("?".to_string(), "?".to_string(), true);
+    }
+
+    (
+        parse_track_difference(track, "ahead "),
+        parse_track_difference(track, "behind "),
+        false,
+    )
+}
+
+fn parse_track_difference(track: &str, needle: &str) -> String {
+    track
+        .split(needle)
+        .nth(1)
+        .map(|suffix| {
+            suffix
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn unix_to_time_ago(timestamp: u64) -> String {
+    let now = unix_timestamp_now();
+    format_seconds_ago(now.0.saturating_sub(timestamp))
+}
+
+fn format_seconds_ago(seconds_ago: u64) -> String {
+    const PERIODS: [(&str, u64); 7] = [
+        ("s", 1),
+        ("m", 60),
+        ("h", 60 * 60),
+        ("d", 60 * 60 * 24),
+        ("w", 60 * 60 * 24 * 7),
+        ("M", (60 * 60 * 24 * 365) / 12),
+        ("y", 60 * 60 * 24 * 365),
+    ];
+
+    for index in 1..PERIODS.len() {
+        if seconds_ago < PERIODS[index].1 {
+            return format!(
+                "{}{}",
+                seconds_ago / PERIODS[index - 1].1,
+                PERIODS[index - 1].0
+            );
+        }
+    }
+
+    format!(
+        "{}{}",
+        seconds_ago / PERIODS[PERIODS.len() - 1].1,
+        PERIODS[PERIODS.len() - 1].0
+    )
+}
+
+fn read_branch_configs(repo_path: &Path) -> BTreeMap<String, BranchConfig> {
+    let output = git_stdout_allow_failure(
+        repo_path,
+        [
+            "config",
+            "--local",
+            "--get-regexp",
+            r"^branch\..*\.(remote|merge)$",
+        ],
+    )
+    .unwrap_or_default();
+    parse_branch_configs(&output)
+}
+
+fn parse_branch_configs(output: &str) -> BTreeMap<String, BranchConfig> {
+    let mut configs: BTreeMap<String, BranchConfig> = BTreeMap::new();
+
+    for line in output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let value = value.trim();
+        let Some(branch_name) = key.strip_prefix("branch.") else {
+            continue;
+        };
+        let Some((branch_name, field)) = branch_name.rsplit_once('.') else {
+            continue;
+        };
+        let config = configs.entry(branch_name.to_string()).or_default();
+        match field {
+            "remote" => config.remote = Some(value.to_string()),
+            "merge" => config.merge = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    configs
 }
 
 fn read_remotes(repo_path: &Path, remote_branches: &[RemoteBranchItem]) -> Vec<RemoteItem> {
@@ -5051,7 +5304,14 @@ mod tests {
         );
         assert!(detail.branches.iter().any(|branch| branch.name == "main"
             && branch.is_head
-            && branch.upstream.as_deref() == Some("origin/main")));
+            && branch.upstream.as_deref() == Some("origin/main")
+            && branch.upstream_remote.as_deref() == Some("origin")
+            && branch.upstream_branch.as_deref() == Some("main")
+            && branch.ahead_for_pull == "1"
+            && branch.behind_for_pull == "1"
+            && !branch.subject.is_empty()
+            && !branch.commit_hash.is_empty()
+            && branch.commit_timestamp.is_some()));
         assert!(detail
             .branches
             .iter()
@@ -5078,8 +5338,49 @@ mod tests {
 
         let current = detail.branches.first().expect("detached head branch row");
         assert!(current.is_head);
+        assert!(current.detached_head);
         assert!(current.upstream.is_none());
         assert!(current.name.contains("HEAD"));
+    }
+
+    #[test]
+    fn cli_backend_recovers_upstream_from_branch_config_without_local_remote_ref() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.git(["checkout", "-b", "topic"])
+            .expect("create topic branch");
+        repo.git(["config", "branch.topic.remote", "origin"])
+            .expect("set branch remote");
+        repo.git(["config", "branch.topic.merge", "refs/heads/topic"])
+            .expect("set branch merge");
+        repo.git(["checkout", "main"]).expect("checkout main");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        let topic = detail
+            .branches
+            .iter()
+            .find(|branch| branch.name == "topic")
+            .expect("topic branch should be listed");
+        assert_eq!(topic.upstream.as_deref(), Some("origin/topic"));
+        assert_eq!(topic.upstream_remote.as_deref(), Some("origin"));
+        assert_eq!(topic.upstream_branch.as_deref(), Some("topic"));
+        assert_eq!(topic.ahead_for_pull, "?");
+        assert_eq!(topic.behind_for_pull, "?");
     }
 
     #[test]
@@ -5147,23 +5448,46 @@ mod tests {
 
     #[test]
     fn parse_branch_line_trims_heads_prefix_and_marks_head() {
-        let branch = parse_branch_line("*\0heads/feature\0origin/feature")
-            .expect("branch line should parse");
+        let branch = parse_branch_line(
+            concat!(
+                "*\x00heads/feature\x00origin/feature\x00[ahead 2, behind 3]\x00[ahead 1]\x00",
+                "ship it\x00deadbeef\x001700000000"
+            ),
+            &BTreeMap::new(),
+        )
+        .expect("branch line should parse");
 
         assert_eq!(
             branch,
             BranchItem {
                 name: "feature".to_string(),
+                display_name: None,
                 is_head: true,
+                detached_head: false,
                 upstream: Some("origin/feature".to_string()),
+                recency: unix_to_time_ago(1_700_000_000),
+                ahead_for_pull: "2".to_string(),
+                behind_for_pull: "3".to_string(),
+                ahead_for_push: "1".to_string(),
+                behind_for_push: "0".to_string(),
+                upstream_gone: false,
+                upstream_remote: Some("origin".to_string()),
+                upstream_branch: Some("feature".to_string()),
+                subject: "ship it".to_string(),
+                commit_hash: "deadbeef".to_string(),
+                commit_timestamp: Some(Timestamp(1_700_000_000)),
+                behind_base_branch: 0,
             }
         );
     }
 
     #[test]
     fn parse_branch_line_handles_missing_upstream() {
-        let branch =
-            parse_branch_line("\0topic\0").expect("branch line without upstream should parse");
+        let branch = parse_branch_line(
+            "\x00topic\x00\x00\x00\x00\x00feedface\x001700000001",
+            &BTreeMap::new(),
+        )
+        .expect("branch line without upstream should parse");
 
         assert_eq!(
             branch,
@@ -5171,14 +5495,107 @@ mod tests {
                 name: "topic".to_string(),
                 is_head: false,
                 upstream: None,
+                detached_head: false,
+                recency: unix_to_time_ago(1_700_000_001),
+                ahead_for_pull: "?".to_string(),
+                behind_for_pull: "?".to_string(),
+                ahead_for_push: "?".to_string(),
+                behind_for_push: "?".to_string(),
+                commit_hash: "feedface".to_string(),
+                commit_timestamp: Some(Timestamp(1_700_000_001)),
+                ..BranchItem::default()
             }
         );
     }
 
     #[test]
+    fn parse_branch_line_uses_branch_config_when_upstream_ref_is_missing() {
+        let configs = BTreeMap::from([(
+            "topic".to_string(),
+            BranchConfig {
+                remote: Some("origin".to_string()),
+                merge: Some("refs/heads/topic".to_string()),
+            },
+        )]);
+        let branch = parse_branch_line(
+            "\x00topic\x00\x00\x00\x00\x00feedface\x001700000001",
+            &configs,
+        )
+        .expect("branch line should parse");
+
+        assert_eq!(branch.upstream.as_deref(), Some("origin/topic"));
+        assert_eq!(branch.upstream_remote.as_deref(), Some("origin"));
+        assert_eq!(branch.upstream_branch.as_deref(), Some("topic"));
+        assert_eq!(branch.ahead_for_pull, "?");
+        assert_eq!(branch.behind_for_pull, "?");
+    }
+
+    #[test]
+    fn parse_branch_line_marks_gone_upstream() {
+        let branch = parse_branch_line(
+            "\x00topic\x00origin/topic\x00[gone]\x00\x00\x00feedface\x001700000001",
+            &BTreeMap::new(),
+        )
+        .expect("branch line should parse");
+
+        assert!(branch.upstream_gone);
+        assert_eq!(branch.ahead_for_pull, "?");
+        assert_eq!(branch.behind_for_pull, "?");
+    }
+
+    #[test]
     fn parse_branch_line_ignores_blank_and_malformed_rows() {
-        assert!(parse_branch_line("").is_none());
-        assert!(parse_branch_line("warning: ignored row").is_none());
+        assert!(parse_branch_line("", &BTreeMap::new()).is_none());
+        assert!(parse_branch_line("warning: ignored row", &BTreeMap::new()).is_none());
+    }
+
+    #[test]
+    fn parse_branch_configs_collects_remote_and_merge_pairs() {
+        let configs = parse_branch_configs(
+            "branch.main.remote origin\nbranch.main.merge refs/heads/main\nbranch.topic.remote upstream\n",
+        );
+
+        assert_eq!(
+            configs.get("main"),
+            Some(&BranchConfig {
+                remote: Some("origin".to_string()),
+                merge: Some("refs/heads/main".to_string()),
+            })
+        );
+        assert_eq!(
+            configs.get("topic"),
+            Some(&BranchConfig {
+                remote: Some("upstream".to_string()),
+                merge: None,
+            })
+        );
+    }
+
+    #[test]
+    fn branch_base_reference_prefers_existing_main_branch() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.git(["checkout", "-b", "feature"])
+            .expect("create feature branch");
+        repo.append_file("shared.txt", "feature\n")
+            .expect("update feature branch");
+        repo.commit_all("feature change").expect("feature commit");
+
+        let branch = BranchItem {
+            name: "feature".to_string(),
+            ..BranchItem::default()
+        };
+        assert_eq!(
+            branch_base_reference(repo.path(), &branch).expect("base branch should resolve"),
+            Some("refs/heads/main".to_string())
+        );
+        assert_eq!(
+            branch_behind_base_count(repo.path(), &branch, "refs/heads/main")
+                .expect("behind count should resolve"),
+            0
+        );
     }
 
     #[test]

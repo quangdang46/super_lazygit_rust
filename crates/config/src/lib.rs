@@ -54,7 +54,7 @@ impl AppConfig {
         })?;
         let config = toml::from_str(&contents).map_err(|source| ConfigLoadError::Parse {
             path: path.clone(),
-            source,
+            source: Box::new(source),
         })?;
 
         Ok(LoadedConfig {
@@ -203,7 +203,7 @@ pub enum ConfigLoadError {
     Parse {
         path: PathBuf,
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 }
 

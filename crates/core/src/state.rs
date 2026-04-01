@@ -1541,8 +1541,22 @@ pub enum DiffLineKind {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchItem {
     pub name: String,
+    pub display_name: Option<String>,
     pub is_head: bool,
+    pub detached_head: bool,
     pub upstream: Option<String>,
+    pub recency: String,
+    pub ahead_for_pull: String,
+    pub behind_for_pull: String,
+    pub ahead_for_push: String,
+    pub behind_for_push: String,
+    pub upstream_gone: bool,
+    pub upstream_remote: Option<String>,
+    pub upstream_branch: Option<String>,
+    pub subject: String,
+    pub commit_hash: String,
+    pub commit_timestamp: Option<Timestamp>,
+    pub behind_base_branch: i32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1910,7 +1924,9 @@ fn repo_is_dirty(summary: &RepoSummary) -> bool {
 pub fn branch_matches_filter(branch: &BranchItem, normalized_query: &str) -> bool {
     [
         branch.name.as_str(),
+        branch.display_name.as_deref().unwrap_or(""),
         branch.upstream.as_deref().unwrap_or("-"),
+        branch.subject.as_str(),
     ]
     .into_iter()
     .map(normalize_search_text)

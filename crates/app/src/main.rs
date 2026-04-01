@@ -1044,7 +1044,6 @@ mod tests {
             .expect("create feature branch");
         let worktree_root = tempfile::tempdir().expect("worktree root");
         let worktree_path = worktree_root.path().join("repo-feature-contract");
-        let normalized_worktree_path = normalized_path(&worktree_path);
         repo.git([
             "worktree",
             "add",
@@ -1052,6 +1051,7 @@ mod tests {
             "feature-contract",
         ])
         .expect("create feature worktree");
+        let normalized_worktree_path = normalized_path(&worktree_path);
         std::fs::write(worktree_path.join("tracked.txt"), "feature branch only\n")
             .expect("update feature worktree file");
         git_in(&worktree_path, ["add", "tracked.txt"]);

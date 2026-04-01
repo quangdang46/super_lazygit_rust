@@ -10790,11 +10790,13 @@ mod tests {
                     name: "main".to_string(),
                     is_head: true,
                     upstream: Some("origin/main".to_string()),
+                    ..BranchItem::default()
                 },
                 BranchItem {
                     name: "feature".to_string(),
                     is_head: false,
                     upstream: None,
+                    ..BranchItem::default()
                 },
             ],
             remotes: vec![
@@ -12024,6 +12026,7 @@ mod tests {
             name: format!("feature-{index}"),
             is_head: false,
             upstream: None,
+            ..BranchItem::default()
         }));
         let mut state = repo_test_state(&repo_id, RepoSubview::Branches, detail);
         state
@@ -12102,6 +12105,7 @@ mod tests {
             name: format!("feature-{index}"),
             is_head: false,
             upstream: None,
+            ..BranchItem::default()
         }));
         let state = repo_test_state(&repo_id, RepoSubview::Branches, detail);
 
@@ -12131,6 +12135,7 @@ mod tests {
             name: format!("feature-{index}"),
             is_head: false,
             upstream: None,
+            ..BranchItem::default()
         }));
         let state = repo_test_state(&repo_id, RepoSubview::Branches, detail);
 
@@ -12199,16 +12204,19 @@ mod tests {
                             name: "alpha".to_string(),
                             is_head: true,
                             upstream: None,
+                            ..super_lazygit_core::BranchItem::default()
                         },
                         super_lazygit_core::BranchItem {
                             name: "beta".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..super_lazygit_core::BranchItem::default()
                         },
                         super_lazygit_core::BranchItem {
                             name: "gamma".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..super_lazygit_core::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()

@@ -10546,11 +10546,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature-contract".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -10612,16 +10614,19 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature-contract".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "bugfix".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -10871,11 +10876,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -11010,11 +11017,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -11085,6 +11094,7 @@ mod tests {
                         name: "main".to_string(),
                         is_head: true,
                         upstream: Some("origin/main".to_string()),
+                        ..crate::state::BranchItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -11121,6 +11131,7 @@ mod tests {
                         name: "feature".to_string(),
                         is_head: false,
                         upstream: Some("origin/feature".to_string()),
+                        ..crate::state::BranchItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -11154,6 +11165,7 @@ mod tests {
                         name: "feature".to_string(),
                         is_head: false,
                         upstream: Some("origin/feature".to_string()),
+                        ..crate::state::BranchItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -11195,11 +11207,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: Some("origin/feature".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -11249,11 +11263,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: Some("origin/feature".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -11301,11 +11317,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: Some("origin/feature".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -11768,6 +11786,7 @@ mod tests {
                         name: "main".to_string(),
                         is_head: true,
                         upstream: Some("origin/main".to_string()),
+                        ..crate::state::BranchItem::default()
                     }],
                     remote_branches: vec![
                         crate::state::RemoteBranchItem {
@@ -12148,21 +12167,25 @@ mod tests {
                                 name: "alpha".to_string(),
                                 is_head: true,
                                 upstream: None,
+                                ..crate::state::BranchItem::default()
                             },
                             crate::state::BranchItem {
                                 name: "hidden".to_string(),
                                 is_head: false,
                                 upstream: None,
+                                ..crate::state::BranchItem::default()
                             },
                             crate::state::BranchItem {
                                 name: "beta".to_string(),
                                 is_head: false,
                                 upstream: None,
+                                ..crate::state::BranchItem::default()
                             },
                             crate::state::BranchItem {
                                 name: "gamma".to_string(),
                                 is_head: false,
                                 upstream: None,
+                                ..crate::state::BranchItem::default()
                             },
                         ],
                         ..RepoDetail::default()
@@ -13753,11 +13776,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: Some("origin/feature".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -13848,11 +13873,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: Some("origin/feature".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     merge_fast_forward_preference: MergeFastForwardPreference::Default,
@@ -13919,11 +13946,13 @@ mod tests {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: Some("origin/feature".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     merge_fast_forward_preference: MergeFastForwardPreference::FastForward,
@@ -14748,6 +14777,7 @@ mod tests {
                         name: "main".to_string(),
                         is_head: true,
                         upstream: Some("origin/main".to_string()),
+                        ..crate::state::BranchItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -14790,6 +14820,7 @@ mod tests {
                         name: "main".to_string(),
                         is_head: true,
                         upstream: Some("origin/main".to_string()),
+                        ..crate::state::BranchItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -16963,11 +16994,13 @@ mod tests {
                             name: "feature".to_string(),
                             is_head: false,
                             upstream: None,
+                            ..crate::state::BranchItem::default()
                         },
                         crate::state::BranchItem {
                             name: "main".to_string(),
                             is_head: true,
                             upstream: Some("origin/main".to_string()),
+                            ..crate::state::BranchItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -18461,11 +18494,13 @@ mod tests {
                     name: "feature".to_string(),
                     is_head: false,
                     upstream: None,
+                    ..crate::state::BranchItem::default()
                 },
                 crate::state::BranchItem {
                     name: "main".to_string(),
                     is_head: true,
                     upstream: Some("origin/main".to_string()),
+                    ..crate::state::BranchItem::default()
                 },
             ],
             file_tree: vec![
