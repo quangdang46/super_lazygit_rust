@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::state::{
-    CommitHistoryMode, ComparisonTarget, DiffPresentation, JobId, MergeVariant, RepoId, ResetMode,
-    SelectedHunk, StashMode,
+    CommitHistoryMode, ComparisonTarget, DiffPresentation, GitFlowBranchType, JobId, MergeVariant,
+    RepoId, ResetMode, SelectedHunk, StashMode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +158,10 @@ pub enum GitCommand {
     CreateBranch {
         branch_name: String,
     },
+    StartGitFlow {
+        branch_type: GitFlowBranchType,
+        name: String,
+    },
     AddRemote {
         remote_name: String,
         remote_url: String,
@@ -177,6 +181,9 @@ pub enum GitCommand {
         branch_name: String,
         start_point: String,
         track: bool,
+    },
+    FinishGitFlow {
+        branch_name: String,
     },
     CheckoutBranch {
         branch_ref: String,

@@ -260,6 +260,26 @@ pub enum ConfirmableOperation {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GitFlowBranchType {
+    Feature,
+    Hotfix,
+    Bugfix,
+    Release,
+}
+
+impl GitFlowBranchType {
+    #[must_use]
+    pub const fn command_name(self) -> &'static str {
+        match self {
+            Self::Feature => "feature",
+            Self::Hotfix => "hotfix",
+            Self::Bugfix => "bugfix",
+            Self::Release => "release",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingInputPrompt {
     pub repo_id: RepoId,
@@ -272,6 +292,9 @@ pub struct PendingInputPrompt {
 pub enum InputPromptOperation {
     CheckoutBranch,
     CreateBranch,
+    StartGitFlow {
+        branch_type: GitFlowBranchType,
+    },
     CreateRemote,
     ForkRemote {
         suggested_name: String,

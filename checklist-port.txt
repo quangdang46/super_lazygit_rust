@@ -79,13 +79,13 @@
 ./references/lazygit-master/pkg/commands/git_commands/file_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/file_loader_test.go
 ./references/lazygit-master/pkg/commands/git_commands/file_test.go
-./references/lazygit-master/pkg/commands/git_commands/flow.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/flow.go
 ./references/lazygit-master/pkg/commands/git_commands/flow_test.go
 ./references/lazygit-master/pkg/commands/git_commands/git_command_builder.go
 ./references/lazygit-master/pkg/commands/git_commands/git_command_builder_test.go
 ./references/lazygit-master/pkg/commands/git_commands/main_branches.go
 ./references/lazygit-master/pkg/commands/git_commands/patch.go
-./references/lazygit-master/pkg/commands/git_commands/rebase.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/rebase.go
 ./references/lazygit-master/pkg/commands/git_commands/rebase_test.go
 ./references/lazygit-master/pkg/commands/git_commands/reflog_commit_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/reflog_commit_loader_test.go
