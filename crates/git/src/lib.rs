@@ -1792,23 +1792,103 @@ fn repo_path(repo_id: &RepoId) -> GitResult<PathBuf> {
     Ok(repo_path)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct SyncPushOptions {
+    force: bool,
+    force_with_lease: bool,
+    current_branch: String,
+    upstream_remote: String,
+    upstream_branch: String,
+    set_upstream: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct SyncPullOptions {
+    remote_name: String,
+    branch_name: String,
+    fast_forward_only: bool,
+    worktree_git_dir: String,
+    worktree_path: String,
+}
+
+fn build_push_command(opts: &SyncPushOptions) -> GitResult<GitCommandBuilder> {
+    if !opts.upstream_branch.is_empty() && opts.upstream_remote.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: "must specify origin when pushing to an explicit upstream branch".to_string(),
+        });
+    }
+
+    let mut builder = GitCommandBuilder::new("push")
+        .arg_if(opts.force, ["--force"])
+        .arg_if(opts.force_with_lease, ["--force-with-lease"])
+        .arg_if(opts.set_upstream, ["--set-upstream"]);
+
+    if !opts.upstream_remote.is_empty() {
+        builder = builder.arg([OsString::from(opts.upstream_remote.clone())]);
+    }
+    if !opts.upstream_branch.is_empty() {
+        builder = builder.arg([OsString::from(format!(
+            "refs/heads/{}:{}",
+            opts.current_branch, opts.upstream_branch
+        ))]);
+    }
+
+    Ok(builder)
+}
+
+fn fetch_command_builder(fetch_all: bool) -> GitCommandBuilder {
+    GitCommandBuilder::new("fetch")
+        .arg_if(fetch_all, ["--all"])
+        .arg(["--no-write-fetch-head"])
+}
+
+fn build_pull_command(opts: &SyncPullOptions) -> GitCommandBuilder {
+    let mut builder = GitCommandBuilder::new("pull")
+        .arg(["--no-edit"])
+        .arg_if(opts.fast_forward_only, ["--ff-only"]);
+
+    if !opts.remote_name.is_empty() {
+        builder = builder.arg([OsString::from(opts.remote_name.clone())]);
+    }
+    if !opts.branch_name.is_empty() {
+        builder = builder.arg([OsString::from(format!("refs/heads/{}", opts.branch_name))]);
+    }
+
+    builder
+        .worktree_path_if(!opts.worktree_path.is_empty(), opts.worktree_path.clone())
+        .git_dir_if(
+            !opts.worktree_git_dir.is_empty(),
+            opts.worktree_git_dir.clone(),
+        )
+}
+
 fn run_fetch(repo_path: &Path) -> GitResult<()> {
     if let Some(remote) = default_remote(repo_path)? {
         run_fetch_remote(repo_path, remote.as_str())
     } else {
-        git(repo_path, ["fetch", "--all"])?;
+        git_builder(repo_path, fetch_command_builder(true))?;
         auto_forward_default_branches(repo_path)
     }
 }
 
 fn run_fetch_remote(repo_path: &Path, remote_name: &str) -> GitResult<()> {
-    git(repo_path, ["fetch", remote_name])?;
+    git_builder(
+        repo_path,
+        fetch_command_builder(false).arg([OsString::from(remote_name)]),
+    )?;
     auto_forward_default_branches(repo_path)
 }
 
 fn run_pull(repo_path: &Path) -> GitResult<()> {
     if has_upstream(repo_path)? {
-        git(repo_path, ["pull", "--ff-only"])
+        git_builder_with_env(
+            repo_path,
+            build_pull_command(&SyncPullOptions {
+                fast_forward_only: true,
+                ..SyncPullOptions::default()
+            }),
+            &[("GIT_SEQUENCE_EDITOR", OsStr::new(":"))],
+        )
     } else {
         Err(GitError::OperationFailed {
             message: "pull requires an upstream tracking branch".to_string(),
@@ -1817,16 +1897,21 @@ fn run_pull(repo_path: &Path) -> GitResult<()> {
 }
 
 fn run_push(repo_path: &Path) -> GitResult<()> {
-    if has_upstream(repo_path)? {
-        git(repo_path, ["push"])
+    let builder = if has_upstream(repo_path)? {
+        build_push_command(&SyncPushOptions::default())?
     } else {
         let branch = current_branch_name(repo_path)?;
         let remote = default_remote(repo_path)?.unwrap_or_else(|| "origin".to_string());
-        git(
-            repo_path,
-            ["push", "--set-upstream", remote.as_str(), branch.as_str()],
-        )
-    }
+        build_push_command(&SyncPushOptions {
+            current_branch: branch.clone(),
+            upstream_remote: remote,
+            upstream_branch: branch,
+            set_upstream: true,
+            ..SyncPushOptions::default()
+        })?
+    };
+
+    git_builder(repo_path, builder)
 }
 
 fn default_remote(repo_path: &Path) -> GitResult<Option<String>> {
@@ -5422,6 +5507,91 @@ mod tests {
         )?;
 
         Ok(root)
+    }
+
+    #[test]
+    fn build_push_command_matches_sync_go_argv_and_origin_guard() {
+        let builder = build_push_command(&SyncPushOptions {
+            force_with_lease: true,
+            current_branch: "master".to_string(),
+            upstream_remote: "origin".to_string(),
+            upstream_branch: "main".to_string(),
+            set_upstream: true,
+            ..SyncPushOptions::default()
+        })
+        .expect("push command should build");
+        assert_eq!(
+            builder.to_argv(),
+            vec![
+                OsString::from("git"),
+                OsString::from("push"),
+                OsString::from("--force-with-lease"),
+                OsString::from("--set-upstream"),
+                OsString::from("origin"),
+                OsString::from("refs/heads/master:main"),
+            ]
+        );
+
+        let error = build_push_command(&SyncPushOptions {
+            current_branch: "master".to_string(),
+            upstream_branch: "main".to_string(),
+            ..SyncPushOptions::default()
+        })
+        .expect_err("origin should be required for explicit upstream branch");
+        assert_eq!(
+            error,
+            GitError::OperationFailed {
+                message: "must specify origin when pushing to an explicit upstream branch"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn fetch_command_builder_matches_sync_go_argv() {
+        assert_eq!(
+            fetch_command_builder(false).to_argv(),
+            vec![
+                OsString::from("git"),
+                OsString::from("fetch"),
+                OsString::from("--no-write-fetch-head"),
+            ]
+        );
+        assert_eq!(
+            fetch_command_builder(true).to_argv(),
+            vec![
+                OsString::from("git"),
+                OsString::from("fetch"),
+                OsString::from("--all"),
+                OsString::from("--no-write-fetch-head"),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_pull_command_matches_sync_go_argv() {
+        let builder = build_pull_command(&SyncPullOptions {
+            remote_name: "origin".to_string(),
+            branch_name: "main".to_string(),
+            fast_forward_only: true,
+            worktree_git_dir: "/tmp/worktree/.git".to_string(),
+            worktree_path: "/tmp/worktree".to_string(),
+        });
+        assert_eq!(
+            builder.to_argv(),
+            vec![
+                OsString::from("git"),
+                OsString::from("--git-dir"),
+                OsString::from("/tmp/worktree/.git"),
+                OsString::from("--work-tree"),
+                OsString::from("/tmp/worktree"),
+                OsString::from("pull"),
+                OsString::from("--no-edit"),
+                OsString::from("--ff-only"),
+                OsString::from("origin"),
+                OsString::from("refs/heads/main"),
+            ]
+        );
     }
 
     #[test]
