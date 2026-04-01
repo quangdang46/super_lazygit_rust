@@ -361,6 +361,44 @@ pub struct GitCommandOutcome {
     pub summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoPaths {
+    worktree_path: PathBuf,
+    git_dir: PathBuf,
+}
+
+impl RepoPaths {
+    pub fn resolve(repo_path: &Path) -> GitResult<Self> {
+        let resolved_repo_path = canonicalize_existing_path(repo_path);
+        let worktree_path = canonicalize_existing_path(Path::new(&git_stdout(
+            &resolved_repo_path,
+            ["rev-parse", "--show-toplevel"],
+        )?));
+        let git_dir = git_stdout(&resolved_repo_path, ["rev-parse", "--git-dir"])?;
+        let git_dir = PathBuf::from(git_dir);
+        let git_dir = if git_dir.is_absolute() {
+            canonicalize_existing_path(&git_dir)
+        } else {
+            canonicalize_existing_path(&resolved_repo_path.join(git_dir))
+        };
+
+        Ok(Self {
+            worktree_path,
+            git_dir,
+        })
+    }
+
+    #[must_use]
+    pub fn worktree_path(&self) -> &Path {
+        &self.worktree_path
+    }
+
+    #[must_use]
+    pub fn git_dir(&self) -> &Path {
+        &self.git_dir
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DiffReadOptions {
     presentation: DiffPresentation,
@@ -1446,13 +1484,17 @@ fn canonicalize_existing_path(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+pub fn verify_in_git_repo(repo_path: &Path) -> GitResult<()> {
+    RepoPaths::resolve(repo_path).map(|_| ())
+}
+
 fn is_git_repo(path: &Path) -> bool {
     git_stdout(path, ["rev-parse", "--show-toplevel"]).is_ok()
 }
 
 fn repo_path(repo_id: &RepoId) -> GitResult<PathBuf> {
     let repo_path = PathBuf::from(&repo_id.0);
-    if !is_git_repo(&repo_path) {
+    if verify_in_git_repo(&repo_path).is_err() {
         return Err(GitError::RepoNotFound {
             repo_id: repo_id.clone(),
         });
@@ -1525,8 +1567,7 @@ fn current_branch_name(repo_path: &Path) -> GitResult<String> {
 }
 
 fn fetch_head_timestamp(repo_path: &Path) -> GitResult<Option<Timestamp>> {
-    let git_dir = git_stdout(repo_path, ["rev-parse", "--git-dir"])?;
-    let fetch_head = repo_path.join(git_dir).join("FETCH_HEAD");
+    let fetch_head = RepoPaths::resolve(repo_path)?.git_dir().join("FETCH_HEAD");
     match fs::metadata(fetch_head) {
         Ok(metadata) => Ok(metadata.modified().ok().map(system_time_to_timestamp)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -3751,6 +3792,70 @@ mod tests {
                     .to_string()
             )]
         );
+    }
+
+    #[test]
+    fn repo_paths_resolve_standard_repo_from_nested_path() {
+        let repo = clean_repo().expect("fixture repo");
+        repo.write_file("nested/file.txt", "nested\n")
+            .expect("nested fixture file");
+        let nested = repo.path().join("nested");
+
+        let paths = RepoPaths::resolve(&nested).expect("repo paths resolve");
+
+        assert_eq!(
+            paths.worktree_path(),
+            fs::canonicalize(repo.path()).expect("canonical repo root")
+        );
+        assert_eq!(
+            paths.git_dir(),
+            fs::canonicalize(repo.path().join(".git")).expect("canonical git dir")
+        );
+        verify_in_git_repo(&nested).expect("nested path verifies");
+    }
+
+    #[test]
+    fn repo_paths_resolve_linked_worktree_git_dir() {
+        let repo = worktree_repo().expect("fixture repo");
+        let worktree_path = repo
+            .worktree_list()
+            .expect("worktree list")
+            .lines()
+            .find_map(|line| {
+                let path = line.strip_prefix("worktree ")?;
+                path.ends_with("feature-tree").then(|| PathBuf::from(path))
+            })
+            .expect("linked worktree path");
+
+        let paths = RepoPaths::resolve(&worktree_path).expect("worktree repo paths resolve");
+
+        assert_eq!(
+            paths.worktree_path(),
+            fs::canonicalize(&worktree_path).expect("canonical worktree path")
+        );
+        assert_eq!(
+            paths.git_dir(),
+            fs::canonicalize(
+                repo.path()
+                    .join(".git")
+                    .join("worktrees")
+                    .join("feature-tree")
+            )
+            .expect("canonical linked git dir")
+        );
+        verify_in_git_repo(&worktree_path).expect("worktree path verifies");
+    }
+
+    #[test]
+    fn verify_in_git_repo_rejects_non_repo_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let canonical = fs::canonicalize(dir.path()).expect("canonical tempdir");
+
+        let error = verify_in_git_repo(dir.path()).expect_err("non-repo should fail");
+
+        assert!(matches!(error, GitError::OperationFailed { .. }));
+        assert!(error.to_string().contains("not a git repository"));
+        assert!(RepoPaths::resolve(&canonical).is_err());
     }
 
     #[test]
