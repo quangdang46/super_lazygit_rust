@@ -209,6 +209,7 @@ pub enum ConfirmableOperation {
     NukeWorkingTree,
     DeleteBranch {
         branch_name: String,
+        force: bool,
     },
     UnsetBranchUpstream {
         branch_name: String,
@@ -224,6 +225,7 @@ pub enum ConfirmableOperation {
     MergeRefIntoCurrent {
         target_ref: String,
         source_label: String,
+        variant: MergeVariant,
     },
     RebaseCurrentBranchOntoRef {
         target_ref: String,
@@ -1190,6 +1192,8 @@ pub struct RepoDetail {
     pub submodules: Vec<SubmoduleItem>,
     pub commit_input: String,
     pub merge_state: MergeState,
+    pub merge_fast_forward_preference: MergeFastForwardPreference,
+    pub fast_forward_merge_targets: BTreeMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1629,6 +1633,47 @@ pub enum MergeState {
     RebaseInProgress,
     CherryPickInProgress,
     RevertInProgress,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MergeVariant {
+    #[default]
+    Regular,
+    FastForward,
+    NoFastForward,
+    Squash,
+}
+
+impl MergeVariant {
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Regular => "Merge",
+            Self::FastForward => "Fast-forward merge",
+            Self::NoFastForward => "Non-fast-forward merge",
+            Self::Squash => "Squash merge",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MergeFastForwardPreference {
+    #[default]
+    Default,
+    FastForward,
+    NoFastForward,
+}
+
+impl MergeFastForwardPreference {
+    #[must_use]
+    pub const fn prefers_fast_forward(self) -> bool {
+        matches!(self, Self::FastForward)
+    }
+
+    #[must_use]
+    pub const fn prefers_no_fast_forward(self) -> bool {
+        matches!(self, Self::NoFastForward)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::state::{
-    CommitHistoryMode, ComparisonTarget, DiffPresentation, JobId, RepoId, ResetMode, SelectedHunk,
-    StashMode,
+    CommitHistoryMode, ComparisonTarget, DiffPresentation, JobId, MergeVariant, RepoId, ResetMode,
+    SelectedHunk, StashMode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +39,10 @@ pub enum Effect {
         ignore_whitespace_in_diff: bool,
         diff_context_lines: u16,
         rename_similarity_threshold: u8,
+    },
+    CheckBranchMerged {
+        repo_id: RepoId,
+        branch_name: String,
     },
     OpenEditor {
         cwd: PathBuf,
@@ -172,6 +176,7 @@ pub enum GitCommand {
     CreateBranchFromRef {
         branch_name: String,
         start_point: String,
+        track: bool,
     },
     CheckoutBranch {
         branch_ref: String,
@@ -209,6 +214,7 @@ pub enum GitCommand {
     },
     DeleteBranch {
         branch_name: String,
+        force: bool,
     },
     RemoveRemote {
         remote_name: String,
@@ -281,12 +287,16 @@ pub enum GitCommand {
     },
     MergeRefIntoCurrent {
         target_ref: String,
+        variant: MergeVariant,
     },
     RebaseCurrentOntoRef {
         target_ref: String,
     },
     FetchRemote {
         remote_name: String,
+    },
+    UpdateBranchRefs {
+        update_commands: String,
     },
     FetchSelectedRepo,
     PullCurrentBranch,

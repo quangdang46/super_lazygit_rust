@@ -2651,7 +2651,7 @@ impl TuiApp {
                             normalized,
                             &["M"],
                         ) {
-                            return Some(Action::MergeSelectedBranchIntoCurrent);
+                            return Some(Action::OpenMergeRebaseOptions);
                         }
 
                         if self.binding_matches_action(
@@ -2888,7 +2888,7 @@ impl TuiApp {
                             normalized,
                             &["M"],
                         ) {
-                            return Some(Action::MergeSelectedRemoteBranchIntoCurrent);
+                            return Some(Action::OpenMergeRebaseOptions);
                         }
 
                         if self.binding_matches_action(
@@ -8802,10 +8802,16 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         super_lazygit_core::ConfirmableOperation::NukeWorkingTree => {
             "Discard all local changes in this repository? This runs git reset --hard HEAD and git clean -fd, removing tracked edits and untracked files/directories.".to_string()
         }
-        super_lazygit_core::ConfirmableOperation::DeleteBranch { branch_name } => {
-            format!(
-                "Delete local branch {branch_name}? Git will refuse if it is not safely merged."
-            )
+        super_lazygit_core::ConfirmableOperation::DeleteBranch { branch_name, force } => {
+            if *force {
+                format!(
+                    "Force-delete local branch {branch_name}? This runs git branch -D {branch_name} and removes the ref even if it is not safely merged."
+                )
+            } else {
+                format!(
+                    "Delete local branch {branch_name}? Git will refuse if it is not safely merged."
+                )
+            }
         }
         super_lazygit_core::ConfirmableOperation::UnsetBranchUpstream { branch_name } => {
             format!(
@@ -8821,8 +8827,23 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
             source_label,
             target_ref,
+            variant,
         } => format!(
-            "Merge {source_label} into the current branch? This runs git merge {target_ref}."
+            "Merge {source_label} into the current branch? This runs {}.",
+            match variant {
+                super_lazygit_core::MergeVariant::Regular => {
+                    format!("git merge --no-edit {target_ref}")
+                }
+                super_lazygit_core::MergeVariant::FastForward => {
+                    format!("git merge --no-edit --ff {target_ref}")
+                }
+                super_lazygit_core::MergeVariant::NoFastForward => {
+                    format!("git merge --no-edit --no-ff {target_ref}")
+                }
+                super_lazygit_core::MergeVariant::Squash => {
+                    format!("git merge --no-edit --squash --ff {target_ref}")
+                }
+            }
         ),
         super_lazygit_core::ConfirmableOperation::ForceCheckoutRef {
             source_label,
@@ -8946,7 +8967,7 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             remote_branch_ref,
             ..
         } => format!(
-            "Enter the new local branch name. The branch will be created from {remote_branch_ref} and checked out."
+            "Enter the new local branch name. Keeping the suggested name creates a tracking branch for {remote_branch_ref}; changing it creates the branch without tracking. The branch is not checked out."
         ),
         super_lazygit_core::InputPromptOperation::RenameBranch { current_name } => {
             format!("Enter the new name for {current_name}.")
@@ -9544,6 +9565,60 @@ fn command_log_menu_lines(state: &AppState) -> Vec<String> {
         .collect()
 }
 
+fn merge_fast_forward_warning_label(current_branch_name: &str, source_label: &str) -> String {
+    format!("Merge {source_label} into {current_branch_name} (fast-forward unavailable)")
+}
+
+fn merge_branch_menu_lines(
+    detail: &RepoDetail,
+    current_branch_name: &str,
+    source_label: &str,
+) -> Vec<String> {
+    let can_fast_forward = detail
+        .fast_forward_merge_targets
+        .get(source_label)
+        .copied()
+        .unwrap_or(false);
+    let prefer_fast_forward = detail.merge_fast_forward_preference.prefers_fast_forward();
+    let prefer_no_fast_forward = detail
+        .merge_fast_forward_preference
+        .prefers_no_fast_forward();
+    let prefer_regular_fast_forward =
+        !prefer_no_fast_forward && (prefer_fast_forward || can_fast_forward);
+
+    let (first, second) = if prefer_regular_fast_forward {
+        (
+            if can_fast_forward {
+                format!("Merge {source_label} into current branch (regular, fast-forward)")
+            } else {
+                format!(
+                    "{} [disabled]",
+                    merge_fast_forward_warning_label(current_branch_name, source_label)
+                )
+            },
+            format!("Merge {source_label} into current branch (no-fast-forward)"),
+        )
+    } else {
+        (
+            format!("Merge {source_label} into current branch (regular, no-fast-forward)"),
+            if can_fast_forward {
+                format!("Merge {source_label} into current branch (fast-forward)")
+            } else {
+                format!(
+                    "{} [disabled]",
+                    merge_fast_forward_warning_label(current_branch_name, source_label)
+                )
+            },
+        )
+    };
+
+    vec![
+        first,
+        second,
+        format!("Squash merge {source_label} into current branch"),
+    ]
+}
+
 fn filter_menu_lines(state: &AppState) -> Vec<String> {
     let Some(repo_mode) = state.repo_mode.as_ref() else {
         return Vec::new();
@@ -9795,6 +9870,46 @@ fn merge_rebase_menu_lines(state: &AppState) -> Vec<String> {
     let Some(detail) = repo_mode.detail.as_ref() else {
         return entries;
     };
+
+    match repo_mode.active_subview {
+        RepoSubview::Branches => {
+            if let Some(branch) =
+                selected_branch(Some(detail), repo_mode.branches_view.selected_index)
+            {
+                if !branch.is_head {
+                    let current_branch_name = detail
+                        .branches
+                        .iter()
+                        .find(|branch| branch.is_head)
+                        .map(|branch| branch.name.as_str())
+                        .unwrap_or("current branch");
+                    entries.extend(merge_branch_menu_lines(
+                        detail,
+                        current_branch_name,
+                        &branch.name,
+                    ));
+                }
+            }
+        }
+        RepoSubview::RemoteBranches => {
+            if let Some(branch) =
+                selected_remote_branch(Some(detail), repo_mode.remote_branches_view.selected_index)
+            {
+                let current_branch_name = detail
+                    .branches
+                    .iter()
+                    .find(|branch| branch.is_head)
+                    .map(|branch| branch.name.as_str())
+                    .unwrap_or("current branch");
+                entries.extend(merge_branch_menu_lines(
+                    detail,
+                    current_branch_name,
+                    &branch.name,
+                ));
+            }
+        }
+        _ => {}
+    }
 
     if detail.merge_state == super_lazygit_core::MergeState::RebaseInProgress
         && detail.rebase_state.is_some()
@@ -12230,6 +12345,90 @@ mod tests {
 
         let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "m".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::MergeRebaseOptions)
+        );
+    }
+
+    #[test]
+    fn route_repository_branches_merge_rebase_menu_key() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "M".to_string(),
+        })));
+
+        assert_eq!(
+            result
+                .state
+                .pending_menu
+                .as_ref()
+                .map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::MergeRebaseOptions)
+        );
+    }
+
+    #[test]
+    fn route_repository_remote_branches_merge_rebase_menu_key() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::RemoteBranches,
+                remote_branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                },
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "M".to_string(),
         })));
 
         assert_eq!(
@@ -14886,17 +15085,8 @@ mod tests {
         })));
         assert_eq!(merge.state.focused_pane, PaneId::Modal);
         assert_eq!(
-            merge
-                .state
-                .pending_confirmation
-                .as_ref()
-                .map(|pending| pending.operation.clone()),
-            Some(
-                super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
-                    target_ref: "feature".to_string(),
-                    source_label: "feature".to_string(),
-                }
-            )
+            merge.state.pending_menu.as_ref().map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::MergeRebaseOptions)
         );
 
         let mut force_checkout_app = TuiApp::new(down.state.clone(), AppConfig::default());
@@ -15349,17 +15539,8 @@ mod tests {
         })));
         assert_eq!(merge.state.focused_pane, PaneId::Modal);
         assert_eq!(
-            merge
-                .state
-                .pending_confirmation
-                .as_ref()
-                .map(|pending| pending.operation.clone()),
-            Some(
-                super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
-                    target_ref: "origin/feature".to_string(),
-                    source_label: "origin/feature".to_string(),
-                }
-            )
+            merge.state.pending_menu.as_ref().map(|menu| menu.operation),
+            Some(super_lazygit_core::MenuOperation::MergeRebaseOptions)
         );
 
         let mut tag_app = TuiApp::new(down.state.clone(), AppConfig::default());
@@ -17990,6 +18171,75 @@ mod tests {
     }
 
     #[test]
+    fn merge_rebase_menu_lines_show_regular_fast_forward_order_for_branches() {
+        let repo_id = RepoId::new("repo-1");
+        let mut detail = sample_repo_detail();
+        detail.fast_forward_merge_targets =
+            std::collections::BTreeMap::from([("feature".to_string(), true)]);
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(detail),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            merge_rebase_menu_lines(&state)
+                .into_iter()
+                .take(3)
+                .collect::<Vec<_>>(),
+            vec![
+                "Merge feature into current branch (regular, fast-forward)".to_string(),
+                "Merge feature into current branch (no-fast-forward)".to_string(),
+                "Squash merge feature into current branch".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_rebase_menu_lines_mark_unavailable_fast_forward_as_disabled() {
+        let repo_id = RepoId::new("repo-1");
+        let mut detail = sample_repo_detail();
+        detail.merge_fast_forward_preference =
+            super_lazygit_core::MergeFastForwardPreference::FastForward;
+        detail.fast_forward_merge_targets =
+            std::collections::BTreeMap::from([("feature".to_string(), false)]);
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                branches_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(detail),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            merge_rebase_menu_lines(&state)
+                .into_iter()
+                .take(2)
+                .collect::<Vec<_>>(),
+            vec![
+                "Merge feature into main (fast-forward unavailable) [disabled]".to_string(),
+                "Merge feature into current branch (no-fast-forward)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn render_repo_shell_shows_tag_details() {
         let mut state = AppState {
             mode: AppMode::Repository,
@@ -18271,6 +18521,7 @@ mod tests {
             &super_lazygit_core::ConfirmableOperation::MergeRefIntoCurrent {
                 target_ref: "feature".to_string(),
                 source_label: "feature".to_string(),
+                variant: super_lazygit_core::MergeVariant::Regular,
             },
         );
         let rebase = confirmation_copy(
@@ -18283,7 +18534,7 @@ mod tests {
         assert!(unset.contains("Unset upstream for feature?"));
         assert!(unset.contains("tracking branch"));
         assert!(fast_forward.contains("git merge --ff-only origin/main"));
-        assert!(merge.contains("git merge feature"));
+        assert!(merge.contains("git merge --no-edit feature"));
         assert!(rebase.contains("git rebase origin/feature"));
         assert!(rebase.contains("rewrites local history"));
     }
@@ -18328,7 +18579,9 @@ mod tests {
         );
 
         assert!(copy.contains("origin/feature"));
-        assert!(copy.contains("created from origin/feature and checked out"));
+        assert!(copy.contains("Keeping the suggested name creates a tracking branch"));
+        assert!(copy.contains("changing it creates the branch without tracking"));
+        assert!(copy.contains("not checked out"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::state::{InputPromptOperation, ModalKind, RepoId, RepoSubview};
+use crate::state::{InputPromptOperation, MergeVariant, ModalKind, RepoId, RepoSubview};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
@@ -132,6 +132,9 @@ pub enum Action {
         kind: ModalKind,
         title: String,
     },
+    ShowWarning {
+        message: String,
+    },
     CloseTopModal,
     SelectNextMenuItem,
     SelectPreviousMenuItem,
@@ -234,6 +237,9 @@ pub enum Action {
     ForceCheckoutSelectedBranch,
     UnsetSelectedBranchUpstream,
     FastForwardSelectedBranchFromUpstream,
+    MergeSelectedRefIntoCurrent {
+        variant: MergeVariant,
+    },
     MergeSelectedBranchIntoCurrent,
     RebaseCurrentBranchOntoSelectedBranch,
     OpenSelectedBranchPullRequest,

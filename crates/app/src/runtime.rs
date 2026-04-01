@@ -18,8 +18,8 @@ use super_lazygit_core::{
     Timestamp, WorkerEvent,
 };
 use super_lazygit_git::{
-    GitCommandOutcome, GitError, GitFacade, GitResult, PatchSelectionRequest, RepoDetailRequest,
-    RepoSummaryRequest, WorkspaceScanRequest,
+    BranchMergeStatusRequest, GitCommandOutcome, GitError, GitFacade, GitResult,
+    PatchSelectionRequest, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest,
 };
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
@@ -264,6 +264,33 @@ impl AppRuntime {
                                 error: error.to_string(),
                             }));
                         }
+                    }
+                }
+                Effect::CheckBranchMerged {
+                    repo_id,
+                    branch_name,
+                } => {
+                    let result = self.git.read_branch_merge_status(BranchMergeStatusRequest {
+                        repo_id: repo_id.clone(),
+                        branch_name: branch_name.clone(),
+                    });
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+
+                    match result {
+                        Ok(merged) => follow_up_events.push(Event::Worker(
+                            WorkerEvent::BranchMergeCheckCompleted {
+                                repo_id: repo_id.clone(),
+                                branch_name: branch_name.clone(),
+                                merged,
+                            },
+                        )),
+                        Err(error) => follow_up_events.push(Event::Worker(
+                            WorkerEvent::BranchMergeCheckFailed {
+                                repo_id: repo_id.clone(),
+                                branch_name: branch_name.clone(),
+                                error: error.to_string(),
+                            },
+                        )),
                     }
                 }
                 Effect::OpenEditor { cwd, target } => {
@@ -742,6 +769,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::MergeRefIntoCurrent { .. } => "merge_ref_into_current",
         GitCommand::RebaseCurrentOntoRef { .. } => "rebase_current_onto_ref",
         GitCommand::FetchRemote { .. } => "fetch_remote",
+        GitCommand::UpdateBranchRefs { .. } => "update_branch_refs",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",

@@ -65,6 +65,16 @@ pub enum WorkerEvent {
         repo_id: RepoId,
         error: String,
     },
+    BranchMergeCheckCompleted {
+        repo_id: RepoId,
+        branch_name: String,
+        merged: bool,
+    },
+    BranchMergeCheckFailed {
+        repo_id: RepoId,
+        branch_name: String,
+        error: String,
+    },
     GitOperationStarted {
         job_id: JobId,
         repo_id: RepoId,

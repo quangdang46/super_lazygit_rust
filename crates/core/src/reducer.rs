@@ -7,10 +7,10 @@ use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
     CommitFilesMode, CommitHistoryMode, ComparisonTarget, ConfirmableOperation, DiffLineKind,
-    DiffPresentation, InputPromptOperation, JobId, MenuOperation, MergeState, MessageLevel,
-    Notification, OperationProgress, PaneId, PendingInputPrompt, PendingMenu, RepoModeState,
-    ResetMode, ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
-    MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
+    DiffPresentation, InputPromptOperation, JobId, MenuOperation, MergeFastForwardPreference,
+    MergeState, MergeVariant, MessageLevel, Notification, OperationProgress, PaneId,
+    PendingInputPrompt, PendingMenu, RepoModeState, ResetMode, ScanStatus, SelectedHunk, StashMode,
+    StatusMessage, WatcherHealth, MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
     RENAME_SIMILARITY_THRESHOLD_STEP,
 };
 
@@ -1423,6 +1423,10 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             state.focused_pane = PaneId::Modal;
             effects.push(Effect::ScheduleRender);
         }
+        Action::ShowWarning { message } => {
+            push_warning(state, message);
+            effects.push(Effect::ScheduleRender);
+        }
         Action::CloseTopModal => {
             let mut modal_return_focus = None;
             if state
@@ -1635,7 +1639,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 if merge_rebase_menu_entries(state).is_empty() {
                     push_warning(
                         state,
-                        "Merge/rebase options are only available from commit history or an active rebase.",
+                        "Merge/rebase options are only available from commit history, branch lists, or an active rebase.",
                     );
                 } else {
                     open_menu(state, repo_id, MenuOperation::MergeRebaseOptions);
@@ -2340,12 +2344,10 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 selected_branch_item(repo_mode)
                     .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
             }) {
-                open_confirmation_modal(
-                    state,
+                effects.push(Effect::CheckBranchMerged {
                     repo_id,
-                    ConfirmableOperation::DeleteBranch { branch_name },
-                );
-                effects.push(Effect::ScheduleRender);
+                    branch_name,
+                });
             }
         }
         Action::UnsetSelectedBranchUpstream => match selected_branch_upstream_target(state) {
@@ -2385,15 +2387,17 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::MergeSelectedBranchIntoCurrent => match selected_non_head_branch_ref(state) {
             Ok(Some((repo_id, target_ref))) => {
-                open_confirmation_modal(
-                    state,
-                    repo_id,
-                    ConfirmableOperation::MergeRefIntoCurrent {
-                        source_label: target_ref.clone(),
-                        target_ref,
-                    },
-                );
+                open_merge_confirmation(state, repo_id, target_ref, MergeVariant::Regular, effects);
+            }
+            Ok(None) => {}
+            Err(message) => {
+                push_warning(state, message);
                 effects.push(Effect::ScheduleRender);
+            }
+        },
+        Action::MergeSelectedRefIntoCurrent { variant } => match selected_merge_target(state) {
+            Ok(Some((repo_id, target_ref))) => {
+                open_merge_confirmation(state, repo_id, target_ref, variant, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -2649,15 +2653,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::MergeSelectedRemoteBranchIntoCurrent => match selected_remote_branch_ref(state) {
             Ok(Some((repo_id, target_ref))) => {
-                open_confirmation_modal(
-                    state,
-                    repo_id,
-                    ConfirmableOperation::MergeRefIntoCurrent {
-                        source_label: target_ref.clone(),
-                        target_ref,
-                    },
-                );
-                effects.push(Effect::ScheduleRender);
+                open_merge_confirmation(state, repo_id, target_ref, MergeVariant::Regular, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -3471,6 +3467,44 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                 text: error,
                 expires_at: None,
             });
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::BranchMergeCheckCompleted {
+            repo_id,
+            branch_name,
+            merged,
+        } => {
+            if merged {
+                let job = git_job(
+                    repo_id.clone(),
+                    GitCommand::DeleteBranch {
+                        branch_name,
+                        force: true,
+                    },
+                );
+                enqueue_git_job(state, &job, "Delete branch");
+                effects.push(Effect::RunGitCommand(job));
+            } else {
+                open_confirmation_modal(
+                    state,
+                    repo_id,
+                    ConfirmableOperation::DeleteBranch {
+                        branch_name,
+                        force: true,
+                    },
+                );
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        WorkerEvent::BranchMergeCheckFailed {
+            repo_id: _,
+            branch_name,
+            error,
+        } => {
+            push_warning(
+                state,
+                format!("Failed to determine whether {branch_name} is merged: {error}"),
+            );
             effects.push(Effect::ScheduleRender);
         }
         WorkerEvent::GitOperationStarted {
@@ -4288,8 +4322,12 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::AbortRebase => "Abort rebase".to_string(),
         ConfirmableOperation::SkipRebase => "Skip rebase step".to_string(),
         ConfirmableOperation::NukeWorkingTree => "Discard all local changes".to_string(),
-        ConfirmableOperation::DeleteBranch { branch_name } => {
-            format!("Delete branch {branch_name}")
+        ConfirmableOperation::DeleteBranch { branch_name, force } => {
+            if *force {
+                format!("Force delete branch {branch_name}")
+            } else {
+                format!("Delete branch {branch_name}")
+            }
         }
         ConfirmableOperation::UnsetBranchUpstream { branch_name } => {
             format!("Unset upstream for {branch_name}")
@@ -4301,8 +4339,12 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::ForceCheckoutRef { source_label, .. } => {
             format!("Force checkout {source_label}")
         }
-        ConfirmableOperation::MergeRefIntoCurrent { source_label, .. } => {
-            format!("Merge {source_label} into current branch")
+        ConfirmableOperation::MergeRefIntoCurrent {
+            source_label,
+            variant,
+            ..
+        } => {
+            format!("{} {source_label} into current branch", variant.title())
         }
         ConfirmableOperation::RebaseCurrentBranchOntoRef { source_label, .. } => {
             format!("Rebase current branch onto {source_label}")
@@ -4449,11 +4491,16 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Fetch remote",
         ),
-        ConfirmableOperation::DeleteBranch { branch_name } => (
+        ConfirmableOperation::DeleteBranch { branch_name, force } => (
             GitCommand::DeleteBranch {
                 branch_name: branch_name.clone(),
+                force,
             },
-            "Delete branch",
+            if force {
+                "Force delete branch"
+            } else {
+                "Delete branch"
+            },
         ),
         ConfirmableOperation::UnsetBranchUpstream { branch_name } => (
             GitCommand::UnsetBranchUpstream {
@@ -4473,11 +4520,16 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Force checkout selected ref",
         ),
-        ConfirmableOperation::MergeRefIntoCurrent { target_ref, .. } => (
+        ConfirmableOperation::MergeRefIntoCurrent {
+            target_ref,
+            variant,
+            ..
+        } => (
             GitCommand::MergeRefIntoCurrent {
                 target_ref: target_ref.clone(),
+                variant,
             },
-            "Merge selected ref into current branch",
+            variant.title(),
         ),
         ConfirmableOperation::RebaseCurrentBranchOntoRef { target_ref, .. } => (
             GitCommand::RebaseCurrentOntoRef {
@@ -4802,13 +4854,15 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
             format!("Create branch {value} from {summary}"),
         ),
         InputPromptOperation::CreateBranchFromRemote {
-            remote_branch_ref, ..
+            remote_branch_ref,
+            suggested_name,
         } => (
             PromptSubmission::Git(git_job(
                 pending.repo_id.clone(),
                 GitCommand::CreateBranchFromRef {
                     branch_name: value.clone(),
                     start_point: remote_branch_ref.clone(),
+                    track: value == *suggested_name,
                 },
             )),
             format!("Create branch {value} from {remote_branch_ref}"),
@@ -5140,6 +5194,96 @@ fn branch_upstream_menu_entries(state: &AppState) -> Vec<MenuEntry> {
         MenuEntry {
             label: format!("Fast-forward current branch from upstream ({upstream_label})"),
             action: Action::FastForwardSelectedBranchFromUpstream,
+        },
+    ]
+}
+
+fn merge_fast_forward_warning(current_branch_name: &str, source_label: &str) -> String {
+    format!("Cannot fast-forward merge {source_label} into {current_branch_name}.")
+}
+
+fn merge_menu_entry(label: String, action: Action, disabled_reason: Option<String>) -> MenuEntry {
+    match disabled_reason {
+        Some(reason) => MenuEntry {
+            label: format!("{label} [disabled]"),
+            action: Action::ShowWarning { message: reason },
+        },
+        None => MenuEntry { label, action },
+    }
+}
+
+fn merge_rebase_branch_menu_entries(
+    repo_mode: &RepoModeState,
+    source_label: &str,
+) -> Vec<MenuEntry> {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+    let current_branch_name = current_branch_item(repo_mode)
+        .map(|branch| branch.name.as_str())
+        .unwrap_or("current branch");
+    let can_fast_forward = detail
+        .fast_forward_merge_targets
+        .get(source_label)
+        .copied()
+        .unwrap_or(false);
+    let prefer_fast_forward = matches!(
+        detail.merge_fast_forward_preference,
+        MergeFastForwardPreference::FastForward
+    );
+    let prefer_no_fast_forward = matches!(
+        detail.merge_fast_forward_preference,
+        MergeFastForwardPreference::NoFastForward
+    );
+    let prefer_regular_fast_forward =
+        !prefer_no_fast_forward && (prefer_fast_forward || can_fast_forward);
+    let disabled_reason =
+        (!can_fast_forward).then(|| merge_fast_forward_warning(current_branch_name, source_label));
+
+    let (first_entry, second_entry) = if prefer_regular_fast_forward {
+        (
+            merge_menu_entry(
+                format!("Merge {source_label} into current branch (regular, fast-forward)"),
+                Action::MergeSelectedRefIntoCurrent {
+                    variant: MergeVariant::Regular,
+                },
+                disabled_reason.clone(),
+            ),
+            merge_menu_entry(
+                format!("Merge {source_label} into current branch (no-fast-forward)"),
+                Action::MergeSelectedRefIntoCurrent {
+                    variant: MergeVariant::NoFastForward,
+                },
+                None,
+            ),
+        )
+    } else {
+        (
+            merge_menu_entry(
+                format!("Merge {source_label} into current branch (regular, no-fast-forward)"),
+                Action::MergeSelectedRefIntoCurrent {
+                    variant: MergeVariant::Regular,
+                },
+                None,
+            ),
+            merge_menu_entry(
+                format!("Merge {source_label} into current branch (fast-forward)"),
+                Action::MergeSelectedRefIntoCurrent {
+                    variant: MergeVariant::FastForward,
+                },
+                disabled_reason,
+            ),
+        )
+    };
+
+    vec![
+        first_entry,
+        second_entry,
+        MenuEntry {
+            label: format!("Squash merge {source_label} into current branch"),
+            action: Action::MergeSelectedRefIntoCurrent {
+                variant: MergeVariant::Squash,
+            },
         },
     ]
 }
@@ -6188,6 +6332,14 @@ fn merge_rebase_menu_entries(state: &AppState) -> Vec<MenuEntry> {
     let Some(repo_mode) = state.repo_mode.as_ref() else {
         return entries;
     };
+
+    if let Some(source_label) = selected_merge_target(state)
+        .ok()
+        .flatten()
+        .map(|(_, source_label)| source_label)
+    {
+        entries.extend(merge_rebase_branch_menu_entries(repo_mode, &source_label));
+    }
 
     if let Some(detail) = repo_mode.detail.as_ref() {
         if repo_detail_has_rebase(detail) {
@@ -7692,6 +7844,19 @@ fn selected_non_head_branch_ref(
     )))
 }
 
+fn selected_merge_target(
+    state: &AppState,
+) -> Result<Option<(crate::state::RepoId, String)>, String> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Ok(None);
+    };
+    match repo_mode.active_subview {
+        crate::state::RepoSubview::Branches => selected_non_head_branch_ref(state),
+        crate::state::RepoSubview::RemoteBranches => selected_remote_branch_ref(state),
+        _ => Err("Select a branch or remote branch before merging it.".to_string()),
+    }
+}
+
 fn selected_remote_branch_ref(
     state: &AppState,
 ) -> Result<Option<(crate::state::RepoId, String)>, String> {
@@ -7705,6 +7870,25 @@ fn selected_remote_branch_ref(
         repo_mode.current_repo_id.clone(),
         branch.name.clone(),
     )))
+}
+
+fn open_merge_confirmation(
+    state: &mut AppState,
+    repo_id: crate::state::RepoId,
+    target_ref: String,
+    variant: MergeVariant,
+    effects: &mut Vec<Effect>,
+) {
+    open_confirmation_modal(
+        state,
+        repo_id,
+        ConfirmableOperation::MergeRefIntoCurrent {
+            source_label: target_ref.clone(),
+            target_ref,
+            variant,
+        },
+    );
+    effects.push(Effect::ScheduleRender);
 }
 
 fn selected_remote_branch_upstream_target(
@@ -9255,6 +9439,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::DeinitAllSubmodules => "deinit-all-submodules",
         GitCommand::RemoveSubmodule { .. } => "remove-submodule",
         GitCommand::SetBranchUpstream { .. } => "set-branch-upstream",
+        GitCommand::UpdateBranchRefs { .. } => "update-branch-refs",
         GitCommand::FetchSelectedRepo => "fetch-selected-repo",
         GitCommand::PullCurrentBranch => "pull-current-branch",
         GitCommand::PushCurrentBranch => "push-current-branch",
@@ -9349,13 +9534,14 @@ mod tests {
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
         CommitHistoryMode, CommitItem, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
         DiffModel, DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId,
-        MenuOperation, MergeState, MessageLevel, ModalKind, PaneId, RebaseKind, RebaseState,
-        ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState,
-        RepoSummary, ScanStatus, SelectedHunk, StashItem, StashMode, SubmoduleItem, Timestamp,
-        WatcherHealth, WorkspaceFilterMode, WorktreeItem,
+        MenuOperation, MergeFastForwardPreference, MergeState, MergeVariant, MessageLevel,
+        ModalKind, OperationProgress, PaneId, RebaseKind, RebaseState, ReflogItem, RepoDetail,
+        RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState, RepoSummary, ScanStatus,
+        SelectedHunk, StashItem, StashMode, SubmoduleItem, Timestamp, WatcherHealth,
+        WorkspaceFilterMode, WorktreeItem,
     };
 
-    use super::reduce;
+    use super::{merge_rebase_menu_entries, reduce};
 
     fn workspace_summary(repo_id: &str) -> RepoSummary {
         RepoSummary {
@@ -10672,7 +10858,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_selected_branch_opens_confirmation_modal() {
+    fn delete_selected_branch_checks_merge_status_first() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
             mode: AppMode::Repository,
@@ -10704,6 +10890,94 @@ mod tests {
 
         let result = reduce(state, Event::Action(Action::DeleteSelectedBranch));
 
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result.effects,
+            vec![Effect::CheckBranchMerged {
+                repo_id,
+                branch_name: "feature".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn merged_branch_delete_runs_without_confirmation() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::BranchMergeCheckCompleted {
+                repo_id: repo_id.clone(),
+                branch_name: "feature".to_string(),
+                merged: true,
+            }),
+        );
+
+        let expected_job = GitCommandRequest {
+            job_id: JobId::new("git:repo-1:delete-branch"),
+            repo_id: repo_id.clone(),
+            command: GitCommand::DeleteBranch {
+                branch_name: "feature".to_string(),
+                force: true,
+            },
+        };
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&expected_job.job_id)
+                .map(|job| job.state.clone()),
+            Some(BackgroundJobState::Queued)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.operation_progress.clone()),
+            Some(OperationProgress::Running {
+                job_id: expected_job.job_id.clone(),
+                summary: "Delete branch".to_string(),
+            })
+        );
+        assert_eq!(result.effects, vec![Effect::RunGitCommand(expected_job)]);
+    }
+
+    #[test]
+    fn unmerged_branch_delete_opens_force_delete_confirmation() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::BranchMergeCheckCompleted {
+                repo_id: repo_id.clone(),
+                branch_name: "feature".to_string(),
+                merged: false,
+            }),
+        );
+
         assert_eq!(result.state.focused_pane, PaneId::Modal);
         assert_eq!(
             result
@@ -10714,7 +10988,8 @@ mod tests {
             Some((
                 repo_id,
                 ConfirmableOperation::DeleteBranch {
-                    branch_name: "feature".to_string()
+                    branch_name: "feature".to_string(),
+                    force: true,
                 }
             ))
         );
@@ -11005,8 +11280,108 @@ mod tests {
                 ConfirmableOperation::MergeRefIntoCurrent {
                     target_ref: "feature".to_string(),
                     source_label: "feature".to_string(),
+                    variant: MergeVariant::Regular,
                 }
             ))
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn merge_selected_ref_into_current_uses_requested_variant_for_branch_view() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: Some("origin/feature".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::MergeSelectedRefIntoCurrent {
+                variant: MergeVariant::Squash,
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::MergeRefIntoCurrent {
+                target_ref: "feature".to_string(),
+                source_label: "feature".to_string(),
+                variant: MergeVariant::Squash,
+            })
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn merge_selected_ref_into_current_uses_requested_variant_for_remote_branch_view() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(crate::state::RepoModeState {
+                active_subview: RepoSubview::RemoteBranches,
+                detail: Some(RepoDetail {
+                    remote_branches: vec![crate::state::RemoteBranchItem {
+                        name: "origin/feature".to_string(),
+                        remote_name: "origin".to_string(),
+                        branch_name: "feature".to_string(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                remote_branches_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..crate::state::RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::MergeSelectedRefIntoCurrent {
+                variant: MergeVariant::FastForward,
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::MergeRefIntoCurrent {
+                target_ref: "origin/feature".to_string(),
+                source_label: "origin/feature".to_string(),
+                variant: MergeVariant::FastForward,
+            })
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
     }
@@ -13361,6 +13736,229 @@ mod tests {
     }
 
     #[test]
+    fn open_merge_rebase_options_opens_menu_from_branches() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: Some("origin/feature".to_string()),
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenMergeRebaseOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                repo_id,
+                MenuOperation::MergeRebaseOptions,
+                0,
+                PaneId::RepoDetail
+            ))
+        );
+    }
+
+    #[test]
+    fn open_merge_rebase_options_opens_menu_from_remote_branches() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::RemoteBranches,
+                remote_branches_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                detail: Some(RepoDetail {
+                    remote_branches: vec![crate::state::RemoteBranchItem {
+                        name: "origin/feature".to_string(),
+                        remote_name: "origin".to_string(),
+                        branch_name: "feature".to_string(),
+                    }],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenMergeRebaseOptions));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.repo_id.clone(),
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                repo_id,
+                MenuOperation::MergeRebaseOptions,
+                0,
+                PaneId::RepoDetail
+            ))
+        );
+    }
+
+    #[test]
+    fn merge_rebase_menu_entries_follow_fast_forward_order_for_mergeable_branch() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: Some("origin/feature".to_string()),
+                        },
+                    ],
+                    merge_fast_forward_preference: MergeFastForwardPreference::Default,
+                    fast_forward_merge_targets: std::collections::BTreeMap::from([(
+                        "feature".to_string(),
+                        true,
+                    )]),
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let entries = merge_rebase_menu_entries(&state);
+
+        assert_eq!(
+            entries
+                .iter()
+                .take(3)
+                .map(|entry| entry.label.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Merge feature into current branch (regular, fast-forward)",
+                "Merge feature into current branch (no-fast-forward)",
+                "Squash merge feature into current branch",
+            ]
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .take(3)
+                .map(|entry| entry.action.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                Action::MergeSelectedRefIntoCurrent {
+                    variant: MergeVariant::Regular,
+                },
+                Action::MergeSelectedRefIntoCurrent {
+                    variant: MergeVariant::NoFastForward,
+                },
+                Action::MergeSelectedRefIntoCurrent {
+                    variant: MergeVariant::Squash,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_rebase_menu_entries_disable_fast_forward_when_preference_requires_it() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            upstream: Some("origin/main".to_string()),
+                        },
+                        crate::state::BranchItem {
+                            name: "feature".to_string(),
+                            is_head: false,
+                            upstream: Some("origin/feature".to_string()),
+                        },
+                    ],
+                    merge_fast_forward_preference: MergeFastForwardPreference::FastForward,
+                    fast_forward_merge_targets: std::collections::BTreeMap::from([(
+                        "feature".to_string(),
+                        false,
+                    )]),
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let entries = merge_rebase_menu_entries(&state);
+
+        assert_eq!(
+            entries.first().map(|entry| entry.label.as_str()),
+            Some("Merge feature into current branch (regular, fast-forward) [disabled]")
+        );
+        assert_eq!(
+            entries.first().map(|entry| entry.action.clone()),
+            Some(Action::ShowWarning {
+                message: "Cannot fast-forward merge feature into main.".to_string(),
+            })
+        );
+        assert_eq!(
+            entries.get(1).map(|entry| entry.action.clone()),
+            Some(Action::MergeSelectedRefIntoCurrent {
+                variant: MergeVariant::NoFastForward,
+            })
+        );
+    }
+
+    #[test]
     fn open_bisect_options_opens_menu_from_commit_history() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -14858,6 +15456,47 @@ mod tests {
                 command: GitCommand::CreateBranchFromRef {
                     branch_name: "feature-local".to_string(),
                     start_point: "origin/feature".to_string(),
+                    track: false,
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_create_branch_from_remote_prompt_tracks_when_using_suggested_name() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "New local branch from origin/feature",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateBranchFromRemote {
+                    remote_branch_ref: "origin/feature".to_string(),
+                    suggested_name: "feature".to_string(),
+                },
+                value: "feature".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:create-branch-from-ref");
+
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::CreateBranchFromRef {
+                    branch_name: "feature".to_string(),
+                    start_point: "origin/feature".to_string(),
+                    track: true,
                 },
             })]
         );

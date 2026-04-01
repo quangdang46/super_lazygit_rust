@@ -13,10 +13,10 @@ use super_lazygit_core::{
     BisectState, BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget,
     Diagnostics, DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel,
     DiffPresentation, FileStatus, FileStatusKind, GitCommand, GitCommandRequest, HeadKind,
-    MergeState, PatchApplicationMode, RebaseKind, RebaseStartMode, RebaseState, ReflogItem,
-    RemoteBranchItem, RemoteItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode,
-    SelectedHunk, StashItem, StashMode, SubmoduleItem, TagItem, Timestamp, WatcherFreshness,
-    WorktreeItem,
+    MergeFastForwardPreference, MergeState, MergeVariant, PatchApplicationMode, RebaseKind,
+    RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteItem, RemoteSummary,
+    RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, SubmoduleItem,
+    TagItem, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -29,6 +29,7 @@ const GIT_OPTIONAL_LOCKS_DISABLED: &str = "0";
 const GIT_INDEX_LOCK_MARKER: &str = ".git/index.lock";
 const GIT_INDEX_LOCK_RETRY_COUNT: usize = 5;
 const GIT_INDEX_LOCK_RETRY_WAIT: Duration = Duration::from_millis(50);
+const DEFAULT_MAIN_BRANCH_NAMES: [&str; 2] = ["master", "main"];
 
 pub trait GitBackend: Send + Sync + 'static {
     fn kind(&self) -> GitBackendKind;
@@ -38,6 +39,8 @@ pub trait GitBackend: Send + Sync + 'static {
     fn read_repo_summary(&self, request: RepoSummaryRequest) -> GitResult<RepoSummary>;
 
     fn read_repo_detail(&self, request: RepoDetailRequest) -> GitResult<RepoDetail>;
+
+    fn read_branch_merge_status(&self, request: BranchMergeStatusRequest) -> GitResult<bool>;
 
     fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel>;
 
@@ -114,6 +117,16 @@ impl GitFacade {
     pub fn read_repo_detail(&mut self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
         let operation = GitOperationKind::ReadRepoDetail;
         self.execute_routed(operation, |backend| backend.read_repo_detail(request))
+    }
+
+    pub fn read_branch_merge_status(
+        &mut self,
+        request: BranchMergeStatusRequest,
+    ) -> GitResult<bool> {
+        let operation = GitOperationKind::ReadBranchMergeStatus;
+        self.execute_routed(operation, |backend| {
+            backend.read_branch_merge_status(request)
+        })
     }
 
     pub fn read_diff(&mut self, request: DiffRequest) -> GitResult<DiffModel> {
@@ -213,6 +226,7 @@ pub enum GitOperationKind {
     ScanWorkspace,
     ReadRepoSummary,
     ReadRepoDetail,
+    ReadBranchMergeStatus,
     ReadDiff,
     WriteCommand,
 }
@@ -224,6 +238,7 @@ impl GitOperationKind {
             Self::ScanWorkspace => "scan_workspace",
             Self::ReadRepoSummary => "read_repo_summary",
             Self::ReadRepoDetail => "read_repo_detail",
+            Self::ReadBranchMergeStatus => "read_branch_merge_status",
             Self::ReadDiff => "read_diff",
             Self::WriteCommand => "write_command",
         }
@@ -235,6 +250,7 @@ impl GitOperationKind {
             Self::ScanWorkspace => GitBackendCapability::WorkspaceScan,
             Self::ReadRepoSummary => GitBackendCapability::SummaryRead,
             Self::ReadRepoDetail => GitBackendCapability::DetailRead,
+            Self::ReadBranchMergeStatus => GitBackendCapability::DetailRead,
             Self::ReadDiff => GitBackendCapability::DiffRead,
             Self::WriteCommand => GitBackendCapability::Write,
         }
@@ -300,6 +316,7 @@ impl GitBackendRoutingPolicy {
             GitOperationKind::ScanWorkspace => self.workspace_scans,
             GitOperationKind::ReadRepoSummary => self.summary_reads,
             GitOperationKind::ReadRepoDetail => self.detail_reads,
+            GitOperationKind::ReadBranchMergeStatus => self.detail_reads,
             GitOperationKind::ReadDiff => self.diff_reads,
             GitOperationKind::WriteCommand => self.writes,
         };
@@ -339,6 +356,12 @@ pub struct RepoDetailRequest {
     pub ignore_whitespace_in_diff: bool,
     pub diff_context_lines: u16,
     pub rename_similarity_threshold: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchMergeStatusRequest {
+    pub repo_id: RepoId,
+    pub branch_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -450,6 +473,12 @@ impl GitBackend for NoopGitBackend {
     }
 
     fn read_repo_detail(&self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
+        Err(GitError::RepoNotFound {
+            repo_id: request.repo_id,
+        })
+    }
+
+    fn read_branch_merge_status(&self, request: BranchMergeStatusRequest) -> GitResult<bool> {
         Err(GitError::RepoNotFound {
             repo_id: request.repo_id,
         })
@@ -578,13 +607,16 @@ impl GitBackend for CliGitBackend {
             request.commit_ref.as_deref(),
             request.commit_history_mode,
         );
+        let branches = read_branches(&repo_path);
         let remote_branches = read_remote_branches(&repo_path);
+        let fast_forward_merge_targets =
+            read_fast_forward_merge_targets(&repo_path, &branches, &remote_branches);
         let remotes = read_remotes(&repo_path, &remote_branches);
         let submodules = read_submodules(&repo_path);
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
-            branches: read_branches(&repo_path),
+            branches,
             remotes,
             remote_branches,
             tags: read_tags(&repo_path),
@@ -598,7 +630,14 @@ impl GitBackend for CliGitBackend {
             submodules,
             commit_input: String::new(),
             merge_state: read_merge_state(&repo_path),
+            merge_fast_forward_preference: read_merge_fast_forward_preference(&repo_path),
+            fast_forward_merge_targets,
         })
+    }
+
+    fn read_branch_merge_status(&self, request: BranchMergeStatusRequest) -> GitResult<bool> {
+        let repo_path = repo_path(&request.repo_id)?;
+        is_branch_merged(&repo_path, &request.branch_name)
     }
 
     fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel> {
@@ -874,12 +913,17 @@ impl GitBackend for CliGitBackend {
             GitCommand::CreateBranchFromRef {
                 branch_name,
                 start_point,
+                track,
             } => {
                 git(
                     &repo_path,
-                    ["checkout", "-b", branch_name.as_str(), start_point.as_str()],
+                    create_branch_from_ref_args(branch_name, start_point, *track),
                 )?;
-                format!("Created and checked out {branch_name} from {start_point}")
+                if *track {
+                    format!("Created {branch_name} tracking {start_point}")
+                } else {
+                    format!("Created {branch_name} from {start_point} without tracking")
+                }
             }
             GitCommand::CreateBranchFromStash {
                 stash_ref,
@@ -976,9 +1020,13 @@ impl GitBackend for CliGitBackend {
                 rename_stash(&repo_path, stash_ref, message)?;
                 format!("Renamed {stash_ref}")
             }
-            GitCommand::DeleteBranch { branch_name } => {
-                git(&repo_path, ["branch", "-d", branch_name.as_str()])?;
-                format!("Deleted {branch_name}")
+            GitCommand::DeleteBranch { branch_name, force } => {
+                git(&repo_path, delete_branch_args(branch_name, *force))?;
+                if *force {
+                    format!("Force-deleted {branch_name}")
+                } else {
+                    format!("Deleted {branch_name}")
+                }
             }
             GitCommand::RemoveRemote { remote_name } => {
                 git(&repo_path, ["remote", "remove", remote_name.as_str()])?;
@@ -1183,17 +1231,27 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["merge", "--ff-only", upstream_ref.as_str()])?;
                 format!("Fast-forwarded current branch from {upstream_ref}")
             }
-            GitCommand::MergeRefIntoCurrent { target_ref } => {
-                git(&repo_path, ["merge", target_ref.as_str()])?;
-                format!("Merged {target_ref} into current branch")
+            GitCommand::MergeRefIntoCurrent {
+                target_ref,
+                variant,
+            } => {
+                git(&repo_path, merge_ref_args(target_ref, *variant))?;
+                format!(
+                    "{} {target_ref} into current branch",
+                    merged_summary_verb(*variant)
+                )
             }
             GitCommand::RebaseCurrentOntoRef { target_ref } => {
                 git(&repo_path, ["rebase", target_ref.as_str()])?;
                 format!("Rebased current branch onto {target_ref}")
             }
             GitCommand::FetchRemote { remote_name } => {
-                git(&repo_path, ["fetch", remote_name.as_str()])?;
+                run_fetch_remote(&repo_path, remote_name)?;
                 format!("Fetched {remote_name}")
+            }
+            GitCommand::UpdateBranchRefs { update_commands } => {
+                update_branch_refs(&repo_path, update_commands)?;
+                "Updated branch refs".to_string()
             }
             GitCommand::FetchSelectedRepo => {
                 run_fetch(&repo_path)?;
@@ -1398,6 +1456,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::MergeRefIntoCurrent { .. } => "merge_ref_into_current",
         GitCommand::RebaseCurrentOntoRef { .. } => "rebase_current_onto_ref",
         GitCommand::FetchRemote { .. } => "fetch_remote",
+        GitCommand::UpdateBranchRefs { .. } => "update_branch_refs",
         GitCommand::FetchSelectedRepo => "fetch_selected_repo",
         GitCommand::PullCurrentBranch => "pull_current_branch",
         GitCommand::PushCurrentBranch => "push_current_branch",
@@ -1510,10 +1569,16 @@ fn repo_path(repo_id: &RepoId) -> GitResult<PathBuf> {
 
 fn run_fetch(repo_path: &Path) -> GitResult<()> {
     if let Some(remote) = default_remote(repo_path)? {
-        git(repo_path, ["fetch", remote.as_str()])
+        run_fetch_remote(repo_path, remote.as_str())
     } else {
-        git(repo_path, ["fetch", "--all"])
+        git(repo_path, ["fetch", "--all"])?;
+        auto_forward_default_branches(repo_path)
     }
+}
+
+fn run_fetch_remote(repo_path: &Path, remote_name: &str) -> GitResult<()> {
+    git(repo_path, ["fetch", remote_name])?;
+    auto_forward_default_branches(repo_path)
 }
 
 fn run_pull(repo_path: &Path) -> GitResult<()> {
@@ -2042,6 +2107,306 @@ where
         return Err(command_failure(output));
     }
     Ok(())
+}
+
+fn delete_branch_args(branch_name: &str, force: bool) -> Vec<OsString> {
+    vec![
+        OsString::from("branch"),
+        OsString::from(if force { "-D" } else { "-d" }),
+        OsString::from(branch_name),
+    ]
+}
+
+fn create_branch_from_ref_args(branch_name: &str, start_point: &str, track: bool) -> Vec<OsString> {
+    vec![
+        OsString::from("branch"),
+        OsString::from(if track { "--track" } else { "--no-track" }),
+        OsString::from(branch_name),
+        OsString::from(start_point),
+    ]
+}
+
+fn merge_ref_args(target_ref: &str, variant: MergeVariant) -> Vec<OsString> {
+    let mut args = vec![OsString::from("merge"), OsString::from("--no-edit")];
+    match variant {
+        MergeVariant::Regular => {}
+        MergeVariant::FastForward => args.push(OsString::from("--ff")),
+        MergeVariant::NoFastForward => args.push(OsString::from("--no-ff")),
+        MergeVariant::Squash => {
+            args.push(OsString::from("--squash"));
+            args.push(OsString::from("--ff"));
+        }
+    }
+    args.push(OsString::from(target_ref));
+    args
+}
+
+fn merged_summary_verb(variant: MergeVariant) -> &'static str {
+    match variant {
+        MergeVariant::Regular | MergeVariant::FastForward | MergeVariant::NoFastForward => "Merged",
+        MergeVariant::Squash => "Squash-merged",
+    }
+}
+
+fn is_branch_merged(repo_path: &Path, branch_name: &str) -> GitResult<bool> {
+    let mut refs = vec![String::from("HEAD")];
+    if branch_has_upstream(repo_path, branch_name)? {
+        refs.push(format!("{branch_name}@{{upstream}}"));
+    }
+    refs.extend(existing_main_branch_refs(repo_path)?);
+
+    let mut args = vec![
+        OsString::from("rev-list"),
+        OsString::from("--max-count=1"),
+        OsString::from(branch_name),
+    ];
+    args.extend(
+        refs.into_iter()
+            .map(|reference| OsString::from(format!("^{reference}"))),
+    );
+    args.push(OsString::from("--"));
+
+    Ok(git_stdout(repo_path, args)?.trim().is_empty())
+}
+
+fn can_do_fast_forward_merge(repo_path: &Path, ref_name: &str) -> bool {
+    git_output(repo_path, ["merge-base", "--is-ancestor", "HEAD", ref_name])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn branch_has_upstream(repo_path: &Path, branch_name: &str) -> GitResult<bool> {
+    let upstream = format!("{branch_name}@{{u}}");
+    Ok(git_output(
+        repo_path,
+        ["rev-parse", "--symbolic-full-name", upstream.as_str()],
+    )?
+    .status
+    .success())
+}
+
+fn existing_main_branch_refs(repo_path: &Path) -> GitResult<Vec<String>> {
+    let mut refs = Vec::new();
+    let mut seen = HashSet::new();
+
+    for branch_name in DEFAULT_MAIN_BRANCH_NAMES {
+        if let Some(reference) = resolve_main_branch_ref(repo_path, branch_name)? {
+            if seen.insert(reference.clone()) {
+                refs.push(reference);
+            }
+        }
+    }
+
+    Ok(refs)
+}
+
+fn resolve_main_branch_ref(repo_path: &Path, branch_name: &str) -> GitResult<Option<String>> {
+    let upstream = format!("{branch_name}@{{u}}");
+    if let Ok(reference) = git_stdout(
+        repo_path,
+        ["rev-parse", "--symbolic-full-name", upstream.as_str()],
+    ) {
+        let reference = reference.trim().to_string();
+        if !reference.is_empty() {
+            return Ok(Some(reference));
+        }
+    }
+
+    for reference in [
+        format!("refs/remotes/origin/{branch_name}"),
+        format!("refs/heads/{branch_name}"),
+    ] {
+        if git_output(
+            repo_path,
+            ["rev-parse", "--verify", "--quiet", reference.as_str()],
+        )?
+        .status
+        .success()
+        {
+            return Ok(Some(reference));
+        }
+    }
+
+    Ok(None)
+}
+
+fn read_merge_fast_forward_preference(repo_path: &Path) -> MergeFastForwardPreference {
+    match git_stdout_allow_failure(repo_path, ["config", "--get", "merge.ff"]) {
+        Ok(value) => match value.trim() {
+            "true" | "only" => MergeFastForwardPreference::FastForward,
+            "false" => MergeFastForwardPreference::NoFastForward,
+            _ => MergeFastForwardPreference::Default,
+        },
+        Err(_) => MergeFastForwardPreference::Default,
+    }
+}
+
+fn read_fast_forward_merge_targets(
+    repo_path: &Path,
+    branches: &[BranchItem],
+    remote_branches: &[RemoteBranchItem],
+) -> BTreeMap<String, bool> {
+    let mut targets = BTreeMap::new();
+
+    for reference in branches
+        .iter()
+        .filter(|branch| !branch.is_head)
+        .map(|branch| branch.name.as_str())
+        .chain(remote_branches.iter().map(|branch| branch.name.as_str()))
+    {
+        targets
+            .entry(reference.to_string())
+            .or_insert_with(|| can_do_fast_forward_merge(repo_path, reference));
+    }
+
+    targets
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AutoForwardBranchCandidate {
+    name: String,
+    full_ref: String,
+    upstream_full_ref: String,
+    commit_hash: String,
+    is_head: bool,
+}
+
+fn auto_forward_default_branches(repo_path: &Path) -> GitResult<()> {
+    let update_commands = collect_auto_forward_branch_updates(repo_path)?;
+    update_branch_refs(repo_path, &update_commands)
+}
+
+fn collect_auto_forward_branch_updates(repo_path: &Path) -> GitResult<String> {
+    let checked_out_branch_refs = read_checked_out_branch_refs(repo_path)?;
+    let mut update_commands = String::new();
+
+    for branch in read_auto_forward_branch_candidates(repo_path)? {
+        if branch.is_head
+            || branch.upstream_full_ref.is_empty()
+            || !DEFAULT_MAIN_BRANCH_NAMES.contains(&branch.name.as_str())
+            || checked_out_branch_refs.contains(branch.full_ref.as_str())
+            || !ref_exists(repo_path, branch.upstream_full_ref.as_str())?
+        {
+            continue;
+        }
+
+        let (ahead, behind) = branch_divergence_counts(
+            repo_path,
+            branch.full_ref.as_str(),
+            branch.upstream_full_ref.as_str(),
+        )?;
+        if behind > 0 && ahead == 0 {
+            update_commands.push_str(
+                format!(
+                    "update {} {} {}\n",
+                    branch.full_ref, branch.upstream_full_ref, branch.commit_hash
+                )
+                .as_str(),
+            );
+        }
+    }
+
+    Ok(update_commands)
+}
+
+fn read_auto_forward_branch_candidates(
+    repo_path: &Path,
+) -> GitResult<Vec<AutoForwardBranchCandidate>> {
+    git_stdout(
+        repo_path,
+        [
+            "for-each-ref",
+            "--format=%(HEAD)%00%(refname:short)%00%(refname)%00%(upstream)%00%(objectname)",
+            "refs/heads",
+        ],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .filter_map(parse_auto_forward_branch_candidate)
+            .collect()
+    })
+}
+
+fn parse_auto_forward_branch_candidate(line: &str) -> Option<AutoForwardBranchCandidate> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut parts = trimmed.split('\0');
+    let head = parts.next().unwrap_or_default().trim();
+    let name = normalize_local_branch_name(parts.next().unwrap_or_default().trim());
+    let full_ref = parts.next().unwrap_or_default().trim().to_string();
+    let upstream_full_ref = parts.next().unwrap_or_default().trim().to_string();
+    let commit_hash = parts.next().unwrap_or_default().trim().to_string();
+
+    if name.is_empty() || full_ref.is_empty() || commit_hash.is_empty() {
+        return None;
+    }
+
+    Some(AutoForwardBranchCandidate {
+        name: name.to_string(),
+        full_ref,
+        upstream_full_ref,
+        commit_hash,
+        is_head: head == "*",
+    })
+}
+
+fn read_checked_out_branch_refs(repo_path: &Path) -> GitResult<HashSet<String>> {
+    Ok(
+        git_stdout_allow_failure(repo_path, ["worktree", "list", "--porcelain"])?
+            .lines()
+            .filter_map(|line| line.strip_prefix("branch "))
+            .map(str::trim)
+            .filter(|branch_ref| !branch_ref.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+fn branch_divergence_counts(
+    repo_path: &Path,
+    local_ref: &str,
+    upstream_ref: &str,
+) -> GitResult<(usize, usize)> {
+    let refspec = format!("{local_ref}...{upstream_ref}");
+    let counts = git_stdout(
+        repo_path,
+        ["rev-list", "--left-right", "--count", refspec.as_str()],
+    )?;
+    let mut parts = counts.split_whitespace();
+    let ahead = parse_divergence_count(parts.next())?;
+    let behind = parse_divergence_count(parts.next())?;
+    Ok((ahead, behind))
+}
+
+fn parse_divergence_count(raw: Option<&str>) -> GitResult<usize> {
+    raw.unwrap_or_default()
+        .parse::<usize>()
+        .map_err(|error| GitError::OperationFailed {
+            message: format!("failed to parse branch divergence count: {error}"),
+        })
+}
+
+fn ref_exists(repo_path: &Path, reference: &str) -> GitResult<bool> {
+    Ok(
+        git_output(repo_path, ["rev-parse", "--verify", "--quiet", reference])?
+            .status
+            .success(),
+    )
+}
+
+fn update_branch_refs(repo_path: &Path, update_commands: &str) -> GitResult<()> {
+    if update_commands.trim().is_empty() {
+        return Ok(());
+    }
+    git_with_stdin(
+        repo_path,
+        ["update-ref", "--stdin"],
+        update_commands.as_bytes(),
+    )
 }
 
 fn git_with_stdin<I, S>(repo_path: &Path, args: I, stdin: &[u8]) -> GitResult<()>
@@ -3608,6 +3973,10 @@ mod tests {
             Ok(RepoDetail::default())
         }
 
+        fn read_branch_merge_status(&self, _request: BranchMergeStatusRequest) -> GitResult<bool> {
+            Ok(true)
+        }
+
         fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel> {
             Ok(DiffModel {
                 selected_path: request.selected_path,
@@ -3744,6 +4113,12 @@ mod tests {
         );
         assert_eq!(
             facade.route_for(GitOperationKind::ReadRepoSummary).backend,
+            GitBackendKind::Cli
+        );
+        assert_eq!(
+            facade
+                .route_for(GitOperationKind::ReadBranchMergeStatus)
+                .backend,
             GitBackendKind::Cli
         );
     }
@@ -4705,6 +5080,69 @@ mod tests {
         assert!(current.is_head);
         assert!(current.upstream.is_none());
         assert!(current.name.contains("HEAD"));
+    }
+
+    #[test]
+    fn cli_backend_reads_merge_fast_forward_preference_from_git_config() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.git(["config", "merge.ff", "false"])
+            .expect("set merge.ff");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert_eq!(
+            detail.merge_fast_forward_preference,
+            MergeFastForwardPreference::NoFastForward
+        );
+    }
+
+    #[test]
+    fn cli_backend_records_fast_forward_merge_targets_for_branches() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.checkout_new_branch("feature")
+            .expect("create feature branch");
+        repo.write_file("feature.txt", "feature work\n")
+            .expect("write feature file");
+        repo.commit_all("feature work")
+            .expect("commit feature work");
+        repo.checkout("main").expect("checkout main");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert_eq!(
+            detail.fast_forward_merge_targets.get("feature"),
+            Some(&true)
+        );
     }
 
     #[test]
@@ -6684,6 +7122,177 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_updates_branch_refs_via_git_update_ref_stdin() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.checkout_new_branch("feature")
+            .expect("create feature branch");
+        let feature_before = repo.rev_parse("feature").expect("feature before");
+        repo.checkout("main").expect("checkout main");
+        repo.append_file("shared.txt", "main advance\n")
+            .expect("advance main");
+        repo.commit_all("main advance")
+            .expect("commit main advance");
+        let main_after = repo.rev_parse("main").expect("main after");
+
+        let backend = CliGitBackend;
+        let updated = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-update-branch-refs"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::UpdateBranchRefs {
+                    update_commands: format!(
+                        "update refs/heads/feature refs/heads/main {feature_before}\n"
+                    ),
+                },
+            })
+            .expect("update-ref should succeed");
+
+        assert_eq!(updated.summary, "Updated branch refs");
+        assert_eq!(
+            repo.rev_parse("feature").expect("feature after"),
+            main_after
+        );
+    }
+
+    #[test]
+    fn cli_backend_fetch_selected_repo_auto_forwards_main_branches_only_by_default() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        seed.commit_all("initial").expect("initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("add remote");
+        seed.push("origin", "HEAD:main").expect("push main");
+        seed.checkout_new_branch("feature")
+            .expect("create feature branch");
+        seed.write_file("feature.txt", "feature base\n")
+            .expect("write feature file");
+        seed.commit_all("feature initial")
+            .expect("commit feature initial");
+        seed.push("origin", "HEAD:feature").expect("push feature");
+
+        let repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        repo.git(["branch", "--set-upstream-to=origin/main", "main"])
+            .expect("set main upstream");
+        repo.git(["branch", "--track", "feature", "origin/feature"])
+            .expect("track feature");
+        repo.git(["checkout", "-b", "topic", "main"])
+            .expect("checkout topic");
+        let local_feature_before = repo.rev_parse("feature").expect("local feature before");
+
+        let upstream = TempRepo::clone_from(remote.path()).expect("upstream fixture");
+        upstream
+            .git(["checkout", "-B", "main", "origin/main"])
+            .expect("checkout main upstream");
+        upstream
+            .append_file("shared.txt", "remote main advance\n")
+            .expect("advance remote main");
+        upstream
+            .commit_all("remote main advance")
+            .expect("commit remote main advance");
+        upstream
+            .push("origin", "HEAD:main")
+            .expect("push remote main");
+        let remote_main_after = upstream.rev_parse("HEAD").expect("remote main head");
+
+        upstream
+            .git(["checkout", "-B", "feature", "origin/feature"])
+            .expect("checkout feature upstream");
+        upstream
+            .append_file("feature.txt", "remote feature advance\n")
+            .expect("advance remote feature");
+        upstream
+            .commit_all("remote feature advance")
+            .expect("commit remote feature advance");
+        upstream
+            .push("origin", "HEAD:feature")
+            .expect("push remote feature");
+        let remote_feature_after = upstream.rev_parse("HEAD").expect("remote feature head");
+
+        let backend = CliGitBackend;
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-fetch-auto-forward-default"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::FetchSelectedRepo,
+            })
+            .expect("fetch should succeed");
+
+        assert_eq!(
+            repo.rev_parse("main").expect("main after"),
+            remote_main_after
+        );
+        assert_eq!(
+            repo.rev_parse("feature").expect("feature after"),
+            local_feature_before
+        );
+        assert_eq!(
+            repo.rev_parse("origin/feature")
+                .expect("origin feature after"),
+            remote_feature_after
+        );
+    }
+
+    #[test]
+    fn cli_backend_fetch_selected_repo_skips_auto_forward_for_branch_checked_out_elsewhere() {
+        let remote = TempRepo::bare().expect("remote fixture");
+        let seed = TempRepo::new().expect("seed fixture");
+        seed.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        seed.commit_all("initial").expect("initial commit");
+        seed.add_remote("origin", remote.path())
+            .expect("add remote");
+        seed.push("origin", "HEAD:main").expect("push main");
+
+        let mut repo = TempRepo::clone_from(remote.path()).expect("clone fixture");
+        repo.git(["branch", "--set-upstream-to=origin/main", "main"])
+            .expect("set main upstream");
+        repo.git(["checkout", "-b", "topic", "main"])
+            .expect("checkout topic");
+        let local_main_before = repo.rev_parse("main").expect("main before");
+        let _worktree_path = repo
+            .add_worktree("main-worktree", "main")
+            .expect("add main worktree");
+
+        let upstream = TempRepo::clone_from(remote.path()).expect("upstream fixture");
+        upstream
+            .git(["checkout", "-B", "main", "origin/main"])
+            .expect("checkout main upstream");
+        upstream
+            .append_file("shared.txt", "remote main advance\n")
+            .expect("advance remote main");
+        upstream
+            .commit_all("remote main advance")
+            .expect("commit remote main advance");
+        upstream
+            .push("origin", "HEAD:main")
+            .expect("push remote main");
+        let remote_main_after = upstream.rev_parse("HEAD").expect("remote main head");
+
+        let backend = CliGitBackend;
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-fetch-auto-forward-worktree-skip"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::FetchSelectedRepo,
+            })
+            .expect("fetch should succeed");
+
+        assert_eq!(
+            repo.rev_parse("main").expect("main after"),
+            local_main_before
+        );
+        assert_eq!(
+            repo.rev_parse("origin/main").expect("origin main after"),
+            remote_main_after
+        );
+    }
+
+    #[test]
     fn cli_backend_push_requires_attached_branch_head() {
         let repo = detached_head_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -6870,6 +7479,7 @@ mod tests {
                 repo_id: repo_id.clone(),
                 command: GitCommand::DeleteBranch {
                     branch_name: "topic".to_string(),
+                    force: false,
                 },
             })
             .expect("branch delete should succeed");
@@ -6922,6 +7532,7 @@ mod tests {
                 repo_id,
                 command: GitCommand::DeleteBranch {
                     branch_name: "feature".to_string(),
+                    force: false,
                 },
             })
             .expect_err("safe branch deletion should reject unmerged branches");
@@ -6945,6 +7556,62 @@ mod tests {
         )
         .expect("branch output");
         assert!(branch_list.contains("feature"));
+    }
+
+    #[test]
+    fn cli_backend_reports_branch_as_merged_against_existing_main_branch() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+
+        repo.checkout_new_branch("feature")
+            .expect("create feature branch");
+        repo.write_file("feature.txt", "merged work\n")
+            .expect("write feature file");
+        repo.commit_all("feature work")
+            .expect("commit feature work");
+        repo.checkout("main").expect("checkout main");
+        repo.git(["merge", "--no-edit", "feature"])
+            .expect("merge feature into main");
+        repo.checkout_new_branch("other")
+            .expect("checkout other branch");
+
+        let backend = CliGitBackend;
+        let merged = backend
+            .read_branch_merge_status(BranchMergeStatusRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                branch_name: "feature".to_string(),
+            })
+            .expect("merge status should load");
+
+        assert!(merged, "feature should count as merged via main");
+    }
+
+    #[test]
+    fn cli_backend_reports_branch_as_unmerged_when_commit_is_unique() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+
+        repo.checkout_new_branch("feature")
+            .expect("create feature branch");
+        repo.write_file("feature.txt", "unique work\n")
+            .expect("write feature file");
+        repo.commit_all("feature work")
+            .expect("commit feature work");
+        repo.checkout("main").expect("checkout main");
+
+        let backend = CliGitBackend;
+        let merged = backend
+            .read_branch_merge_status(BranchMergeStatusRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                branch_name: "feature".to_string(),
+            })
+            .expect("merge status should load");
+
+        assert!(!merged, "feature should remain unmerged");
     }
 
     #[test]
@@ -7073,27 +7740,28 @@ mod tests {
                 command: GitCommand::CreateBranchFromRef {
                     branch_name: "feature-copy".to_string(),
                     start_point: "origin/feature".to_string(),
+                    track: true,
                 },
             })
             .expect("create branch from remote should succeed");
         assert_eq!(
             created.summary,
-            "Created and checked out feature-copy from origin/feature"
+            "Created feature-copy tracking origin/feature"
         );
+        assert_eq!(repo.current_branch().expect("current branch"), "main");
         assert_eq!(
-            repo.current_branch().expect("current branch"),
-            "feature-copy"
+            stdout_string(
+                repo.git_capture([
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "feature-copy@{u}",
+                ])
+                .expect("feature-copy upstream ref"),
+            )
+            .expect("feature-copy upstream text"),
+            "origin/feature"
         );
-
-        backend
-            .run_command(GitCommandRequest {
-                job_id: super_lazygit_core::JobId::new("job-checkout-main"),
-                repo_id: repo_id.clone(),
-                command: GitCommand::CheckoutBranch {
-                    branch_ref: "main".to_string(),
-                },
-            })
-            .expect("checkout main should succeed");
 
         let checkout = backend
             .run_command(GitCommandRequest {
@@ -7118,6 +7786,29 @@ mod tests {
             .expect("upstream text"),
             "origin/feature"
         );
+
+        let created_without_tracking = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-branch-from-ref-no-track"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateBranchFromRef {
+                    branch_name: "feature-custom".to_string(),
+                    start_point: "origin/feature".to_string(),
+                    track: false,
+                },
+            })
+            .expect("create branch from remote without tracking should succeed");
+        assert_eq!(
+            created_without_tracking.summary,
+            "Created feature-custom from origin/feature without tracking"
+        );
+        repo.git_expect_failure([
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "feature-custom@{u}",
+        ])
+        .expect("custom local branch should not track upstream");
 
         backend
             .run_command(GitCommandRequest {
@@ -7172,6 +7863,7 @@ mod tests {
                 repo_id: repo_id.clone(),
                 command: GitCommand::MergeRefIntoCurrent {
                     target_ref: "feature".to_string(),
+                    variant: MergeVariant::Regular,
                 },
             })
             .expect("merge should succeed");
@@ -7180,6 +7872,96 @@ mod tests {
         assert_eq!(outcome.summary, "Merged feature into current branch");
         assert!(repo.path().join("feature.txt").exists());
         assert_eq!(repo.current_branch().expect("current branch"), "main");
+    }
+
+    #[test]
+    fn cli_backend_force_deletes_unmerged_branch() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-force-delete-branch"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateBranch {
+                    branch_name: "feature".to_string(),
+                },
+            })
+            .expect("branch creation should succeed");
+        repo.write_file("feature.txt", "feature work\n")
+            .expect("write feature file");
+        repo.commit_all("feature work")
+            .expect("commit feature work");
+        repo.checkout("main").expect("checkout main");
+
+        let deleted = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-force-delete-branch"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::DeleteBranch {
+                    branch_name: "feature".to_string(),
+                    force: true,
+                },
+            })
+            .expect("force branch delete should succeed");
+
+        assert_eq!(deleted.summary, "Force-deleted feature");
+        let branch_list = stdout_string(
+            repo.git_capture(["branch", "--list"])
+                .expect("branch list should load"),
+        )
+        .expect("branch output");
+        assert!(!branch_list.contains("feature"));
+    }
+
+    #[test]
+    fn merge_ref_args_match_branch_merge_variants() {
+        let regular = merge_ref_args("feature", MergeVariant::Regular);
+        let fast_forward = merge_ref_args("feature", MergeVariant::FastForward);
+        let non_fast_forward = merge_ref_args("feature", MergeVariant::NoFastForward);
+        let squash = merge_ref_args("feature", MergeVariant::Squash);
+
+        assert_eq!(
+            regular,
+            vec![
+                OsString::from("merge"),
+                OsString::from("--no-edit"),
+                OsString::from("feature"),
+            ]
+        );
+        assert_eq!(
+            fast_forward,
+            vec![
+                OsString::from("merge"),
+                OsString::from("--no-edit"),
+                OsString::from("--ff"),
+                OsString::from("feature"),
+            ]
+        );
+        assert_eq!(
+            non_fast_forward,
+            vec![
+                OsString::from("merge"),
+                OsString::from("--no-edit"),
+                OsString::from("--no-ff"),
+                OsString::from("feature"),
+            ]
+        );
+        assert_eq!(
+            squash,
+            vec![
+                OsString::from("merge"),
+                OsString::from("--no-edit"),
+                OsString::from("--squash"),
+                OsString::from("--ff"),
+                OsString::from("feature"),
+            ]
+        );
     }
 
     #[test]
