@@ -91,7 +91,7 @@
 ./references/lazygit-master/pkg/commands/git_commands/reflog_commit_loader_test.go
 ./references/lazygit-master/pkg/commands/git_commands/remote.go
 ./references/lazygit-master/pkg/commands/git_commands/remote_loader.go
-./references/lazygit-master/pkg/commands/git_commands/repo_paths.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/repo_paths.go
 ./references/lazygit-master/pkg/commands/git_commands/repo_paths_test.go
 ./references/lazygit-master/pkg/commands/git_commands/stash.go
 ./references/lazygit-master/pkg/commands/git_commands/stash_loader.go

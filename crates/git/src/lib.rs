@@ -520,28 +520,50 @@ pub struct GitCommandOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoPaths {
     worktree_path: PathBuf,
-    git_dir: PathBuf,
+    worktree_git_dir_path: PathBuf,
+    repo_path: PathBuf,
+    repo_git_dir_path: PathBuf,
+    repo_name: String,
+    is_bare_repo: bool,
 }
 
 impl RepoPaths {
     pub fn resolve(repo_path: &Path) -> GitResult<Self> {
         let resolved_repo_path = canonicalize_existing_path(repo_path);
-        let worktree_path = canonicalize_existing_path(Path::new(&git_stdout(
+        match git_stdout(
             &resolved_repo_path,
-            ["rev-parse", "--show-toplevel"],
-        )?));
-        let git_dir = git_stdout(&resolved_repo_path, ["rev-parse", "--git-dir"])?;
-        let git_dir = PathBuf::from(git_dir);
-        let git_dir = if git_dir.is_absolute() {
-            canonicalize_existing_path(&git_dir)
-        } else {
-            canonicalize_existing_path(&resolved_repo_path.join(git_dir))
-        };
-
-        Ok(Self {
-            worktree_path,
-            git_dir,
-        })
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--absolute-git-dir",
+                "--git-common-dir",
+                "--is-bare-repository",
+                "--show-superproject-working-tree",
+            ],
+        ) {
+            Ok(output) => parse_repo_paths_output(&resolved_repo_path, &output),
+            Err(primary_error) => {
+                let fallback_output = git_stdout(
+                    &resolved_repo_path,
+                    [
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--absolute-git-dir",
+                        "--git-common-dir",
+                        "--is-bare-repository",
+                        "--show-superproject-working-tree",
+                    ],
+                )?;
+                let fallback_paths =
+                    parse_bare_repo_paths_output(&resolved_repo_path, &fallback_output)?;
+                if fallback_paths.is_bare_repo() {
+                    Ok(fallback_paths)
+                } else {
+                    Err(primary_error)
+                }
+            }
+        }
     }
 
     #[must_use]
@@ -550,8 +572,95 @@ impl RepoPaths {
     }
 
     #[must_use]
+    pub fn worktree_git_dir_path(&self) -> &Path {
+        &self.worktree_git_dir_path
+    }
+
+    #[must_use]
     pub fn git_dir(&self) -> &Path {
-        &self.git_dir
+        self.worktree_git_dir_path()
+    }
+
+    #[must_use]
+    pub fn repo_path(&self) -> &Path {
+        &self.repo_path
+    }
+
+    #[must_use]
+    pub fn repo_git_dir_path(&self) -> &Path {
+        &self.repo_git_dir_path
+    }
+
+    #[must_use]
+    pub fn repo_name(&self) -> &str {
+        &self.repo_name
+    }
+
+    #[must_use]
+    pub fn is_bare_repo(&self) -> bool {
+        self.is_bare_repo
+    }
+}
+
+fn parse_repo_paths_output(resolved_repo_path: &Path, output: &str) -> GitResult<RepoPaths> {
+    let results = output.lines().collect::<Vec<_>>();
+    if results.len() < 4 {
+        return Err(repo_paths_parse_error(output));
+    }
+
+    let worktree_path = canonicalize_existing_path(Path::new(results[0]));
+    let worktree_git_dir_path = canonicalize_existing_path(Path::new(results[1]));
+    let repo_git_dir_path = canonicalize_existing_path(Path::new(results[2]));
+    let is_bare_repo = results[3] == "true";
+    let is_submodule = results.get(4).is_some_and(|value| !value.is_empty());
+    let repo_path = if is_submodule {
+        worktree_path.clone()
+    } else {
+        canonicalize_existing_path(repo_git_dir_path.parent().unwrap_or(resolved_repo_path))
+    };
+
+    Ok(RepoPaths {
+        repo_name: repo_name_from_path(&repo_path),
+        worktree_path,
+        worktree_git_dir_path,
+        repo_path,
+        repo_git_dir_path,
+        is_bare_repo,
+    })
+}
+
+fn parse_bare_repo_paths_output(resolved_repo_path: &Path, output: &str) -> GitResult<RepoPaths> {
+    let results = output.lines().collect::<Vec<_>>();
+    if results.len() < 3 {
+        return Err(repo_paths_parse_error(output));
+    }
+
+    let worktree_git_dir_path = canonicalize_existing_path(Path::new(results[0]));
+    let repo_git_dir_path = canonicalize_existing_path(Path::new(results[1]));
+    let is_bare_repo = results[2] == "true";
+    let repo_path =
+        canonicalize_existing_path(repo_git_dir_path.parent().unwrap_or(resolved_repo_path));
+
+    Ok(RepoPaths {
+        repo_name: repo_name_from_path(&repo_path),
+        worktree_path: resolved_repo_path.to_path_buf(),
+        worktree_git_dir_path,
+        repo_path,
+        repo_git_dir_path,
+        is_bare_repo,
+    })
+}
+
+fn repo_name_from_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn repo_paths_parse_error(output: &str) -> GitError {
+    GitError::OperationFailed {
+        message: format!("unexpected rev-parse repo paths output: {output:?}"),
     }
 }
 
@@ -5653,17 +5762,28 @@ mod tests {
         repo.write_file("nested/file.txt", "nested\n")
             .expect("nested fixture file");
         let nested = repo.path().join("nested");
+        let canonical_repo_path = fs::canonicalize(repo.path()).expect("canonical repo root");
+        let canonical_repo_git_dir =
+            fs::canonicalize(repo.path().join(".git")).expect("canonical git dir");
 
         let paths = RepoPaths::resolve(&nested).expect("repo paths resolve");
 
+        assert_eq!(paths.worktree_path(), canonical_repo_path.as_path());
         assert_eq!(
-            paths.worktree_path(),
-            fs::canonicalize(repo.path()).expect("canonical repo root")
+            paths.worktree_git_dir_path(),
+            canonical_repo_git_dir.as_path()
         );
+        assert_eq!(paths.git_dir(), canonical_repo_git_dir.as_path());
+        assert_eq!(paths.repo_path(), canonical_repo_path.as_path());
+        assert_eq!(paths.repo_git_dir_path(), canonical_repo_git_dir.as_path());
         assert_eq!(
-            paths.git_dir(),
-            fs::canonicalize(repo.path().join(".git")).expect("canonical git dir")
+            paths.repo_name(),
+            canonical_repo_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("repo name")
         );
+        assert!(!paths.is_bare_repo());
         verify_in_git_repo(&nested).expect("nested path verifies");
     }
 
@@ -5679,24 +5799,106 @@ mod tests {
                 path.ends_with("feature-tree").then(|| PathBuf::from(path))
             })
             .expect("linked worktree path");
+        let canonical_repo_path = fs::canonicalize(repo.path()).expect("canonical repo path");
+        let canonical_repo_git_dir =
+            fs::canonicalize(repo.path().join(".git")).expect("canonical repo git dir");
+        let canonical_worktree_path =
+            fs::canonicalize(&worktree_path).expect("canonical worktree path");
+        let canonical_worktree_git_dir = fs::canonicalize(
+            repo.path()
+                .join(".git")
+                .join("worktrees")
+                .join("feature-tree"),
+        )
+        .expect("canonical linked git dir");
 
         let paths = RepoPaths::resolve(&worktree_path).expect("worktree repo paths resolve");
 
+        assert_eq!(paths.worktree_path(), canonical_worktree_path.as_path());
         assert_eq!(
-            paths.worktree_path(),
-            fs::canonicalize(&worktree_path).expect("canonical worktree path")
+            paths.worktree_git_dir_path(),
+            canonical_worktree_git_dir.as_path()
         );
+        assert_eq!(paths.git_dir(), canonical_worktree_git_dir.as_path());
+        assert_eq!(paths.repo_path(), canonical_repo_path.as_path());
+        assert_eq!(paths.repo_git_dir_path(), canonical_repo_git_dir.as_path());
         assert_eq!(
-            paths.git_dir(),
-            fs::canonicalize(
-                repo.path()
-                    .join(".git")
-                    .join("worktrees")
-                    .join("feature-tree")
-            )
-            .expect("canonical linked git dir")
+            paths.repo_name(),
+            canonical_repo_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("repo name")
         );
+        assert!(!paths.is_bare_repo());
         verify_in_git_repo(&worktree_path).expect("worktree path verifies");
+    }
+
+    #[test]
+    fn repo_paths_resolve_submodule_paths() {
+        let repo = submodule_repo().expect("fixture repo");
+        let submodule_path = repo.path().join("vendor/child-module");
+        let canonical_submodule_path =
+            fs::canonicalize(&submodule_path).expect("canonical submodule");
+        let canonical_submodule_git_dir = fs::canonicalize(
+            repo.path()
+                .join(".git")
+                .join("modules")
+                .join("vendor")
+                .join("child-module"),
+        )
+        .expect("canonical submodule git dir");
+
+        let paths = RepoPaths::resolve(&submodule_path).expect("submodule repo paths resolve");
+
+        assert_eq!(paths.worktree_path(), canonical_submodule_path.as_path());
+        assert_eq!(
+            paths.worktree_git_dir_path(),
+            canonical_submodule_git_dir.as_path()
+        );
+        assert_eq!(paths.git_dir(), canonical_submodule_git_dir.as_path());
+        assert_eq!(paths.repo_path(), canonical_submodule_path.as_path());
+        assert_eq!(
+            paths.repo_git_dir_path(),
+            canonical_submodule_git_dir.as_path()
+        );
+        assert_eq!(paths.repo_name(), "child-module");
+        assert!(!paths.is_bare_repo());
+        verify_in_git_repo(&submodule_path).expect("submodule path verifies");
+    }
+
+    #[test]
+    fn repo_paths_resolve_bare_repo() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let bare_parent = root.path().join("bare-repo");
+        fs::create_dir_all(&bare_parent).expect("create bare repo parent");
+        let bare_git_dir = bare_parent.join("bare.git");
+        run_git(
+            root.path(),
+            &[
+                "init",
+                "--bare",
+                bare_git_dir.to_str().unwrap_or("bare.git"),
+            ],
+        )
+        .expect("init bare repo");
+        let canonical_bare_git_dir =
+            fs::canonicalize(&bare_git_dir).expect("canonical bare git dir");
+        let canonical_bare_parent =
+            fs::canonicalize(&bare_parent).expect("canonical bare repo parent");
+
+        let paths = RepoPaths::resolve(&bare_git_dir).expect("bare repo paths resolve");
+
+        assert_eq!(paths.worktree_path(), canonical_bare_git_dir.as_path());
+        assert_eq!(
+            paths.worktree_git_dir_path(),
+            canonical_bare_git_dir.as_path()
+        );
+        assert_eq!(paths.git_dir(), canonical_bare_git_dir.as_path());
+        assert_eq!(paths.repo_path(), canonical_bare_parent.as_path());
+        assert_eq!(paths.repo_git_dir_path(), canonical_bare_git_dir.as_path());
+        assert_eq!(paths.repo_name(), "bare-repo");
+        assert!(paths.is_bare_repo());
+        verify_in_git_repo(&bare_git_dir).expect("bare repo verifies");
     }
 
     #[test]
