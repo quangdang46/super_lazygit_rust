@@ -861,7 +861,7 @@ mod tests {
             handle.registrations(),
             vec![watcher::WatchRegistration {
                 repo_id,
-                path: repo.path().to_path_buf(),
+                path: normalized_path(repo.path()),
             }]
         );
         assert!(runtime
@@ -1044,6 +1044,7 @@ mod tests {
             .expect("create feature branch");
         let worktree_root = tempfile::tempdir().expect("worktree root");
         let worktree_path = worktree_root.path().join("repo-feature-contract");
+        let normalized_worktree_path = normalized_path(&worktree_path);
         repo.git([
             "worktree",
             "add",
@@ -1142,7 +1143,7 @@ mod tests {
         harness.press("open worktrees detail", "w");
         harness.assert_latest_contains("Detail: Worktrees");
         harness.assert_latest_contains(
-            worktree_path
+            normalized_worktree_path
                 .to_str()
                 .expect("worktree path should stay utf8 in test fixture"),
         );
@@ -1162,10 +1163,10 @@ mod tests {
                                 .as_ref()
                                 .and_then(|detail| detail.worktrees.get(index))
                         })
-                        .map(|worktree| worktree.path.as_path());
+                        .map(|worktree| normalized_path(&worktree.path));
                     repo_mode.worktree_filter.focused
                         && repo_mode.worktree_filter.query == "feature"
-                        && selected_worktree == Some(worktree_path.as_path())
+                        && selected_worktree.as_deref() == Some(normalized_worktree_path.as_path())
                 })
             },
             "filtering worktrees should focus the contextual query and reselect the matching row",
