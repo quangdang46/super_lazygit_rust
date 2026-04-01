@@ -3095,9 +3095,18 @@ fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
 fn read_commit_files(repo_path: &Path, oid: &str) -> Vec<CommitFileItem> {
     git_stdout(
         repo_path,
-        ["show", "--format=", "--name-status", "--no-renames", oid],
+        [
+            "show",
+            "--format=",
+            "--submodule",
+            "--no-ext-diff",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            oid,
+        ],
     )
-    .map(|output| parse_name_status_lines(&output))
+    .map(|output| parse_name_status_entries(&output))
     .unwrap_or_default()
 }
 
@@ -3152,28 +3161,33 @@ fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
 fn read_stash_files(repo_path: &Path, stash_ref: &str) -> Vec<CommitFileItem> {
     git_stdout(
         repo_path,
-        ["stash", "show", "--name-status", "--no-renames", stash_ref],
+        [
+            "stash",
+            "show",
+            "--submodule",
+            "--no-ext-diff",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            stash_ref,
+        ],
     )
-    .map(|output| parse_name_status_lines(&output))
+    .map(|output| parse_name_status_entries(&output))
     .unwrap_or_default()
 }
 
-fn parse_name_status_lines(output: &str) -> Vec<CommitFileItem> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
+fn parse_name_status_entries(output: &str) -> Vec<CommitFileItem> {
+    let entries = output
+        .trim_end_matches('\0')
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
 
-            let (code, path) = trimmed
-                .split_once('\t')
-                .or_else(|| trimmed.split_once(char::is_whitespace))?;
-            Some(CommitFileItem {
-                path: PathBuf::from(path.trim()),
-                kind: commit_status_kind(code),
-            })
+    entries
+        .chunks_exact(2)
+        .map(|chunk| CommitFileItem {
+            path: PathBuf::from(chunk[1]),
+            kind: commit_status_kind(chunk[0]),
         })
         .collect()
 }
@@ -4765,6 +4779,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_name_status_entries_preserves_whitespace_paths() {
+        let parsed =
+            parse_name_status_entries("M\0dir/space name.txt\0A\0tab\tname.rs\0D\0line\nname.md\0");
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].kind, FileStatusKind::Modified);
+        assert_eq!(parsed[0].path, PathBuf::from("dir/space name.txt"));
+        assert_eq!(parsed[1].kind, FileStatusKind::Added);
+        assert_eq!(parsed[1].path, PathBuf::from("tab\tname.rs"));
+        assert_eq!(parsed[2].kind, FileStatusKind::Deleted);
+        assert_eq!(parsed[2].path, PathBuf::from("line\nname.md"));
+    }
+
+    #[test]
+    fn parse_name_status_entries_ignores_empty_and_incomplete_chunks() {
+        assert!(parse_name_status_entries("").is_empty());
+        assert!(parse_name_status_entries("\0").is_empty());
+
+        let parsed = parse_name_status_entries("M\0tracked.txt\0A\0");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].path, PathBuf::from("tracked.txt"));
+    }
+
+    #[test]
     fn cli_backend_reads_commit_history_in_reverse_chronological_order() {
         let repo = history_preview_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -4785,6 +4823,51 @@ mod tests {
         assert_eq!(detail.commits[0].summary, "add lib");
         assert_eq!(detail.commits[1].summary, "second");
         assert_eq!(detail.commits[0].short_oid.len(), 7);
+    }
+
+    #[test]
+    fn cli_backend_reads_commit_files_with_whitespace_paths() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.write_file("dir/space name.txt", "base\n")
+            .expect("write spaced file");
+        repo.git(["add", "dir/space name.txt"])
+            .expect("stage spaced file");
+        repo.git(["commit", "-m", "initial"])
+            .expect("initial commit");
+
+        repo.write_file("dir/space name.txt", "base\nchanged\n")
+            .expect("update spaced file");
+        repo.write_file("tab\tname.rs", "fn main() {}\n")
+            .expect("write tab file");
+        repo.git(["add", "dir/space name.txt", "tab\tname.rs"])
+            .expect("stage whitespace paths");
+        repo.git(["commit", "-m", "whitespace paths"])
+            .expect("second commit");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        let latest = detail.commits.first().expect("latest commit");
+        assert_eq!(latest.summary, "whitespace paths");
+        assert_eq!(latest.changed_files.len(), 2);
+        assert_eq!(
+            latest.changed_files[0].path,
+            PathBuf::from("dir/space name.txt")
+        );
+        assert_eq!(latest.changed_files[0].kind, FileStatusKind::Modified);
+        assert_eq!(latest.changed_files[1].path, PathBuf::from("tab\tname.rs"));
+        assert_eq!(latest.changed_files[1].kind, FileStatusKind::Added);
     }
 
     #[test]
