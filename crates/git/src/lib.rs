@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 #[cfg(unix)]
@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
     BisectState, BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget,
@@ -26,6 +26,9 @@ use crate::graph::{render_commit_graph, GraphCommit};
 
 const GIT_OPTIONAL_LOCKS_ENV: &str = "GIT_OPTIONAL_LOCKS";
 const GIT_OPTIONAL_LOCKS_DISABLED: &str = "0";
+const GIT_INDEX_LOCK_MARKER: &str = ".git/index.lock";
+const GIT_INDEX_LOCK_RETRY_COUNT: usize = 5;
+const GIT_INDEX_LOCK_RETRY_WAIT: Duration = Duration::from_millis(50);
 
 pub trait GitBackend: Send + Sync + 'static {
     fn kind(&self) -> GitBackendKind;
@@ -2063,6 +2066,27 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    let args: Vec<OsString> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_os_string())
+        .collect();
+
+    for _ in 0..GIT_INDEX_LOCK_RETRY_COUNT.saturating_sub(1) {
+        let output = run_git_output(repo_path, &args, envs)?;
+        if !should_retry_git_output(&output) {
+            return Ok(output);
+        }
+        std::thread::sleep(GIT_INDEX_LOCK_RETRY_WAIT);
+    }
+
+    run_git_output(repo_path, &args, envs)
+}
+
+fn run_git_output(
+    repo_path: &Path,
+    args: &[OsString],
+    envs: &[(&str, &OsStr)],
+) -> GitResult<Output> {
     Command::new("git")
         .args(args)
         .env(GIT_OPTIONAL_LOCKS_ENV, GIT_OPTIONAL_LOCKS_DISABLED)
@@ -2070,6 +2094,12 @@ where
         .current_dir(repo_path)
         .output()
         .map_err(io_error)
+}
+
+fn should_retry_git_output(output: &Output) -> bool {
+    !output.status.success()
+        && (String::from_utf8_lossy(&output.stdout).contains(GIT_INDEX_LOCK_MARKER)
+            || String::from_utf8_lossy(&output.stderr).contains(GIT_INDEX_LOCK_MARKER))
 }
 
 fn git_path<I, S>(repo_path: &Path, args: I, path: &Path) -> GitResult<()>
@@ -3877,6 +3907,69 @@ mod tests {
         .expect("git alias runs");
 
         assert_eq!(stdout_string(output).expect("utf8 stdout"), "0:vim");
+    }
+
+    #[test]
+    fn git_helpers_retry_index_lock_failures_until_success() {
+        let repo = clean_repo().expect("fixture repo");
+        let (alias, attempt_file) =
+            install_index_lock_retry_script(&repo, "git-retry-success.sh", Some(3));
+        let output = git_output_with_env(
+            repo.path(),
+            ["-c".to_string(), alias, "retrylock".to_string()],
+            &[],
+        )
+        .expect("git alias runs");
+
+        assert!(output.status.success());
+        assert_eq!(stdout_string(output).expect("utf8 stdout"), "3");
+        assert_eq!(
+            fs::read_to_string(attempt_file).expect("read attempt file"),
+            "3"
+        );
+    }
+
+    #[test]
+    fn git_helpers_stop_retrying_after_index_lock_retry_budget() {
+        let repo = clean_repo().expect("fixture repo");
+        let (alias, attempt_file) =
+            install_index_lock_retry_script(&repo, "git-retry-fail.sh", None);
+        let output = git_output_with_env(
+            repo.path(),
+            ["-c".to_string(), alias, "retrylock".to_string()],
+            &[],
+        )
+        .expect("git alias runs");
+
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(GIT_INDEX_LOCK_MARKER));
+        assert_eq!(
+            fs::read_to_string(attempt_file).expect("read attempt file"),
+            GIT_INDEX_LOCK_RETRY_COUNT.to_string()
+        );
+    }
+
+    fn install_index_lock_retry_script(
+        repo: &TempRepo,
+        script_name: &str,
+        succeed_after_attempt: Option<usize>,
+    ) -> (String, PathBuf) {
+        let script_path = repo.path().join(script_name);
+        let attempt_file = repo
+            .path()
+            .join(".git")
+            .join(format!("{script_name}.count"));
+        let success_case = match succeed_after_attempt {
+            Some(attempt) => format!(
+                "if [ \"$count\" -lt {attempt} ]; then\n    printf '%s' '{GIT_INDEX_LOCK_MARKER}' >&2\n    exit 1\nfi\nprintf '%s' \"$count\"\n"
+            ),
+            None => format!("printf '%s' '{GIT_INDEX_LOCK_MARKER}' >&2\nexit 1\n"),
+        };
+        let script = format!(
+            "#!/bin/sh\ncount_file='.git/{script_name}.count'\ncount=0\nif [ -f \"$count_file\" ]; then\n    count=$(cat \"$count_file\")\nfi\ncount=$((count + 1))\nprintf '%s' \"$count\" > \"$count_file\"\n{success_case}"
+        );
+        write_executable_script(&script_path, &script).expect("write retry script");
+        (format!("alias.retrylock=!./{script_name}"), attempt_file)
     }
 
     #[test]
