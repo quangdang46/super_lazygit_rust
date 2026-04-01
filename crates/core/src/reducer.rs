@@ -12984,6 +12984,7 @@ mod tests {
                         kind: crate::state::FileStatusKind::Modified,
                         staged_kind: None,
                         unstaged_kind: Some(crate::state::FileStatusKind::Modified),
+                        ..FileStatus::default()
                     }],
                     reflog_items: vec![
                         ReflogItem {
@@ -13608,6 +13609,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -13651,6 +13653,7 @@ mod tests {
                         kind: FileStatusKind::Untracked,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -13686,6 +13689,7 @@ mod tests {
                         kind: FileStatusKind::Untracked,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -14413,6 +14417,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -15009,6 +15014,7 @@ mod tests {
                         kind: FileStatusKind::Untracked,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -15052,6 +15058,7 @@ mod tests {
                         kind: FileStatusKind::Untracked,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -15101,6 +15108,7 @@ mod tests {
                         kind: FileStatusKind::Added,
                         staged_kind: Some(FileStatusKind::Added),
                         unstaged_kind: None,
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -15150,6 +15158,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -15193,6 +15202,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -15242,6 +15252,7 @@ mod tests {
                         kind: FileStatusKind::Untracked,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -16571,18 +16582,21 @@ mod tests {
                     kind: FileStatusKind::Modified,
                     staged_kind: Some(FileStatusKind::Modified),
                     unstaged_kind: Some(FileStatusKind::Modified),
+                    ..FileStatus::default()
                 },
                 FileStatus {
                     path: std::path::PathBuf::from("README.md"),
                     kind: FileStatusKind::Untracked,
                     staged_kind: None,
                     unstaged_kind: Some(FileStatusKind::Untracked),
+                    ..FileStatus::default()
                 },
                 FileStatus {
                     path: std::path::PathBuf::from("Cargo.toml"),
                     kind: FileStatusKind::Added,
                     staged_kind: Some(FileStatusKind::Added),
                     unstaged_kind: None,
+                    ..FileStatus::default()
                 },
             ],
             ..RepoDetail::default()
@@ -18520,12 +18534,14 @@ mod tests {
                     kind: FileStatusKind::Modified,
                     staged_kind: Some(FileStatusKind::Modified),
                     unstaged_kind: Some(FileStatusKind::Modified),
+                    ..FileStatus::default()
                 },
                 FileStatus {
                     path: std::path::PathBuf::from("README.md"),
                     kind: FileStatusKind::Untracked,
                     staged_kind: None,
                     unstaged_kind: Some(FileStatusKind::Untracked),
+                    ..FileStatus::default()
                 },
             ],
             commits: vec![CommitItem {
@@ -18916,6 +18932,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: Some(FileStatusKind::Modified),
                         unstaged_kind: None,
+                        ..FileStatus::default()
                     }],
                     commits: vec![
                         CommitItem {
@@ -19330,6 +19347,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: Some(FileStatusKind::Modified),
                         unstaged_kind: None,
+                        ..FileStatus::default()
                     }],
                     commits: vec![
                         CommitItem {
@@ -19400,6 +19418,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: Some(FileStatusKind::Modified),
                         unstaged_kind: None,
+                        ..FileStatus::default()
                     }],
                     commits: vec![
                         CommitItem {
@@ -20323,6 +20342,7 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: Some(FileStatusKind::Modified),
                         unstaged_kind: None,
+                        ..FileStatus::default()
                     }],
                     ..RepoDetail::default()
                 }),

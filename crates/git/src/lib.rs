@@ -549,7 +549,10 @@ impl GitBackend for CliGitBackend {
             });
         }
 
-        let parsed = read_status_snapshot(&repo_path)?;
+        let parsed = read_status_snapshot(
+            &repo_path,
+            super_lazygit_core::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        )?;
         let last_fetch_at = fetch_head_timestamp(&repo_path)?;
 
         let display_name = repo_path
@@ -589,7 +592,7 @@ impl GitBackend for CliGitBackend {
 
     fn read_repo_detail(&self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
         let repo_path = repo_path(&request.repo_id)?;
-        let status = read_status_snapshot(&repo_path)?;
+        let status = read_status_snapshot(&repo_path, request.rename_similarity_threshold)?;
         let diff = read_diff_model(
             &repo_path,
             None,
@@ -644,7 +647,9 @@ impl GitBackend for CliGitBackend {
         let repo_path = repo_path(&request.repo_id)?;
         let selected_path = match request.selected_path {
             Some(path) => Some(path),
-            None => read_status_snapshot(&repo_path)?.first_path,
+            None => {
+                read_status_snapshot(&repo_path, request.rename_similarity_threshold)?.first_path
+            }
         };
         read_diff_model(
             &repo_path,
@@ -3077,37 +3082,83 @@ struct ParsedStatus {
     first_path: Option<PathBuf>,
 }
 
-fn read_status_snapshot(repo_path: &Path) -> GitResult<ParsedStatus> {
-    let status = git_stdout(repo_path, ["status", "--short", "--branch"])?;
-    Ok(parse_status(&status))
+fn read_status_snapshot(
+    repo_path: &Path,
+    rename_similarity_threshold: u8,
+) -> GitResult<ParsedStatus> {
+    let status = git_stdout_raw(
+        repo_path,
+        [
+            "status".to_string(),
+            "--branch".to_string(),
+            "--porcelain".to_string(),
+            "-z".to_string(),
+            "--untracked-files=all".to_string(),
+            format!("--find-renames={}%", rename_similarity_threshold),
+        ],
+    )?;
+    let mut parsed = parse_status(&status);
+    let file_diffs = get_file_diffs(repo_path)?;
+    enrich_status_with_numstat(&mut parsed.file_tree, &file_diffs);
+    mark_worktree_entries(repo_path, &mut parsed.file_tree, &read_worktrees(repo_path));
+    parsed.first_path = parsed.file_tree.first().map(|item| item.path.clone());
+    Ok(parsed)
 }
 
 fn parse_status(status: &str) -> ParsedStatus {
     let mut parsed = ParsedStatus::default();
+    let records: Vec<&str> = status.split('\0').collect();
+    let mut index = 0;
 
-    for (index, line) in status.lines().enumerate() {
-        if index == 0 {
-            if let Some(branch_line) = line.strip_prefix("## ") {
-                parse_branch_header(branch_line, &mut parsed);
-                continue;
-            }
+    while index < records.len() {
+        let record = records[index];
+        index += 1;
+
+        if record.is_empty() {
+            continue;
+        }
+        if let Some(branch_line) = record.strip_prefix("## ") {
+            parse_branch_header(branch_line, &mut parsed);
+            continue;
+        }
+        if record.starts_with("warning") {
+            continue;
         }
 
-        let bytes = line.as_bytes();
+        let bytes = record.as_bytes();
         if bytes.len() < 3 {
             continue;
         }
+
         let staged = bytes[0] as char;
         let unstaged = bytes[1] as char;
-        let path = status_path(&line[3..]);
+        let change = &record[..2];
+        let path = status_path(&record[3..]);
+        if path.starts_with(".super-lazygit") {
+            continue;
+        }
+        let mut previous_path = None;
+        let mut display_string = record.to_string();
+
+        if matches!(staged, 'R' | 'C') {
+            if let Some(previous) = records.get(index).copied().filter(|item| !item.is_empty()) {
+                previous_path = Some(status_path(previous));
+                display_string = format!("{change} {previous} -> {}", path.display());
+                index += 1;
+            }
+        }
 
         if staged == '?' && unstaged == '?' {
             parsed.untracked_count += 1;
             parsed.file_tree.push(FileStatus {
                 path: path.clone(),
+                previous_path,
                 kind: FileStatusKind::Untracked,
                 staged_kind: None,
                 unstaged_kind: Some(FileStatusKind::Untracked),
+                short_status: change.to_string(),
+                display_string,
+                ..FileStatus::default()
             });
             parsed.first_path.get_or_insert(path);
             continue;
@@ -3125,9 +3176,13 @@ fn parse_status(status: &str) -> ParsedStatus {
 
         parsed.file_tree.push(FileStatus {
             path: path.clone(),
+            previous_path,
             kind: status_kind(staged, unstaged),
             staged_kind: staged_status_kind(staged, unstaged),
             unstaged_kind: unstaged_status_kind(staged, unstaged),
+            short_status: change.to_string(),
+            display_string,
+            ..FileStatus::default()
         });
         parsed.first_path.get_or_insert(path);
     }
@@ -3175,13 +3230,104 @@ fn parse_branch_header(header: &str, parsed: &mut ParsedStatus) {
 }
 
 fn status_path(raw: &str) -> PathBuf {
-    let trimmed = raw.trim();
-    let path = trimmed
-        .rsplit(" -> ")
-        .next()
-        .unwrap_or(trimmed)
-        .trim_matches('"');
-    PathBuf::from(path)
+    PathBuf::from(raw.trim().trim_matches('"'))
+}
+
+fn get_file_diffs(repo_path: &Path) -> GitResult<BTreeMap<PathBuf, (u32, u32)>> {
+    let output = git_output(repo_path, ["diff", "--numstat", "-z", "HEAD"])?;
+    if !output.status.success() {
+        return Ok(BTreeMap::new());
+    }
+    let diffs = stdout_raw_string(output)?;
+    Ok(parse_numstat(&diffs))
+}
+
+fn parse_numstat(diffs: &str) -> BTreeMap<PathBuf, (u32, u32)> {
+    let records: Vec<&str> = diffs.split('\0').collect();
+    let mut parsed = BTreeMap::new();
+    let mut index = 0;
+
+    while index < records.len() {
+        let record = records[index];
+        index += 1;
+
+        if record.is_empty() {
+            continue;
+        }
+
+        let mut parts = record.split('\t');
+        let Some(lines_added) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(lines_deleted) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(path_part) = parts.next() else {
+            continue;
+        };
+
+        if path_part.is_empty() {
+            let Some(new_path) = records
+                .get(index + 1)
+                .copied()
+                .filter(|item| !item.is_empty())
+            else {
+                continue;
+            };
+            parsed.insert(PathBuf::from(new_path), (lines_added, lines_deleted));
+            index += 2;
+            continue;
+        }
+
+        parsed.insert(PathBuf::from(path_part), (lines_added, lines_deleted));
+    }
+
+    parsed
+}
+
+fn enrich_status_with_numstat(
+    file_tree: &mut [FileStatus],
+    file_diffs: &BTreeMap<PathBuf, (u32, u32)>,
+) {
+    for item in file_tree {
+        if let Some((lines_added, lines_deleted)) = file_diffs.get(&item.path) {
+            item.lines_added = *lines_added;
+            item.lines_deleted = *lines_deleted;
+        }
+    }
+}
+
+fn mark_worktree_entries(
+    repo_path: &Path,
+    file_tree: &mut [FileStatus],
+    worktrees: &[WorktreeItem],
+) {
+    let worktree_paths: HashSet<PathBuf> = worktrees
+        .iter()
+        .map(|item| normalized_worktree_path(&item.path))
+        .collect();
+
+    for item in file_tree {
+        let absolute_path = normalized_worktree_path(&repo_path.join(&item.path));
+        if worktree_paths.contains(&absolute_path) {
+            item.is_worktree = true;
+            item.path = trimmed_status_path(&item.path);
+        }
+    }
+}
+
+fn normalized_worktree_path(path: &Path) -> PathBuf {
+    trimmed_status_path(path)
+}
+
+fn trimmed_status_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    let trimmed = value.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        path.to_path_buf()
+    } else {
+        PathBuf::from(trimmed)
+    }
 }
 
 fn status_kind(staged: char, unstaged: char) -> FileStatusKind {
@@ -3218,7 +3364,7 @@ fn status_code_kind(code: char) -> Option<FileStatusKind> {
     Some(match code {
         'A' => FileStatusKind::Added,
         'D' => FileStatusKind::Deleted,
-        'R' => FileStatusKind::Renamed,
+        'R' | 'C' => FileStatusKind::Renamed,
         '?' => FileStatusKind::Untracked,
         ' ' => return None,
         _ => FileStatusKind::Modified,
@@ -5055,7 +5201,7 @@ mod tests {
 
     #[test]
     fn parse_status_tracks_both_sections_for_mixed_path() {
-        let parsed = parse_status("## main\nMM src/lib.rs\n");
+        let parsed = parse_status("## main\0MM src/lib.rs\0");
         let entry = parsed.file_tree.first().expect("mixed entry");
 
         assert_eq!(parsed.staged_count, 1);
@@ -5064,6 +5210,96 @@ mod tests {
         assert_eq!(entry.kind, FileStatusKind::Modified);
         assert_eq!(entry.staged_kind, Some(FileStatusKind::Modified));
         assert_eq!(entry.unstaged_kind, Some(FileStatusKind::Modified));
+        assert_eq!(entry.short_status, "MM");
+        assert_eq!(entry.display_string, "MM src/lib.rs");
+    }
+
+    #[test]
+    fn parse_status_tracks_previous_path_for_renames() {
+        let parsed = parse_status("## main\0RM new.txt\0old.txt\0");
+        let entry = parsed.file_tree.first().expect("rename entry");
+
+        assert_eq!(entry.path, Path::new("new.txt"));
+        assert_eq!(entry.previous_path.as_deref(), Some(Path::new("old.txt")));
+        assert_eq!(entry.kind, FileStatusKind::Renamed);
+        assert_eq!(entry.short_status, "RM");
+        assert_eq!(entry.display_string, "RM old.txt -> new.txt");
+    }
+
+    #[test]
+    fn parse_numstat_tracks_renamed_destination_path() {
+        let parsed = parse_numstat("1\t0\t\0old.txt\0new.txt\0");
+
+        assert_eq!(parsed.get(Path::new("new.txt")), Some(&(1, 0)));
+    }
+
+    #[test]
+    fn cli_backend_enriches_status_entries_for_renames() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.write_file(
+            "old.txt",
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+        )
+        .expect("write original");
+        repo.commit_all("initial").expect("commit initial");
+        repo.git(["mv", "old.txt", "new.txt"]).expect("rename");
+        repo.write_file(
+            "new.txt",
+            "one\ntwo\nthree\nfour\nfive\nsix\nSEVEN\nEIGHT\nNINE\nTEN\n",
+        )
+        .expect("write renamed content");
+
+        let detail = CliGitBackend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Staged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail succeeds");
+
+        let renamed = detail
+            .file_tree
+            .iter()
+            .find(|item| item.path == Path::new("new.txt"))
+            .expect("renamed entry");
+        assert_eq!(renamed.previous_path.as_deref(), Some(Path::new("old.txt")));
+        assert_eq!(renamed.short_status, "RM");
+        assert_eq!(renamed.lines_added, 4);
+        assert_eq!(renamed.lines_deleted, 4);
+    }
+
+    #[test]
+    fn cli_backend_marks_linked_worktree_status_entries() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo_path = root.path().join("main");
+        init_repo_at(&repo_path, "main.txt", "main\n", "initial").expect("init repo");
+        run_git(&repo_path, &["branch", "feature"]).expect("create feature branch");
+        run_git(&repo_path, &["worktree", "add", "linked", "feature"]).expect("add worktree");
+
+        let detail = CliGitBackend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo_path.display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail succeeds");
+
+        let worktree = detail
+            .file_tree
+            .iter()
+            .find(|item| item.path == Path::new("linked"))
+            .expect("worktree entry");
+        assert!(worktree.is_worktree);
     }
 
     #[test]

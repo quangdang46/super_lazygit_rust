@@ -223,7 +223,7 @@ impl Default for WorkspaceConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EditorConfig {
     pub command: String,
@@ -240,21 +240,6 @@ pub struct EditorConfig {
     pub open_dir_in_editor: String,
     #[serde(alias = "editInTerminal", skip_serializing_if = "Option::is_none")]
     pub edit_in_terminal: Option<bool>,
-}
-
-impl Default for EditorConfig {
-    fn default() -> Self {
-        Self {
-            command: String::new(),
-            args: Vec::new(),
-            edit_preset: String::new(),
-            edit: String::new(),
-            edit_at_line: String::new(),
-            edit_at_line_and_wait: String::new(),
-            open_dir_in_editor: String::new(),
-            edit_in_terminal: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -590,7 +575,7 @@ fn resolve_placeholder_string(
     template: &str,
     target: &Path,
     line: Option<usize>,
-    is_dir: bool,
+    _is_dir: bool,
 ) -> String {
     let mut resolved = template.to_string();
     let quoted_target = shell_quote(&target.display().to_string());
@@ -607,11 +592,7 @@ fn resolve_placeholder_string(
         resolved = resolved.replace(placeholder, value);
     }
 
-    if is_dir {
-        resolved
-    } else {
-        resolved
-    }
+    resolved
 }
 
 fn shell_quote(value: &str) -> String {

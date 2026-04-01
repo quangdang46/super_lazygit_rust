@@ -140,10 +140,6 @@ impl Drop for TerminalSession {
     }
 }
 
-pub fn run_external_command(command: &mut Command) -> io::Result<()> {
-    run_external_command_named(command, "editor")
-}
-
 pub fn run_external_command_named(command: &mut Command, label: &str) -> io::Result<()> {
     run_external_command_named_with_options(command, label, true)
 }

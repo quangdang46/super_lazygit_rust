@@ -577,7 +577,7 @@ impl AppRuntime {
         }
     }
 
-    fn open_editor(&self, cwd: &PathBuf, target: &PathBuf) -> Option<Event> {
+    fn open_editor(&self, cwd: &Path, target: &Path) -> Option<Event> {
         let editor = &self.app.config().editor;
         let shell = Self::editor_shell();
         let guessed_editor = Self::guess_default_editor(cwd);

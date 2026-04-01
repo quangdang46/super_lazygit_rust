@@ -1224,11 +1224,18 @@ pub struct RebaseState {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FileStatus {
     pub path: PathBuf,
+    pub previous_path: Option<PathBuf>,
     pub kind: FileStatusKind,
     pub staged_kind: Option<FileStatusKind>,
     pub unstaged_kind: Option<FileStatusKind>,
+    pub short_status: String,
+    pub display_string: String,
+    pub lines_added: u32,
+    pub lines_deleted: u32,
+    pub is_worktree: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1292,7 +1299,7 @@ pub fn visible_status_entries(repo_mode: &RepoModeState, pane: PaneId) -> Vec<Vi
                 status_filter_mode_matches(repo_mode.status_filter_mode, kind)
                     && normalized_query
                         .as_deref()
-                        .is_none_or(|query| status_entry_matches_query(&item.path, kind, query))
+                        .is_none_or(|query| status_entry_matches_query(item, kind, query))
             })
         })
         .collect::<Vec<_>>();
@@ -1304,7 +1311,7 @@ pub fn visible_status_entries(repo_mode: &RepoModeState, pane: PaneId) -> Vec<Vi
                 path: item.path.clone(),
                 kind: status_kind_for_pane(item, pane),
                 depth: 0,
-                label: item.path.display().to_string(),
+                label: status_entry_label(item, false),
                 entry_kind: VisibleStatusEntryKind::File,
             })
             .collect();
@@ -1391,11 +1398,7 @@ impl<'a> StatusTreeCollections<'a> {
                         path: item.path.clone(),
                         kind: Some(kind),
                         depth,
-                        label: item
-                            .path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .map_or_else(|| item.path.display().to_string(), ToString::to_string),
+                        label: status_entry_label(item, true),
                         entry_kind: VisibleStatusEntryKind::File,
                     });
                 }
@@ -1472,9 +1475,55 @@ fn status_filter_mode_matches(mode: StatusFilterMode, kind: FileStatusKind) -> b
     }
 }
 
-fn status_entry_matches_query(path: &Path, kind: FileStatusKind, query: &str) -> bool {
-    let path_text = normalize_search_text(&path.display().to_string());
-    fuzzy_matches(&path_text, query) || fuzzy_matches(status_kind_search_term(kind), query)
+fn status_entry_label(item: &FileStatus, tree_mode: bool) -> String {
+    if let Some(previous_path) = item.previous_path.as_ref() {
+        if tree_mode {
+            let current = item
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map_or_else(|| item.path.display().to_string(), ToString::to_string);
+            let previous = previous_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map_or_else(|| previous_path.display().to_string(), ToString::to_string);
+            return format!("{previous} -> {current}");
+        }
+        return format!("{} -> {}", previous_path.display(), item.path.display());
+    }
+
+    if tree_mode {
+        return item
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map_or_else(|| item.path.display().to_string(), ToString::to_string);
+    }
+
+    item.path.display().to_string()
+}
+
+fn status_entry_matches_query(item: &FileStatus, kind: FileStatusKind, query: &str) -> bool {
+    let path_text = normalize_search_text(&item.path.display().to_string());
+    if fuzzy_matches(&path_text, query) || fuzzy_matches(status_kind_search_term(kind), query) {
+        return true;
+    }
+
+    if let Some(previous_path) = item.previous_path.as_ref() {
+        let previous_path_text = normalize_search_text(&previous_path.display().to_string());
+        if fuzzy_matches(&previous_path_text, query) {
+            return true;
+        }
+    }
+
+    if !item.display_string.is_empty() {
+        let display_text = normalize_search_text(&item.display_string);
+        if fuzzy_matches(&display_text, query) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn status_kind_search_term(kind: FileStatusKind) -> &'static str {
@@ -2156,18 +2205,21 @@ mod tests {
                         kind: FileStatusKind::Modified,
                         staged_kind: Some(FileStatusKind::Modified),
                         unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
                     },
                     FileStatus {
                         path: PathBuf::from("src/ui/mod.rs"),
                         kind: FileStatusKind::Modified,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
                     },
                     FileStatus {
                         path: PathBuf::from("docs/README.md"),
                         kind: FileStatusKind::Untracked,
                         staged_kind: None,
                         unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
                     },
                 ],
                 ..RepoDetail::default()

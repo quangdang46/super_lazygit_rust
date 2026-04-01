@@ -10726,24 +10726,28 @@ mod tests {
                     kind: FileStatusKind::Modified,
                     staged_kind: Some(FileStatusKind::Modified),
                     unstaged_kind: Some(FileStatusKind::Modified),
+                    ..FileStatus::default()
                 },
                 FileStatus {
                     path: PathBuf::from("src/ui/mod.rs"),
                     kind: FileStatusKind::Modified,
                     staged_kind: None,
                     unstaged_kind: Some(FileStatusKind::Modified),
+                    ..FileStatus::default()
                 },
                 FileStatus {
                     path: PathBuf::from("docs/README.md"),
                     kind: FileStatusKind::Untracked,
                     staged_kind: None,
                     unstaged_kind: Some(FileStatusKind::Untracked),
+                    ..FileStatus::default()
                 },
                 FileStatus {
                     path: PathBuf::from("Cargo.toml"),
                     kind: FileStatusKind::Added,
                     staged_kind: Some(FileStatusKind::Added),
                     unstaged_kind: None,
+                    ..FileStatus::default()
                 },
             ],
             diff: DiffModel {
@@ -11967,6 +11971,7 @@ mod tests {
             kind: FileStatusKind::Modified,
             staged_kind: None,
             unstaged_kind: Some(FileStatusKind::Modified),
+            ..FileStatus::default()
         }));
         let mut state = repo_test_state(&repo_id, RepoSubview::Status, detail);
         state.focused_pane = PaneId::RepoUnstaged;
@@ -12070,6 +12075,7 @@ mod tests {
             kind: FileStatusKind::Modified,
             staged_kind: None,
             unstaged_kind: Some(FileStatusKind::Modified),
+            ..FileStatus::default()
         }));
         let mut state = repo_test_state(&repo_id, RepoSubview::Status, detail);
         state.focused_pane = PaneId::RepoUnstaged;
