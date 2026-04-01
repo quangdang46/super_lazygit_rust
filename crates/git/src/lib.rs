@@ -24,6 +24,9 @@ mod graph;
 
 use crate::graph::{render_commit_graph, GraphCommit};
 
+const GIT_OPTIONAL_LOCKS_ENV: &str = "GIT_OPTIONAL_LOCKS";
+const GIT_OPTIONAL_LOCKS_DISABLED: &str = "0";
+
 pub trait GitBackend: Send + Sync + 'static {
     fn kind(&self) -> GitBackendKind;
 
@@ -2062,6 +2065,7 @@ where
 {
     Command::new("git")
         .args(args)
+        .env(GIT_OPTIONAL_LOCKS_ENV, GIT_OPTIONAL_LOCKS_DISABLED)
         .envs(envs.iter().copied())
         .current_dir(repo_path)
         .output()
@@ -3856,6 +3860,23 @@ mod tests {
         assert!(matches!(error, GitError::OperationFailed { .. }));
         assert!(error.to_string().contains("not a git repository"));
         assert!(RepoPaths::resolve(&canonical).is_err());
+    }
+
+    #[test]
+    fn git_helpers_set_optional_locks_env_and_preserve_extra_env() {
+        let repo = clean_repo().expect("fixture repo");
+        let output = git_output_with_env(
+            repo.path(),
+            [
+                "-c",
+                "alias.printenv=!printf '%s' \"$GIT_OPTIONAL_LOCKS:$GIT_EDITOR\"",
+                "printenv",
+            ],
+            &[("GIT_EDITOR", OsStr::new("vim"))],
+        )
+        .expect("git alias runs");
+
+        assert_eq!(stdout_string(output).expect("utf8 stdout"), "0:vim");
     }
 
     #[test]
