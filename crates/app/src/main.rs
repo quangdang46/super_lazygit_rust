@@ -1,36 +1,112 @@
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::Result;
-use clap::Parser;
+use anyhow::{Context, Result};
+use clap::{Parser, ValueEnum};
 
 mod runtime;
 mod terminal;
 mod watcher;
 
 use runtime::AppRuntime;
-use super_lazygit_config::AppConfig;
-use super_lazygit_core::{Action, AppState, Diagnostics, Event};
+use super_lazygit_config::{default_config_toml, AppConfig, ConfigDiscovery};
+use super_lazygit_core::{Action, AppState, Diagnostics, Event, RepoId, RepoSubview, ScreenMode};
 use super_lazygit_git::GitFacade;
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
 
-#[derive(Debug, Parser)]
-#[command(name = "super-lazygit")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum StartupScreenMode {
+    Normal,
+    Half,
+    Fullscreen,
+}
+
+impl From<StartupScreenMode> for ScreenMode {
+    fn from(value: StartupScreenMode) -> Self {
+        match value {
+            StartupScreenMode::Normal => Self::Normal,
+            StartupScreenMode::Half => Self::HalfScreen,
+            StartupScreenMode::Fullscreen => Self::FullScreen,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum StartupFocus {
+    Status,
+    Branch,
+    Log,
+    Stash,
+}
+
+impl StartupFocus {
+    const fn repo_subview(self) -> Option<RepoSubview> {
+        match self {
+            Self::Status => None,
+            Self::Branch => Some(RepoSubview::Branches),
+            Self::Log => Some(RepoSubview::Commits),
+            Self::Stash => Some(RepoSubview::Stash),
+        }
+    }
+}
+
+#[derive(Debug, Parser, PartialEq, Eq)]
+#[command(name = "super-lazygit", version)]
 #[command(about = "Workspace-first Lazygit-grade Rust TUI")]
 struct Cli {
     /// Path to the workspace root to open.
     #[arg(long)]
-    workspace: Option<std::path::PathBuf>,
+    workspace: Option<PathBuf>,
+    /// Print the default config and exit.
+    #[arg(long = "config")]
+    print_config: bool,
+    /// Print the effective config directory and exit.
+    #[arg(long)]
+    print_config_dir: bool,
+    /// Prefer a specific config directory when resolving config.
+    #[arg(long, value_name = "DIR")]
+    use_config_dir: Option<PathBuf>,
+    /// Load config from a specific file.
+    #[arg(long, value_name = "FILE")]
+    use_config_file: Option<PathBuf>,
+    /// Override the initial screen mode.
+    #[arg(long, value_enum)]
+    screen_mode: Option<StartupScreenMode>,
+    /// Focus a repository subview immediately after startup.
+    #[arg(value_enum)]
+    focus: Option<StartupFocus>,
 }
 
 fn main() -> Result<()> {
     let startup_started_at = Instant::now();
     let cli = Cli::parse();
-    let loaded_config = AppConfig::load()?;
+    let config_discovery = resolve_config_discovery(&cli);
+
+    if cli.print_config {
+        print!("{}", default_config_toml()?);
+        return Ok(());
+    }
+
+    if cli.print_config_dir {
+        println!(
+            "{}",
+            config_discovery
+                .config_dir()
+                .context("could not determine a config directory from CLI or environment")?
+                .display()
+        );
+        return Ok(());
+    }
+
+    let config_path_hint = config_discovery
+        .primary_config_path()
+        .map(std::path::Path::to_path_buf);
+    let loaded_config = AppConfig::load_with_discovery(config_discovery)?;
     let config = loaded_config.config;
     let workspace_root = resolve_workspace_root(cli.workspace, &config);
-    let state = AppState {
+    let mut state = AppState {
         config_path: loaded_config
             .source
             .path()
@@ -38,6 +114,12 @@ fn main() -> Result<()> {
         repository_url: option_env!("CARGO_PKG_REPOSITORY").map(str::to_string),
         ..AppState::default()
     };
+    if state.config_path.is_none() {
+        state.config_path = config_path_hint;
+    }
+    if let Some(screen_mode) = cli.screen_mode {
+        state.settings.screen_mode = screen_mode.into();
+    }
     let app = TuiApp::new(state, config.clone());
     let workspace = WorkspaceRegistry::new(workspace_root);
     let git = GitFacade::default();
@@ -47,6 +129,7 @@ fn main() -> Result<()> {
     let mut runtime = AppRuntime::new(app, workspace, git);
     diagnostics.extend_snapshot(runtime.bootstrap()?);
     runtime.run([Event::Action(Action::RefreshVisibleRepos)]);
+    apply_startup_focus(&mut runtime, cli.focus);
 
     let interactive_terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     if interactive_terminal {
@@ -68,10 +151,30 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn resolve_workspace_root(
-    cli_workspace: Option<std::path::PathBuf>,
-    config: &AppConfig,
-) -> Option<std::path::PathBuf> {
+fn resolve_config_discovery(cli: &Cli) -> ConfigDiscovery {
+    ConfigDiscovery::from_overrides(cli.use_config_dir.clone(), cli.use_config_file.clone())
+}
+
+fn startup_focus_events(repo_id: RepoId, focus: StartupFocus) -> Vec<Event> {
+    let mut events = vec![Event::Action(Action::EnterRepoMode { repo_id })];
+    if let Some(subview) = focus.repo_subview() {
+        events.push(Event::Action(Action::SwitchRepoSubview(subview)));
+    }
+    events
+}
+
+fn apply_startup_focus(runtime: &mut AppRuntime, focus: Option<StartupFocus>) {
+    let Some(focus) = focus else {
+        return;
+    };
+    let Some(repo_id) = runtime.app().state().workspace.selected_repo_id.clone() else {
+        return;
+    };
+
+    runtime.run(startup_focus_events(repo_id, focus));
+}
+
+fn resolve_workspace_root(cli_workspace: Option<PathBuf>, config: &AppConfig) -> Option<PathBuf> {
     cli_workspace
         .or_else(|| config.workspace.roots.first().cloned())
         .or_else(|| std::env::current_dir().ok())
@@ -89,10 +192,103 @@ mod tests {
     use super::*;
     use super_lazygit_core::{
         AppMode, AppWatcherEvent, BackgroundJobKind, BackgroundJobState, CommitHistoryMode, Event,
-        PaneId, RepoId, RepoSubview, RepoSummary, ScanStatus, TimerEvent, Timestamp,
+        PaneId, RepoId, RepoSubview, RepoSummary, ScanStatus, ScreenMode, TimerEvent, Timestamp,
         WatcherEventKind, WatcherHealth, WorkerEvent, WorkspaceState,
     };
     use super_lazygit_test_support::{clean_repo, TempRepo};
+
+    #[test]
+    fn cli_parses_startup_flags_and_focus_argument() {
+        let cli = Cli::try_parse_from([
+            "super-lazygit",
+            "--workspace",
+            "/tmp/workspace",
+            "--use-config-dir",
+            "/tmp/config",
+            "--screen-mode",
+            "half",
+            "stash",
+        ])
+        .expect("cli parse");
+
+        assert_eq!(
+            cli,
+            Cli {
+                workspace: Some(PathBuf::from("/tmp/workspace")),
+                print_config: false,
+                print_config_dir: false,
+                use_config_dir: Some(PathBuf::from("/tmp/config")),
+                use_config_file: None,
+                screen_mode: Some(StartupScreenMode::Half),
+                focus: Some(StartupFocus::Stash),
+            }
+        );
+    }
+
+    #[test]
+    fn startup_screen_mode_maps_to_core_screen_mode() {
+        assert_eq!(
+            ScreenMode::from(StartupScreenMode::Normal),
+            ScreenMode::Normal
+        );
+        assert_eq!(
+            ScreenMode::from(StartupScreenMode::Half),
+            ScreenMode::HalfScreen
+        );
+        assert_eq!(
+            ScreenMode::from(StartupScreenMode::Fullscreen),
+            ScreenMode::FullScreen
+        );
+    }
+
+    #[test]
+    fn config_discovery_prefers_cli_file_over_cli_dir() {
+        let cli = Cli {
+            workspace: None,
+            print_config: false,
+            print_config_dir: false,
+            use_config_dir: Some(PathBuf::from("/tmp/config-dir")),
+            use_config_file: Some(PathBuf::from("/tmp/config-file.toml")),
+            screen_mode: None,
+            focus: None,
+        };
+
+        let discovery = resolve_config_discovery(&cli);
+
+        assert_eq!(
+            discovery.primary_config_path(),
+            Some(Path::new("/tmp/config-file.toml"))
+        );
+        assert_eq!(discovery.config_dir(), Some(Path::new("/tmp")));
+    }
+
+    #[test]
+    fn startup_focus_events_enter_repo_mode_then_switch_subview() {
+        let repo_id = RepoId::new("/tmp/repo");
+
+        let status_events = startup_focus_events(repo_id.clone(), StartupFocus::Status);
+        assert_eq!(status_events.len(), 1);
+        assert!(matches!(
+            status_events.first(),
+            Some(Event::Action(Action::EnterRepoMode { repo_id: event_repo_id }))
+                if event_repo_id == &repo_id
+        ));
+
+        let stash_events = startup_focus_events(repo_id.clone(), StartupFocus::Stash);
+        assert_eq!(stash_events.len(), 2);
+        assert!(matches!(
+            stash_events.get(1),
+            Some(Event::Action(Action::SwitchRepoSubview(RepoSubview::Stash)))
+        ));
+
+        let log_events = startup_focus_events(repo_id, StartupFocus::Log);
+        assert!(matches!(
+            log_events.get(1),
+            Some(Event::Action(Action::SwitchRepoSubview(
+                RepoSubview::Commits
+            )))
+        ));
+    }
 
     #[test]
     fn resolve_workspace_root_prefers_cli_path_over_config_roots() {
