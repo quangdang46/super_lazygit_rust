@@ -228,13 +228,403 @@ impl Default for WorkspaceConfig {
 pub struct EditorConfig {
     pub command: String,
     pub args: Vec<String>,
+    #[serde(alias = "editPreset", skip_serializing_if = "String::is_empty")]
+    pub edit_preset: String,
+    #[serde(alias = "edit", skip_serializing_if = "String::is_empty")]
+    pub edit: String,
+    #[serde(alias = "editAtLine", skip_serializing_if = "String::is_empty")]
+    pub edit_at_line: String,
+    #[serde(alias = "editAtLineAndWait", skip_serializing_if = "String::is_empty")]
+    pub edit_at_line_and_wait: String,
+    #[serde(alias = "openDirInEditor", skip_serializing_if = "String::is_empty")]
+    pub open_dir_in_editor: String,
+    #[serde(alias = "editInTerminal", skip_serializing_if = "Option::is_none")]
+    pub edit_in_terminal: Option<bool>,
 }
 
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
-            command: String::from("vim"),
+            command: String::new(),
             args: Vec::new(),
+            edit_preset: String::new(),
+            edit: String::new(),
+            edit_at_line: String::new(),
+            edit_at_line_and_wait: String::new(),
+            open_dir_in_editor: String::new(),
+            edit_in_terminal: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedEditorCommand {
+    pub command: String,
+    pub suspend: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditorTemplateKind {
+    Edit,
+    EditAtLine,
+    EditAtLineAndWait,
+    OpenDirInEditor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorPreset {
+    edit_template: String,
+    edit_at_line_template: String,
+    edit_at_line_and_wait_template: String,
+    open_dir_in_editor_template: String,
+    suspend: bool,
+}
+
+impl EditorConfig {
+    #[must_use]
+    pub fn resolve_edit_command(
+        &self,
+        shell: &str,
+        filename: &Path,
+        guess_default_editor: impl FnOnce() -> String,
+    ) -> ResolvedEditorCommand {
+        self.resolve_command(
+            EditorTemplateKind::Edit,
+            shell,
+            filename,
+            None,
+            guess_default_editor,
+        )
+    }
+
+    #[must_use]
+    pub fn resolve_edit_at_line_command(
+        &self,
+        shell: &str,
+        filename: &Path,
+        line: usize,
+        guess_default_editor: impl FnOnce() -> String,
+    ) -> ResolvedEditorCommand {
+        self.resolve_command(
+            EditorTemplateKind::EditAtLine,
+            shell,
+            filename,
+            Some(line),
+            guess_default_editor,
+        )
+    }
+
+    #[must_use]
+    pub fn resolve_edit_at_line_and_wait_command(
+        &self,
+        shell: &str,
+        filename: &Path,
+        line: usize,
+        guess_default_editor: impl FnOnce() -> String,
+    ) -> ResolvedEditorCommand {
+        self.resolve_command(
+            EditorTemplateKind::EditAtLineAndWait,
+            shell,
+            filename,
+            Some(line),
+            guess_default_editor,
+        )
+    }
+
+    #[must_use]
+    pub fn resolve_open_dir_command(
+        &self,
+        shell: &str,
+        dir: &Path,
+        guess_default_editor: impl FnOnce() -> String,
+    ) -> ResolvedEditorCommand {
+        self.resolve_command(
+            EditorTemplateKind::OpenDirInEditor,
+            shell,
+            dir,
+            None,
+            guess_default_editor,
+        )
+    }
+
+    fn resolve_command(
+        &self,
+        kind: EditorTemplateKind,
+        shell: &str,
+        target: &Path,
+        line: Option<usize>,
+        guess_default_editor: impl FnOnce() -> String,
+    ) -> ResolvedEditorCommand {
+        let guessed_editor = normalize_editor_name(&guess_default_editor());
+        let preset = self.editor_preset(shell, &guessed_editor);
+        let template = self.template_for_kind(kind, &preset);
+        let command = resolve_placeholder_string(
+            &template,
+            target,
+            line,
+            matches!(kind, EditorTemplateKind::OpenDirInEditor),
+        );
+
+        ResolvedEditorCommand {
+            command,
+            suspend: self.edit_in_terminal.unwrap_or(preset.suspend),
+        }
+    }
+
+    fn template_for_kind(&self, kind: EditorTemplateKind, preset: &EditorPreset) -> String {
+        let configured = match kind {
+            EditorTemplateKind::Edit => &self.edit,
+            EditorTemplateKind::EditAtLine => &self.edit_at_line,
+            EditorTemplateKind::EditAtLineAndWait => &self.edit_at_line_and_wait,
+            EditorTemplateKind::OpenDirInEditor => &self.open_dir_in_editor,
+        };
+        if !configured.is_empty() {
+            return configured.clone();
+        }
+
+        if let Some(legacy) = self.legacy_template(kind) {
+            return legacy;
+        }
+
+        match kind {
+            EditorTemplateKind::Edit => preset.edit_template.clone(),
+            EditorTemplateKind::EditAtLine => preset.edit_at_line_template.clone(),
+            EditorTemplateKind::EditAtLineAndWait => preset.edit_at_line_and_wait_template.clone(),
+            EditorTemplateKind::OpenDirInEditor => preset.open_dir_in_editor_template.clone(),
+        }
+    }
+
+    fn legacy_template(&self, kind: EditorTemplateKind) -> Option<String> {
+        if self.command.trim().is_empty() && self.args.is_empty() {
+            return None;
+        }
+
+        let mut parts = Vec::with_capacity(self.args.len() + 2);
+        if !self.command.trim().is_empty() {
+            parts.push(shell_quote(self.command.trim()));
+        }
+        parts.extend(self.args.iter().map(|arg| shell_quote(arg)));
+        parts.push(
+            match kind {
+                EditorTemplateKind::OpenDirInEditor => "{{dir}}",
+                EditorTemplateKind::Edit
+                | EditorTemplateKind::EditAtLine
+                | EditorTemplateKind::EditAtLineAndWait => "{{filename}}",
+            }
+            .to_string(),
+        );
+        Some(parts.join(" "))
+    }
+
+    fn editor_preset(&self, shell: &str, guessed_editor: &str) -> EditorPreset {
+        let preset_name = if self.edit_preset.is_empty() {
+            editor_name_to_preset(guessed_editor).unwrap_or("vim")
+        } else {
+            self.edit_preset.as_str()
+        };
+
+        match preset_name {
+            "vi" => standard_terminal_editor_preset("vi"),
+            "vim" => standard_terminal_editor_preset("vim"),
+            "nvim" => standard_terminal_editor_preset("nvim"),
+            "nvim-remote" => nvim_remote_preset(shell),
+            "lvim" => standard_terminal_editor_preset("lvim"),
+            "emacs" => standard_terminal_editor_preset("emacs"),
+            "micro" => EditorPreset {
+                edit_template: "micro {{filename}}".to_string(),
+                edit_at_line_template: "micro +{{line}} {{filename}}".to_string(),
+                edit_at_line_and_wait_template: "micro +{{line}} {{filename}}".to_string(),
+                open_dir_in_editor_template: "micro {{dir}}".to_string(),
+                suspend: true,
+            },
+            "nano" => standard_terminal_editor_preset("nano"),
+            "kakoune" => standard_terminal_editor_preset("kak"),
+            "helix" => EditorPreset {
+                edit_template: "helix -- {{filename}}".to_string(),
+                edit_at_line_template: "helix -- {{filename}}:{{line}}".to_string(),
+                edit_at_line_and_wait_template: "helix -- {{filename}}:{{line}}".to_string(),
+                open_dir_in_editor_template: "helix -- {{dir}}".to_string(),
+                suspend: true,
+            },
+            "helix (hx)" => EditorPreset {
+                edit_template: "hx -- {{filename}}".to_string(),
+                edit_at_line_template: "hx -- {{filename}}:{{line}}".to_string(),
+                edit_at_line_and_wait_template: "hx -- {{filename}}:{{line}}".to_string(),
+                open_dir_in_editor_template: "hx -- {{dir}}".to_string(),
+                suspend: true,
+            },
+            "vscode" => EditorPreset {
+                edit_template: "code --reuse-window -- {{filename}}".to_string(),
+                edit_at_line_template: "code --reuse-window --goto -- {{filename}}:{{line}}"
+                    .to_string(),
+                edit_at_line_and_wait_template:
+                    "code --reuse-window --goto --wait -- {{filename}}:{{line}}".to_string(),
+                open_dir_in_editor_template: "code -- {{dir}}".to_string(),
+                suspend: false,
+            },
+            "sublime" => EditorPreset {
+                edit_template: "subl -- {{filename}}".to_string(),
+                edit_at_line_template: "subl -- {{filename}}:{{line}}".to_string(),
+                edit_at_line_and_wait_template: "subl --wait -- {{filename}}:{{line}}".to_string(),
+                open_dir_in_editor_template: "subl -- {{dir}}".to_string(),
+                suspend: false,
+            },
+            "bbedit" => EditorPreset {
+                edit_template: "bbedit -- {{filename}}".to_string(),
+                edit_at_line_template: "bbedit +{{line}} -- {{filename}}".to_string(),
+                edit_at_line_and_wait_template: "bbedit +{{line}} --wait -- {{filename}}"
+                    .to_string(),
+                open_dir_in_editor_template: "bbedit -- {{dir}}".to_string(),
+                suspend: false,
+            },
+            "xcode" => EditorPreset {
+                edit_template: "xed -- {{filename}}".to_string(),
+                edit_at_line_template: "xed --line {{line}} -- {{filename}}".to_string(),
+                edit_at_line_and_wait_template: "xed --line {{line}} --wait -- {{filename}}"
+                    .to_string(),
+                open_dir_in_editor_template: "xed -- {{dir}}".to_string(),
+                suspend: false,
+            },
+            "zed" => EditorPreset {
+                edit_template: "zed -- {{filename}}".to_string(),
+                edit_at_line_template: "zed -- {{filename}}:{{line}}".to_string(),
+                edit_at_line_and_wait_template: "zed --wait -- {{filename}}:{{line}}".to_string(),
+                open_dir_in_editor_template: "zed -- {{dir}}".to_string(),
+                suspend: false,
+            },
+            "acme" => EditorPreset {
+                edit_template: "B {{filename}}".to_string(),
+                edit_at_line_template: "B {{filename}}:{{line}}".to_string(),
+                edit_at_line_and_wait_template: "E {{filename}}:{{line}}".to_string(),
+                open_dir_in_editor_template: "B {{dir}}".to_string(),
+                suspend: false,
+            },
+            _ => standard_terminal_editor_preset("vim"),
+        }
+    }
+}
+
+fn standard_terminal_editor_preset(editor: &str) -> EditorPreset {
+    EditorPreset {
+        edit_template: format!("{editor} -- {{{{filename}}}}"),
+        edit_at_line_template: format!("{editor} +{{{{line}}}} -- {{{{filename}}}}"),
+        edit_at_line_and_wait_template: format!("{editor} +{{{{line}}}} -- {{{{filename}}}}"),
+        open_dir_in_editor_template: format!("{editor} -- {{{{dir}}}}"),
+        suspend: true,
+    }
+}
+
+fn nvim_remote_preset(shell: &str) -> EditorPreset {
+    let (edit_template, edit_at_line_template, open_dir_in_editor_template) = if shell
+        .ends_with("fish")
+        || env::var_os("FISH_VERSION").is_some()
+    {
+        (
+            r#"begin; if test -z "$NVIM"; nvim -- {{filename}}; else; nvim --server "$NVIM" --remote-send "q"; nvim --server "$NVIM" --remote-tab {{filename}}; end; end"#,
+            r#"begin; if test -z "$NVIM"; nvim +{{line}} -- {{filename}}; else; nvim --server "$NVIM" --remote-send "q"; nvim --server "$NVIM" --remote-tab {{filename}}; nvim --server "$NVIM" --remote-send ":{{line}}<CR>"; end; end"#,
+            r#"begin; if test -z "$NVIM"; nvim -- {{dir}}; else; nvim --server "$NVIM" --remote-send "q"; nvim --server "$NVIM" --remote-tab {{dir}}; end; end"#,
+        )
+    } else if shell.ends_with("nu")
+        || shell.ends_with("nushell")
+        || env::var_os("NU_VERSION").is_some()
+    {
+        (
+            r#"if ($env | get -i NVIM | is-empty) { nvim -- {{filename}} } else { nvim --server $env.NVIM --remote-send "q"; nvim --server $env.NVIM --remote-tab {{filename}} }"#,
+            r#"if ($env | get -i NVIM | is-empty) { nvim +{{line}} -- {{filename}} } else { nvim --server $env.NVIM --remote-send "q"; nvim --server $env.NVIM --remote-tab {{filename}}; nvim --server $env.NVIM --remote-send ":{{line}}<CR>" }"#,
+            r#"if ($env | get -i NVIM | is-empty) { nvim -- {{dir}} } else { nvim --server $env.NVIM --remote-send "q"; nvim --server $env.NVIM --remote-tab {{dir}} }"#,
+        )
+    } else {
+        (
+            r#"[ -z "$NVIM" ] && (nvim -- {{filename}}) || (nvim --server "$NVIM" --remote-send "q" && nvim --server "$NVIM" --remote-tab {{filename}})"#,
+            r#"[ -z "$NVIM" ] && (nvim +{{line}} -- {{filename}}) || (nvim --server "$NVIM" --remote-send "q" &&  nvim --server "$NVIM" --remote-tab {{filename}} && nvim --server "$NVIM" --remote-send ":{{line}}<CR>")"#,
+            r#"[ -z "$NVIM" ] && (nvim -- {{dir}}) || (nvim --server "$NVIM" --remote-send "q" && nvim --server "$NVIM" --remote-tab {{dir}})"#,
+        )
+    };
+
+    EditorPreset {
+        edit_template: edit_template.to_string(),
+        edit_at_line_template: edit_at_line_template.to_string(),
+        edit_at_line_and_wait_template: "nvim +{{line}} {{filename}}".to_string(),
+        open_dir_in_editor_template: open_dir_in_editor_template.to_string(),
+        suspend: env::var_os("NVIM").is_none(),
+    }
+}
+
+fn editor_name_to_preset(editor: &str) -> Option<&'static str> {
+    match editor {
+        "vi" => Some("vi"),
+        "vim" => Some("vim"),
+        "nvim" => Some("nvim"),
+        "nvim-remote" => Some("nvim-remote"),
+        "lvim" => Some("lvim"),
+        "emacs" => Some("emacs"),
+        "micro" => Some("micro"),
+        "nano" => Some("nano"),
+        "kak" => Some("kakoune"),
+        "kakoune" => Some("kakoune"),
+        "helix" => Some("helix"),
+        "hx" => Some("helix (hx)"),
+        "code" => Some("vscode"),
+        "vscode" => Some("vscode"),
+        "subl" => Some("sublime"),
+        "sublime" => Some("sublime"),
+        "bbedit" => Some("bbedit"),
+        "xed" => Some("xcode"),
+        "xcode" => Some("xcode"),
+        "zed" => Some("zed"),
+        "acme" => Some("acme"),
+        _ => None,
+    }
+}
+
+fn normalize_editor_name(editor: &str) -> String {
+    editor
+        .trim()
+        .split(' ')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn resolve_placeholder_string(
+    template: &str,
+    target: &Path,
+    line: Option<usize>,
+    is_dir: bool,
+) -> String {
+    let mut resolved = template.to_string();
+    let quoted_target = shell_quote(&target.display().to_string());
+    let line = line.map(|value| value.to_string()).unwrap_or_default();
+
+    for (placeholder, value) in [
+        ("{{filename}}", quoted_target.as_str()),
+        ("{{.filename}}", quoted_target.as_str()),
+        ("{{dir}}", quoted_target.as_str()),
+        ("{{.dir}}", quoted_target.as_str()),
+        ("{{line}}", line.as_str()),
+        ("{{.line}}", line.as_str()),
+    ] {
+        resolved = resolved.replace(placeholder, value);
+    }
+
+    if is_dir {
+        resolved
+    } else {
+        resolved
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    #[cfg(windows)]
+    {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    }
+    #[cfg(not(windows))]
+    {
+        if value.is_empty() {
+            "''".to_string()
+        } else {
+            format!("'{}'", value.replace('\'', r#"'"'"'"#))
         }
     }
 }
@@ -355,11 +745,17 @@ mod tests {
     #[test]
     fn default_config_exposes_foundation_surfaces() {
         let config = AppConfig::default();
+        let resolved =
+            config
+                .editor
+                .resolve_edit_command("sh", Path::new("/tmp/repo/file.txt"), String::new);
 
         assert!(config.workspace.roots.is_empty());
         assert_eq!(config.workspace.ignores, default_workspace_ignores());
-        assert_eq!(config.editor.command, "vim");
+        assert_eq!(config.editor.command, "");
         assert!(config.editor.args.is_empty());
+        assert_eq!(resolved.command, "vim -- '/tmp/repo/file.txt'");
+        assert!(resolved.suspend);
         assert_eq!(config.theme.preset, ThemePreset::DefaultDark);
         assert!(config.keybindings.overrides.is_empty());
         assert!(config.diagnostics.enabled);
@@ -543,5 +939,51 @@ command = "nvim"
             error,
             ConfigLoadError::Parse { ref path, .. } if path == &config_path
         ));
+    }
+    #[test]
+    fn legacy_editor_command_appends_filename_after_quoted_args() {
+        let config = EditorConfig {
+            command: "nvim".to_string(),
+            args: vec!["-f".to_string(), "--clean".to_string()],
+            ..Default::default()
+        };
+
+        let resolved =
+            config.resolve_edit_command("sh", Path::new("/tmp/repo/file.txt"), String::new);
+
+        assert_eq!(
+            resolved.command,
+            "'nvim' '-f' '--clean' '/tmp/repo/file.txt'"
+        );
+        assert!(resolved.suspend);
+    }
+
+    #[test]
+    fn guessed_editor_uses_vscode_preset_without_tui_suspend() {
+        let resolved = EditorConfig::default().resolve_edit_at_line_and_wait_command(
+            "sh",
+            Path::new("/tmp/repo/file.txt"),
+            42,
+            || "code --wait".to_string(),
+        );
+
+        assert_eq!(
+            resolved.command,
+            "code --reuse-window --goto --wait -- '/tmp/repo/file.txt':42"
+        );
+        assert!(!resolved.suspend);
+    }
+
+    #[test]
+    fn open_dir_command_resolves_custom_dir_placeholder() {
+        let config = EditorConfig {
+            open_dir_in_editor: "code --add {{dir}}".to_string(),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_open_dir_command("sh", Path::new("/tmp/repo"), String::new);
+
+        assert_eq!(resolved.command, "code --add '/tmp/repo'");
+        assert!(resolved.suspend);
     }
 }

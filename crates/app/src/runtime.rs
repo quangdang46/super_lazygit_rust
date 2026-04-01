@@ -517,29 +517,99 @@ impl AppRuntime {
         follow_up_events
     }
 
+    fn editor_shell() -> String {
+        #[cfg(windows)]
+        {
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd".to_string())
+        }
+        #[cfg(not(windows))]
+        {
+            std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
+        }
+    }
+
+    fn guess_default_editor(cwd: &Path) -> String {
+        let editor = Self::git_core_editor(cwd)
+            .or_else(|| std::env::var("GIT_EDITOR").ok())
+            .or_else(|| std::env::var("VISUAL").ok())
+            .or_else(|| std::env::var("EDITOR").ok())
+            .unwrap_or_default();
+
+        editor
+            .trim()
+            .split(' ')
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn git_core_editor(cwd: &Path) -> Option<String> {
+        let output = Command::new("git")
+            .args(["config", "core.editor"])
+            .current_dir(cwd)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let editor = String::from_utf8(output.stdout).ok()?;
+        let editor = editor.trim();
+        if editor.is_empty() {
+            None
+        } else {
+            Some(editor.to_string())
+        }
+    }
+
+    fn shell_command(command: &str) -> Command {
+        #[cfg(windows)]
+        {
+            let mut shell = Command::new("cmd");
+            shell.args(["/C", command]);
+            shell
+        }
+        #[cfg(not(windows))]
+        {
+            let mut shell = Command::new("sh");
+            shell.args(["-lc", command]);
+            shell
+        }
+    }
+
     fn open_editor(&self, cwd: &PathBuf, target: &PathBuf) -> Option<Event> {
         let editor = &self.app.config().editor;
-        if editor.command.trim().is_empty() {
+        let shell = Self::editor_shell();
+        let guessed_editor = Self::guess_default_editor(cwd);
+        let resolved = if target.is_dir() {
+            editor.resolve_open_dir_command(&shell, target, || guessed_editor.clone())
+        } else {
+            editor.resolve_edit_command(&shell, target, || guessed_editor.clone())
+        };
+
+        if resolved.command.trim().is_empty() {
             return Some(Event::Worker(WorkerEvent::EditorLaunchFailed {
                 error: "Editor command is empty.".to_string(),
             }));
         }
 
-        let mut command = Command::new(&editor.command);
+        let mut command = Self::shell_command(&resolved.command);
         command.current_dir(cwd);
-        command.args(&editor.args);
-        command.arg(target);
 
-        crate::terminal::run_external_command(&mut command)
-            .err()
-            .map(|error| {
-                Event::Worker(WorkerEvent::EditorLaunchFailed {
-                    error: format!(
-                        "Failed to open {} in the configured editor: {error}",
-                        target.display()
-                    ),
-                })
+        crate::terminal::run_external_command_named_with_options(
+            &mut command,
+            "editor",
+            resolved.suspend,
+        )
+        .err()
+        .map(|error| {
+            Event::Worker(WorkerEvent::EditorLaunchFailed {
+                error: format!(
+                    "Failed to open {} in the configured editor: {error}",
+                    target.display()
+                ),
             })
+        })
     }
 
     fn run_interactive_git_command(

@@ -31,15 +31,32 @@ Behavior details:
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `command` | `String` | `"vim"` | Editor command surface |
-| `args` | `Vec<String>` | `[]` | Extra editor arguments; the selected repo or file path is appended after these |
+| `command` | `String` | `""` | Legacy command surface; only used when template fields are empty |
+| `args` | `Vec<String>` | `[]` | Legacy argument list; each value is shell-quoted and `{{filename}}` or `{{dir}}` is appended automatically |
+| `edit_preset` | `String` | `""` | Optional preset name such as `vim`, `nvim`, `vscode`, `helix`, `sublime`, `zed`, or `nvim-remote` |
+| `edit` | `String` | `""` | Full shell template for opening a file |
+| `edit_at_line` | `String` | `""` | Full shell template for opening a file at a line |
+| `edit_at_line_and_wait` | `String` | `""` | Full shell template for opening a file at a line and waiting for exit |
+| `open_dir_in_editor` | `String` | `""` | Full shell template for opening a directory target |
+| `edit_in_terminal` | `Option<bool>` | `None` | Overrides whether the TUI suspends while the editor command runs |
 
 Editor launch behavior:
 
-- Workspace mode passes the selected repository root to the configured command.
-- Repo mode passes the selected status-file path to the configured command.
+- Runtime resolves editor commands in this order: explicit template field, legacy `command` plus `args`, preset selected by `edit_preset`, guessed preset from `git config core.editor`, `GIT_EDITOR`, `VISUAL`, `EDITOR`, then fallback `vim`.
+- Repo mode passes the selected file path to `edit`, `edit_at_line`, or `edit_at_line_and_wait`.
+- Workspace and worktree mode pass the selected repository root to `open_dir_in_editor`.
 - The runtime sets the editor process current working directory to the selected repository root.
-- When the app is running on a real TTY, the TUI temporarily leaves raw mode and the alternate screen while the editor process runs, then restores the TUI afterward.
+- All resolved editor commands are launched through the active shell: `sh -lc` on Unix and `cmd /C` on Windows.
+- Template placeholders are substituted before launch: `{{filename}}` and `{{.filename}}` for file targets, `{{dir}}` and `{{.dir}}` for directory targets, and `{{line}}` and `{{.line}}` for line-aware commands.
+- Built-in terminal presets such as `vim`, `nvim`, `helix`, `nano`, and `micro` suspend the TUI by default.
+- Built-in GUI presets such as `vscode`, `sublime`, `bbedit`, `xcode`, `zed`, and `acme` do not suspend by default.
+- `edit_in_terminal = true` forces suspend even for GUI presets. `edit_in_terminal = false` keeps the TUI live even for terminal presets.
+
+Legacy `command` plus `args` compatibility:
+
+- When any template field is set, that template wins for its command kind.
+- When templates are empty but `command` or `args` are configured, the legacy command path is used.
+- Legacy command mode shell-quotes the binary, shell-quotes each arg, and appends `{{filename}}` or `{{dir}}` automatically.
 
 ### `theme`
 
@@ -107,8 +124,12 @@ roots = ["/path/to/workspace"]
 ignores = [".git", "node_modules", "target"]
 
 [editor]
-command = "nvim"
-args = ["-f"]
+edit_preset = "vscode"
+edit = "code --reuse-window -- {{filename}}"
+edit_at_line = "code --reuse-window --goto -- {{filename}}:{{line}}"
+edit_at_line_and_wait = "code --reuse-window --goto --wait -- {{filename}}:{{line}}"
+open_dir_in_editor = "code -- {{dir}}"
+edit_in_terminal = false
 
 [theme]
 preset = "default_dark"

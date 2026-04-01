@@ -2031,10 +2031,11 @@ mod tests {
                 command: "sh".to_string(),
                 args: vec![
                     "-c".to_string(),
-                    "printf '%s\\n' \"$PWD\" > \"$1\"\nprintf '%s\\n' \"$2\" >> \"$1\"".to_string(),
+                    "printf '%s\n' \"$PWD\" > \"$1\"\nprintf '%s\n' \"$2\" >> \"$1\"".to_string(),
                     "editor-open".to_string(),
                     log_path.display().to_string(),
                 ],
+                ..Default::default()
             },
             ..AppConfig::default()
         };

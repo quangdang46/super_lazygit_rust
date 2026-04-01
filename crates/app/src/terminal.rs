@@ -145,7 +145,15 @@ pub fn run_external_command(command: &mut Command) -> io::Result<()> {
 }
 
 pub fn run_external_command_named(command: &mut Command, label: &str) -> io::Result<()> {
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+    run_external_command_named_with_options(command, label, true)
+}
+
+pub fn run_external_command_named_with_options(
+    command: &mut Command,
+    label: &str,
+    suspend: bool,
+) -> io::Result<()> {
+    if !suspend || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return command
             .status()
             .and_then(|status| require_success(status, label));
