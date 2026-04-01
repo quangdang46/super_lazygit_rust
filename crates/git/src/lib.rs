@@ -5040,6 +5040,32 @@ mod tests {
     }
 
     #[test]
+    fn cli_backend_reads_bisect_started_before_any_terms_are_marked() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.git(["bisect", "start"]).expect("start bisect");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        let bisect = detail.bisect_state.expect("bisect state is present");
+        assert_eq!(bisect.bad_term, "bad");
+        assert_eq!(bisect.good_term, "good");
+        assert!(bisect.current_commit.is_none());
+        assert!(bisect.current_summary.is_none());
+    }
+
+    #[test]
     fn cli_backend_reads_bisect_custom_terms_and_expected_revision() {
         let repo = history_preview_repo().expect("fixture repo");
         repo.git(["bisect", "start", "--term-old=old", "--term-new=new"])
