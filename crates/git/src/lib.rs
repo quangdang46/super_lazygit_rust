@@ -4228,13 +4228,44 @@ fn read_remote_branches(repo_path: &Path) -> Vec<RemoteBranchItem> {
     .unwrap_or_default()
 }
 
-fn read_tags(repo_path: &Path) -> Vec<TagItem> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TagMetadata {
+    target_oid: String,
+    target_short_oid: String,
+    annotated: bool,
+}
+
+fn parse_tag_listing(output: &str) -> Vec<(String, String)> {
+    output.lines().filter_map(parse_tag_listing_line).collect()
+}
+
+fn parse_tag_listing_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let split_index = trimmed.find(char::is_whitespace);
+    let (name, summary) = if let Some(index) = split_index {
+        let summary = trimmed[index..].trim_start();
+        (&trimmed[..index], summary)
+    } else {
+        (trimmed, "")
+    };
+
+    if name.is_empty() {
+        return None;
+    }
+
+    Some((name.to_string(), summary.to_string()))
+}
+
+fn read_tag_metadata(repo_path: &Path) -> BTreeMap<String, TagMetadata> {
     git_stdout(
         repo_path,
         [
             "for-each-ref",
-            "--sort=-creatordate",
-            "--format=%(refname:short)%00%(objecttype)%00%(objectname)%00%(*objectname)%00%(subject)",
+            "--format=%(refname:short)%00%(objecttype)%00%(objectname)%00%(*objectname)",
             "refs/tags",
         ],
     )
@@ -4251,7 +4282,6 @@ fn read_tags(repo_path: &Path) -> Vec<TagItem> {
                 let object_type = parts.next().unwrap_or_default().trim();
                 let object_oid = parts.next().unwrap_or_default().trim();
                 let peeled_oid = parts.next().unwrap_or_default().trim();
-                let summary = parts.next().unwrap_or_default().trim();
                 if name.is_empty() {
                     return None;
                 }
@@ -4263,17 +4293,39 @@ fn read_tags(repo_path: &Path) -> Vec<TagItem> {
                 if target_oid.is_empty() {
                     return None;
                 }
-                Some(TagItem {
-                    name: name.to_string(),
-                    target_oid: target_oid.to_string(),
-                    target_short_oid: target_oid.chars().take(7).collect(),
-                    summary: summary.to_string(),
-                    annotated: object_type == "tag",
-                })
+                Some((
+                    name.to_string(),
+                    TagMetadata {
+                        target_oid: target_oid.to_string(),
+                        target_short_oid: target_oid.chars().take(7).collect(),
+                        annotated: object_type == "tag",
+                    },
+                ))
             })
             .collect()
     })
     .unwrap_or_default()
+}
+
+fn read_tags(repo_path: &Path) -> Vec<TagItem> {
+    git_stdout(repo_path, ["tag", "--list", "-n", "--sort=-creatordate"])
+        .map(|output| {
+            let metadata = read_tag_metadata(repo_path);
+            parse_tag_listing(&output)
+                .into_iter()
+                .filter_map(|(name, summary)| {
+                    let metadata = metadata.get(&name)?;
+                    Some(TagItem {
+                        name,
+                        target_oid: metadata.target_oid.clone(),
+                        target_short_oid: metadata.target_short_oid.clone(),
+                        summary,
+                        annotated: metadata.annotated,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn local_branch_exists(repo_path: &Path, branch_name: &str) -> GitResult<bool> {
@@ -10571,6 +10623,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_tag_listing_matches_lazygit_loader_cases() {
+        assert!(parse_tag_listing("").is_empty());
+        assert_eq!(
+            parse_tag_listing("tag1 this is my message\ntag2\ntag3 this is my other message\n"),
+            vec![
+                ("tag1".to_string(), "this is my message".to_string()),
+                ("tag2".to_string(), String::new()),
+                ("tag3".to_string(), "this is my other message".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn cli_backend_reads_lightweight_and_annotated_tags() {
         let repo = TempRepo::new().expect("fixture repo");
         repo.write_file("tracked.txt", "base\n")
@@ -10599,6 +10664,19 @@ mod tests {
                 rename_similarity_threshold: 50,
             })
             .expect("detail succeeds");
+
+        assert_eq!(detail.tags.len(), 2);
+        assert_eq!(
+            detail
+                .tags
+                .iter()
+                .map(|tag| (tag.name.as_str(), tag.summary.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("snapshot", "snapshot commit"),
+                ("v1.0.0", "release v1.0.0"),
+            ]
+        );
 
         let annotated = detail
             .tags

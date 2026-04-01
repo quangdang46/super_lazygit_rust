@@ -102,12 +102,12 @@
 [x] ./references/lazygit-master/pkg/commands/git_commands/sync.go
 ./references/lazygit-master/pkg/commands/git_commands/sync_test.go
 ./references/lazygit-master/pkg/commands/git_commands/tag.go
-./references/lazygit-master/pkg/commands/git_commands/tag_loader.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/tag_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/tag_loader_test.go
-./references/lazygit-master/pkg/commands/git_commands/version.go
-./references/lazygit-master/pkg/commands/git_commands/version_test.go
-./references/lazygit-master/pkg/commands/git_commands/working_tree.go
-./references/lazygit-master/pkg/commands/git_commands/working_tree_test.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/version.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/version_test.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/working_tree.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/working_tree_test.go
 ./references/lazygit-master/pkg/commands/git_commands/worktree.go
 ./references/lazygit-master/pkg/commands/git_commands/worktree_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/worktree_loader_test.go
