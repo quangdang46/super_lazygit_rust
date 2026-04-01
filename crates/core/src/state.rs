@@ -1750,6 +1750,12 @@ pub struct ReflogItem {
 pub struct WorktreeItem {
     pub path: PathBuf,
     pub branch: Option<String>,
+    pub head: String,
+    pub name: String,
+    pub is_main: bool,
+    pub is_current: bool,
+    pub is_path_missing: bool,
+    pub git_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2165,8 +2171,21 @@ pub fn reflog_matches_filter(entry: &ReflogItem, normalized_query: &str) -> bool
 #[must_use]
 pub fn worktree_matches_filter(worktree: &WorktreeItem, normalized_query: &str) -> bool {
     [
+        worktree.name.as_str(),
         worktree.path.to_string_lossy().as_ref(),
         worktree.branch.as_deref().unwrap_or("(detached)"),
+        worktree.head.as_str(),
+        if worktree.is_main { "main" } else { "linked" },
+        if worktree.is_current {
+            "current"
+        } else {
+            "other"
+        },
+        if worktree.is_path_missing {
+            "missing"
+        } else {
+            "present"
+        },
     ]
     .into_iter()
     .map(normalize_search_text)

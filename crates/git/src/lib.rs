@@ -5065,41 +5065,241 @@ fn read_reflog(repo_path: &Path) -> Vec<ReflogItem> {
 }
 
 fn read_worktrees(repo_path: &Path) -> Vec<WorktreeItem> {
-    let output = match git_stdout(repo_path, ["worktree", "list", "--porcelain"]) {
+    let repo_paths = match RepoPaths::resolve(repo_path) {
+        Ok(paths) => paths,
+        Err(_) => return Vec::new(),
+    };
+    let output = match git_stdout(
+        repo_paths.worktree_path(),
+        ["worktree", "list", "--porcelain"],
+    ) {
         Ok(output) => output,
         Err(_) => return Vec::new(),
     };
 
     let mut items = Vec::new();
-    let mut current_path: Option<PathBuf> = None;
-    let mut current_branch: Option<String> = None;
+    let mut current: Option<WorktreeItem> = None;
 
     for line in output.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            if let Some(path) = current_path.take() {
-                items.push(WorktreeItem {
-                    path,
-                    branch: current_branch.take(),
-                });
-            }
-            current_path = Some(PathBuf::from(path));
-            current_branch = None;
+        if line.is_empty() {
+            push_worktree_item(&mut items, &mut current);
             continue;
         }
 
-        if let Some(branch) = line.strip_prefix("branch refs/heads/") {
-            current_branch = Some(branch.to_string());
+        if line == "bare" {
+            current = None;
+            continue;
+        }
+
+        if let Some(path) = line.strip_prefix("worktree ") {
+            push_worktree_item(&mut items, &mut current);
+
+            let raw_path = PathBuf::from(path);
+            let is_path_missing = worktree_path_missing(&raw_path);
+            let path = if is_path_missing {
+                raw_path.clone()
+            } else {
+                canonicalize_existing_path(&raw_path)
+            };
+            current = Some(WorktreeItem {
+                is_main: path == repo_paths.repo_path(),
+                is_current: path == repo_paths.worktree_path(),
+                path,
+                is_path_missing,
+                ..WorktreeItem::default()
+            });
+            continue;
+        }
+
+        let Some(item) = current.as_mut() else {
+            continue;
+        };
+
+        if let Some(head) = line.strip_prefix("HEAD ") {
+            item.head = head.to_string();
+            continue;
+        }
+
+        if let Some(branch) = line.strip_prefix("branch ") {
+            item.branch = Some(short_head_name(branch));
+        }
+    }
+    push_worktree_item(&mut items, &mut current);
+
+    for item in &mut items {
+        if item.is_path_missing {
+            continue;
+        }
+        item.git_dir = worktree_git_dir(&item.path);
+    }
+
+    let names = unique_worktree_names(
+        &items
+            .iter()
+            .map(|item| item.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+    );
+    for (item, name) in items.iter_mut().zip(names) {
+        item.name = name;
+    }
+
+    if let Some(index) = items.iter().position(|item| item.is_current) {
+        let current_item = items.remove(index);
+        items.insert(0, current_item);
+    }
+
+    for item in &mut items {
+        if item.branch.is_some() {
+            continue;
+        }
+        let Some(git_dir) = item.git_dir.as_deref() else {
+            continue;
+        };
+        if let Some(branch) = rebased_branch(git_dir) {
+            item.branch = Some(branch);
+            continue;
+        }
+        if let Some(branch) = bisected_branch(git_dir) {
+            item.branch = Some(branch);
         }
     }
 
-    if let Some(path) = current_path {
-        items.push(WorktreeItem {
-            path,
-            branch: current_branch,
-        });
+    items
+}
+
+fn push_worktree_item(items: &mut Vec<WorktreeItem>, current: &mut Option<WorktreeItem>) {
+    if let Some(item) = current.take() {
+        items.push(item);
+    }
+}
+
+fn worktree_path_missing(path: &Path) -> bool {
+    match fs::metadata(path) {
+        Ok(_) => false,
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+fn worktree_git_dir(worktree_path: &Path) -> Option<PathBuf> {
+    git_stdout_allow_failure(
+        worktree_path,
+        ["rev-parse", "--path-format=absolute", "--absolute-git-dir"],
+    )
+    .ok()
+    .filter(|value| !value.is_empty())
+    .map(|value| canonicalize_existing_path(Path::new(&value)))
+}
+
+fn rebased_branch(git_dir: &Path) -> Option<String> {
+    ["rebase-merge", "rebase-apply"]
+        .into_iter()
+        .find_map(|dir| {
+            read_trimmed_file(&git_dir.join(dir).join("head-name"))
+                .map(|value| short_head_name(&value))
+        })
+}
+
+fn bisected_branch(git_dir: &Path) -> Option<String> {
+    read_trimmed_file(&git_dir.join("BISECT_START"))
+}
+
+fn read_trimmed_file(path: &Path) -> Option<String> {
+    fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn short_head_name(value: &str) -> String {
+    value.trim().trim_start_matches("refs/heads/").to_string()
+}
+
+#[derive(Debug, Clone)]
+struct IndexedPath {
+    path: String,
+    index: usize,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedName {
+    name: String,
+    index: usize,
+}
+
+fn unique_worktree_names(paths: &[String]) -> Vec<String> {
+    let indexed_paths = paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| IndexedPath {
+            path: path.clone(),
+            index,
+        })
+        .collect::<Vec<_>>();
+    let indexed_names = unique_worktree_names_at_depth(indexed_paths, 0);
+    let mut names = vec![String::new(); paths.len()];
+    for indexed_name in indexed_names {
+        names[indexed_name.index] = indexed_name.name;
+    }
+    names
+}
+
+fn unique_worktree_names_at_depth(paths: Vec<IndexedPath>, depth: usize) -> Vec<IndexedName> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    if paths.len() == 1 {
+        let path = &paths[0];
+        return vec![IndexedName {
+            index: path.index,
+            name: slice_at_depth(&path.path, depth),
+        }];
     }
 
-    items
+    let mut groups: BTreeMap<String, Vec<IndexedPath>> = BTreeMap::new();
+    for path in paths {
+        let key = value_at_depth(&path.path, depth);
+        groups.entry(key).or_default().push(path);
+    }
+
+    let mut names = Vec::new();
+    for group in groups.into_values() {
+        if group.len() == 1 {
+            let path = &group[0];
+            names.push(IndexedName {
+                index: path.index,
+                name: slice_at_depth(&path.path, depth),
+            });
+        } else {
+            names.extend(unique_worktree_names_at_depth(group, depth + 1));
+        }
+    }
+    names
+}
+
+fn value_at_depth(path: &str, depth: usize) -> String {
+    let segments = normalized_path_segments(path);
+    if depth >= segments.len() {
+        String::new()
+    } else {
+        segments[segments.len() - 1 - depth].clone()
+    }
+}
+
+fn slice_at_depth(path: &str, depth: usize) -> String {
+    let segments = normalized_path_segments(path);
+    if depth >= segments.len() {
+        String::new()
+    } else {
+        segments[segments.len() - 1 - depth..].join("/")
+    }
+}
+
+fn normalized_path_segments(path: &str) -> Vec<String> {
+    path.replace('\\', "/")
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -5352,13 +5552,6 @@ fn resolve_git_path(repo_path: &Path, git_path: &str) -> Option<PathBuf> {
         })
 }
 
-fn read_trimmed_file(path: &Path) -> Option<String> {
-    fs::read_to_string(path)
-        .ok()
-        .map(|contents| contents.trim().to_string())
-        .filter(|contents| !contents.is_empty())
-}
-
 fn read_usize_file(path: &Path) -> Option<usize> {
     read_trimmed_file(path)?.parse().ok()
 }
@@ -5559,6 +5752,31 @@ mod tests {
         )?;
 
         Ok(root)
+    }
+
+    #[test]
+    fn unique_worktree_names_match_upstream_cases() {
+        let cases = [
+            (Vec::<String>::new(), Vec::<&str>::new()),
+            (vec!["/my/path/feature/one".to_string()], vec!["one"]),
+            (vec!["/my/path/feature/one/".to_string()], vec!["one"]),
+            (
+                vec![
+                    "/a/b/c/d".to_string(),
+                    "/a/b/c/e".to_string(),
+                    "/a/b/f/d".to_string(),
+                    "/a/e/c/d".to_string(),
+                ],
+                vec!["b/c/d", "e", "f/d", "e/c/d"],
+            ),
+        ];
+
+        for (paths, expected) in cases {
+            assert_eq!(
+                unique_worktree_names(&paths),
+                expected.into_iter().map(str::to_string).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
@@ -8017,6 +8235,7 @@ mod tests {
     fn cli_backend_reads_worktrees_and_diff_selection() {
         let repo = worktree_repo().expect("fixture repo");
         let backend = CliGitBackend;
+        let canonical_repo_path = fs::canonicalize(repo.path()).expect("canonical repo path");
 
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
@@ -8044,14 +8263,24 @@ mod tests {
             .expect("diff should load");
 
         assert_eq!(detail.worktrees.len(), 2);
-        assert!(detail
-            .worktrees
-            .iter()
-            .any(|item| item.branch.as_deref() == Some("main")));
+        assert_eq!(detail.worktrees[0].path, canonical_repo_path);
+        assert_eq!(detail.worktrees[0].branch.as_deref(), Some("main"));
+        assert!(detail.worktrees[0].is_main);
+        assert!(detail.worktrees[0].is_current);
+        assert!(!detail.worktrees[0].is_path_missing);
+        assert_eq!(
+            detail.worktrees[0].name,
+            repo.path().file_name().unwrap().to_string_lossy()
+        );
         assert!(detail
             .worktrees
             .iter()
             .any(|item| item.branch.as_deref() == Some("feature")));
+        assert!(detail.worktrees.iter().all(|item| !item.head.is_empty()));
+        assert!(detail
+            .worktrees
+            .iter()
+            .all(|item| item.is_path_missing || item.git_dir.is_some()));
         assert!(diff.selected_path.is_none());
         assert_eq!(
             diff.hunk_count,
@@ -8060,6 +8289,138 @@ mod tests {
                 .filter(|line| line.kind == DiffLineKind::HunkHeader)
                 .count()
         );
+    }
+
+    #[test]
+    fn cli_backend_prioritizes_current_linked_worktree_and_recovers_rebase_branch() {
+        let repo = worktree_repo().expect("fixture repo");
+        let linked_worktree_path = repo
+            .worktree_list()
+            .expect("worktree list")
+            .lines()
+            .find_map(|line| {
+                let path = line.strip_prefix("worktree ")?;
+                path.ends_with("feature-tree").then(|| PathBuf::from(path))
+            })
+            .expect("linked worktree path");
+        let canonical_linked_path =
+            fs::canonicalize(&linked_worktree_path).expect("canonical linked worktree path");
+        let linked_git_dir = RepoPaths::resolve(&linked_worktree_path)
+            .expect("resolve linked worktree paths")
+            .worktree_git_dir_path()
+            .to_path_buf();
+        run_git(&linked_worktree_path, &["checkout", "--detach"])
+            .expect("detach linked worktree head");
+        fs::create_dir_all(linked_git_dir.join("rebase-merge")).expect("create rebase dir");
+        fs::write(
+            linked_git_dir.join("rebase-merge").join("head-name"),
+            "refs/heads/feature\n",
+        )
+        .expect("write rebase head-name");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(linked_worktree_path.display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load from linked worktree");
+
+        assert_eq!(detail.worktrees.len(), 2);
+        assert_eq!(detail.worktrees[0].path, canonical_linked_path);
+        assert!(detail.worktrees[0].is_current);
+        assert!(!detail.worktrees[0].is_main);
+        assert_eq!(detail.worktrees[0].branch.as_deref(), Some("feature"));
+        assert_eq!(detail.worktrees[0].name, "feature-tree");
+        assert!(detail.worktrees[0].git_dir.is_some());
+        assert!(detail.worktrees[1].is_main);
+        assert!(!detail.worktrees[1].is_current);
+    }
+
+    #[test]
+    fn cli_backend_marks_missing_worktree_paths() {
+        let repo = worktree_repo().expect("fixture repo");
+        let linked_worktree_path = repo
+            .worktree_list()
+            .expect("worktree list")
+            .lines()
+            .find_map(|line| {
+                let path = line.strip_prefix("worktree ")?;
+                path.ends_with("feature-tree").then(|| PathBuf::from(path))
+            })
+            .expect("linked worktree path");
+        fs::remove_dir_all(&linked_worktree_path).expect("remove linked worktree path");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load from main worktree");
+
+        let missing = detail
+            .worktrees
+            .iter()
+            .find(|item| item.path == linked_worktree_path)
+            .expect("missing linked worktree listed");
+        assert!(missing.is_path_missing);
+        assert!(!missing.is_current);
+        assert!(!missing.is_main);
+        assert_eq!(missing.branch.as_deref(), Some("feature"));
+        assert_eq!(missing.name, "feature-tree");
+        assert!(missing.git_dir.is_none());
+    }
+
+    #[test]
+    fn cli_backend_recovers_bisect_branch_from_linked_worktree_git_dir() {
+        let repo = worktree_repo().expect("fixture repo");
+        let linked_worktree_path = repo
+            .worktree_list()
+            .expect("worktree list")
+            .lines()
+            .find_map(|line| {
+                let path = line.strip_prefix("worktree ")?;
+                path.ends_with("feature-tree").then(|| PathBuf::from(path))
+            })
+            .expect("linked worktree path");
+        let linked_git_dir = RepoPaths::resolve(&linked_worktree_path)
+            .expect("resolve linked worktree paths")
+            .worktree_git_dir_path()
+            .to_path_buf();
+        run_git(&linked_worktree_path, &["checkout", "--detach"])
+            .expect("detach linked worktree head");
+        fs::write(linked_git_dir.join("BISECT_START"), "feature\n").expect("write bisect start");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(linked_worktree_path.display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load from linked worktree");
+
+        assert_eq!(detail.worktrees[0].branch.as_deref(), Some("feature"));
+        assert!(detail.worktrees[0].is_current);
+        assert_eq!(detail.worktrees[0].name, "feature-tree");
     }
 
     #[test]

@@ -10981,10 +10981,12 @@ mod tests {
                 super_lazygit_core::WorktreeItem {
                     path: PathBuf::from("/tmp/repo-1"),
                     branch: Some("main".to_string()),
+                    ..super_lazygit_core::WorktreeItem::default()
                 },
                 super_lazygit_core::WorktreeItem {
                     path: PathBuf::from("/tmp/repo-1-feature"),
                     branch: Some("feature".to_string()),
+                    ..super_lazygit_core::WorktreeItem::default()
                 },
             ],
             submodules: vec![

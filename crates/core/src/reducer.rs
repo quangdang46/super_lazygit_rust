@@ -9709,10 +9709,12 @@ mod tests {
                         crate::state::WorktreeItem {
                             path: repo_root.clone(),
                             branch: Some("main".to_string()),
+                            ..crate::state::WorktreeItem::default()
                         },
                         crate::state::WorktreeItem {
                             path: worktree_path.clone(),
                             branch: Some("feature".to_string()),
+                            ..crate::state::WorktreeItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -10779,10 +10781,12 @@ mod tests {
                         WorktreeItem {
                             path: std::path::PathBuf::from("/tmp/repo-1"),
                             branch: Some("main".to_string()),
+                            ..WorktreeItem::default()
                         },
                         WorktreeItem {
                             path: std::path::PathBuf::from("/tmp/repo-1-feature"),
                             branch: Some("feature".to_string()),
+                            ..WorktreeItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -12363,18 +12367,22 @@ mod tests {
                             crate::state::WorktreeItem {
                                 path: std::path::PathBuf::from("/tmp/alpha"),
                                 branch: Some("main".to_string()),
+                                ..crate::state::WorktreeItem::default()
                             },
                             crate::state::WorktreeItem {
                                 path: std::path::PathBuf::from("/tmp/hidden"),
                                 branch: Some("hidden".to_string()),
+                                ..crate::state::WorktreeItem::default()
                             },
                             crate::state::WorktreeItem {
                                 path: std::path::PathBuf::from("/tmp/beta"),
                                 branch: Some("beta".to_string()),
+                                ..crate::state::WorktreeItem::default()
                             },
                             crate::state::WorktreeItem {
                                 path: std::path::PathBuf::from("/tmp/gamma"),
                                 branch: Some("gamma".to_string()),
+                                ..crate::state::WorktreeItem::default()
                             },
                         ],
                         ..RepoDetail::default()
@@ -13287,10 +13295,12 @@ mod tests {
                         WorktreeItem {
                             path: std::path::PathBuf::from("/tmp/repo-main"),
                             branch: Some("main".to_string()),
+                            ..WorktreeItem::default()
                         },
                         WorktreeItem {
                             path: std::path::PathBuf::from("/tmp/repo-feature"),
                             branch: Some("feature".to_string()),
+                            ..WorktreeItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -13328,14 +13338,17 @@ mod tests {
                         WorktreeItem {
                             path: std::path::PathBuf::from("/tmp/repo-main"),
                             branch: Some("main".to_string()),
+                            ..WorktreeItem::default()
                         },
                         WorktreeItem {
                             path: std::path::PathBuf::from("/tmp/repo-feature"),
                             branch: Some("feature".to_string()),
+                            ..WorktreeItem::default()
                         },
                         WorktreeItem {
                             path: std::path::PathBuf::from("/tmp/repo-release"),
                             branch: Some("release".to_string()),
+                            ..WorktreeItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -15350,6 +15363,7 @@ mod tests {
                     worktrees: vec![WorktreeItem {
                         path: removable_path.clone(),
                         branch: Some("feature".to_string()),
+                        ..WorktreeItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
