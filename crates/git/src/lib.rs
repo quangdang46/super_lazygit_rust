@@ -2146,6 +2146,30 @@ where
     stdout_raw_string(output)
 }
 
+#[allow(dead_code)]
+fn git_blame_line_range(
+    repo_path: &Path,
+    filename: &Path,
+    commit: &str,
+    first_line: usize,
+    num_lines: usize,
+) -> GitResult<String> {
+    let output = git_path_output(
+        repo_path,
+        [
+            OsStr::new("blame"),
+            OsStr::new("-l"),
+            OsStr::new(&format!("-L{first_line},+{num_lines}")),
+            OsStr::new(commit),
+        ],
+        filename,
+    )?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    stdout_raw_string(output)
+}
+
 fn stdout_string(output: Output) -> GitResult<String> {
     stdout_raw_string(output).map(|value| value.trim().to_owned())
 }
@@ -3897,6 +3921,20 @@ mod tests {
         .expect("git alias runs");
 
         assert_eq!(stdout_string(output).expect("utf8 stdout"), "0:vim");
+    }
+
+    #[test]
+    fn git_helpers_blame_line_range_returns_requested_lines() {
+        let repo = blame_repo().expect("fixture repo");
+        let second_commit = repo.rev_parse("HEAD").expect("second commit");
+
+        let blamed = git_blame_line_range(repo.path(), Path::new("notes.txt"), "HEAD", 1, 2)
+            .expect("blame range succeeds");
+
+        assert!(blamed.contains(&second_commit));
+        assert!(blamed.contains("alpha"));
+        assert!(blamed.contains("beta updated"));
+        assert!(!blamed.contains("gamma"));
     }
 
     #[test]
@@ -7905,6 +7943,15 @@ mod tests {
             "one\ntwo\nthree\nfour\nfive\nsix\nSEVEN\nEIGHT\nNINE\nTEN\n",
         )?;
         repo.git(["add", "-A"])?;
+        Ok(repo)
+    }
+
+    fn blame_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file("notes.txt", "alpha\nbeta\ngamma\n")?;
+        repo.commit_all("initial")?;
+        repo.write_file("notes.txt", "alpha\nbeta updated\ngamma\n")?;
+        repo.commit_all("update second line")?;
         Ok(repo)
     }
 }
