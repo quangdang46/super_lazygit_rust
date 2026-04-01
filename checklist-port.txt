@@ -92,7 +92,7 @@
 ./references/lazygit-master/flake.nix
 ./references/lazygit-master/go.mod
 ./references/lazygit-master/go.sum
-./references/lazygit-master/main.go
+[x] ./references/lazygit-master/main.go
 ./references/lazygit-master/pkg/app/app.go
 ./references/lazygit-master/pkg/app/daemon/daemon.go
 ./references/lazygit-master/pkg/app/daemon/rebase.go
