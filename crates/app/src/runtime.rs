@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
@@ -589,7 +589,7 @@ impl AppRuntime {
 
         let mut command = Command::new("git");
         command.arg("rebase").arg("-i").current_dir(&repo_path);
-        command.env("GIT_SEQUENCE_EDITOR", &sequence_editor);
+        command.env("GIT_SEQUENCE_EDITOR", git_script_command(&sequence_editor));
         for arg in rebase_base_args(&repo_path, commit)? {
             command.arg(arg);
         }
@@ -822,6 +822,18 @@ fn write_executable_script(path: &std::path::Path, contents: &str) -> GitResult<
         fs::set_permissions(path, permissions).map_err(io_error_to_git)?;
     }
     Ok(())
+}
+
+fn git_script_command(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        format!("sh {}", path.to_string_lossy().replace('\\', "/"))
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.to_string_lossy().into_owned()
+    }
 }
 
 fn io_error_to_git(error: std::io::Error) -> GitError {

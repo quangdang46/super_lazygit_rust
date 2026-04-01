@@ -2869,14 +2869,24 @@ fn run_scripted_rebase(
     write_executable_script(&sequence_editor, &sequence_script)?;
 
     let editor_path = tempdir.path().join("git-editor.sh");
-    let mut envs: Vec<(&str, &OsStr)> = vec![("GIT_SEQUENCE_EDITOR", sequence_editor.as_os_str())];
-
-    if let Some(message) = reword_message {
+    let sequence_editor_command = git_script_command(&sequence_editor);
+    let editor_command = if let Some(_message) = reword_message {
         write_executable_script(
             &editor_path,
             "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$SUPER_LAZYGIT_REWORD\" > \"$1\"\n",
         )?;
-        envs.push(("GIT_EDITOR", editor_path.as_os_str()));
+        Some(git_script_command(&editor_path))
+    } else {
+        None
+    };
+    let mut envs: Vec<(&str, &OsStr)> =
+        vec![("GIT_SEQUENCE_EDITOR", sequence_editor_command.as_os_str())];
+
+    if let Some(message) = reword_message {
+        let editor_command = editor_command
+            .as_ref()
+            .expect("editor command should exist when rewording");
+        envs.push(("GIT_EDITOR", editor_command.as_os_str()));
         envs.push(("SUPER_LAZYGIT_REWORD", OsStr::new(message)));
     } else {
         envs.push(("GIT_EDITOR", OsStr::new(":")));
@@ -2914,8 +2924,9 @@ fn run_reordered_rebase(
     );
     write_executable_script(&sequence_editor, &sequence_script)?;
 
+    let sequence_editor_command = git_script_command(&sequence_editor);
     let envs: Vec<(&str, &OsStr)> = vec![
-        ("GIT_SEQUENCE_EDITOR", sequence_editor.as_os_str()),
+        ("GIT_SEQUENCE_EDITOR", sequence_editor_command.as_os_str()),
         ("GIT_EDITOR", OsStr::new(":")),
     ];
     let mut args = vec!["rebase".to_string(), "-i".to_string()];
@@ -2932,6 +2943,18 @@ fn write_executable_script(path: &Path, contents: &str) -> GitResult<()> {
         fs::set_permissions(path, permissions).map_err(io_error)?;
     }
     Ok(())
+}
+
+fn git_script_command(path: &Path) -> OsString {
+    #[cfg(windows)]
+    {
+        OsString::from(format!("sh {}", path.to_string_lossy().replace('\\', "/")))
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.as_os_str().to_os_string()
+    }
 }
 
 fn rebase_base_args(repo_path: &Path, commit: &str) -> Vec<String> {
