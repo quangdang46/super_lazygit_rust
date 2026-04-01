@@ -2407,6 +2407,9 @@ fn amend_current_commit_attributes(
     let mut args = vec![
         "commit".to_string(),
         "--amend".to_string(),
+        "--allow-empty".to_string(),
+        "--allow-empty-message".to_string(),
+        "--only".to_string(),
         "--no-edit".to_string(),
     ];
     if reset_author {
@@ -5666,6 +5669,120 @@ mod tests {
         )
         .expect("body text");
         assert!(body.contains("Co-authored-by: Pair Dev <pair@example.com>"));
+    }
+
+    #[test]
+    fn cli_backend_resets_author_without_amending_staged_changes() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked");
+        repo.git(["add", "tracked.txt"]).expect("stage tracked");
+        repo.git(["commit", "-m", "subject"])
+            .expect("initial commit");
+        repo.write_file("staged.txt", "staged\n")
+            .expect("write staged");
+        repo.stage("staged.txt").expect("stage extra file");
+        repo.git(["config", "user.name", "Reset Author"])
+            .expect("set user name");
+        repo.git(["config", "user.email", "reset@example.com"])
+            .expect("set user email");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD").expect("target commit");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:amend-commit-reset-author-staged"),
+                repo_id,
+                command: GitCommand::AmendCommitAttributes {
+                    commit: target,
+                    reset_author: true,
+                    co_author: None,
+                },
+            })
+            .expect("reset author should succeed");
+
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "-s", "--format=%an <%ae>", "HEAD"])
+                    .expect("author")
+            )
+            .expect("author text"),
+            "Reset Author <reset@example.com>"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["ls-tree", "--name-only", "HEAD"])
+                    .expect("tree")
+            )
+            .expect("tree text"),
+            "tracked.txt"
+        );
+        assert_eq!(
+            stdout_string(repo.git_capture(["status", "--short"]).expect("status"))
+                .expect("status text"),
+            "A  staged.txt"
+        );
+    }
+
+    #[test]
+    fn cli_backend_stacks_co_author_trailers_without_amending_staged_changes() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked");
+        repo.git(["add", "tracked.txt"]).expect("stage tracked");
+        repo.git([
+            "commit",
+            "-m",
+            "subject",
+            "-m",
+            "body line",
+            "-m",
+            "Co-authored-by: Existing <existing@example.com>",
+        ])
+        .expect("initial commit");
+        repo.write_file("staged.txt", "staged\n")
+            .expect("write staged");
+        repo.stage("staged.txt").expect("stage extra file");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let target = repo.rev_parse("HEAD").expect("target commit");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:amend-commit-set-co-author-staged"),
+                repo_id,
+                command: GitCommand::AmendCommitAttributes {
+                    commit: target,
+                    reset_author: false,
+                    co_author: Some("Co-authored-by: Pair Dev <pair@example.com>".to_string()),
+                },
+            })
+            .expect("set co-author should succeed");
+
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["show", "-s", "--format=%B", "HEAD"])
+                    .expect("body")
+            )
+            .expect("body text"),
+            "subject\n\nbody line\n\nCo-authored-by: Existing <existing@example.com>\nCo-authored-by: Pair Dev <pair@example.com>"
+        );
+        assert_eq!(
+            stdout_string(
+                repo.git_capture(["ls-tree", "--name-only", "HEAD"])
+                    .expect("tree")
+            )
+            .expect("tree text"),
+            "tracked.txt"
+        );
+        assert_eq!(
+            stdout_string(repo.git_capture(["status", "--short"]).expect("status"))
+                .expect("status text"),
+            "A  staged.txt"
+        );
     }
 
     #[test]
