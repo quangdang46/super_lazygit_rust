@@ -2767,27 +2767,7 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
         ],
     )
     .map(|output| {
-        let mut branches: Vec<_> = output
-            .lines()
-            .filter_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-                let mut parts = trimmed.split('\0');
-                let head = parts.next().unwrap_or_default().trim();
-                let name = parts.next().unwrap_or_default().trim();
-                let upstream = parts.next().unwrap_or_default().trim();
-                if name.is_empty() {
-                    return None;
-                }
-                Some(BranchItem {
-                    name: name.to_string(),
-                    is_head: head == "*",
-                    upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
-                })
-            })
-            .collect();
+        let mut branches: Vec<_> = output.lines().filter_map(parse_branch_line).collect();
 
         if let Some(head_index) = branches.iter().position(|branch| branch.is_head) {
             let head_branch = branches.remove(head_index);
@@ -2806,6 +2786,34 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
         branches
     })
     .unwrap_or_default()
+}
+
+fn parse_branch_line(line: &str) -> Option<BranchItem> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut parts = trimmed.split('\0');
+    let head = parts.next().unwrap_or_default().trim();
+    let name = normalize_local_branch_name(parts.next().unwrap_or_default().trim());
+    let upstream = parts.next().unwrap_or_default().trim();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    Some(BranchItem {
+        name: name.to_string(),
+        is_head: head == "*",
+        upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
+    })
+}
+
+fn normalize_local_branch_name(name: &str) -> &str {
+    name.strip_prefix("refs/heads/")
+        .or_else(|| name.strip_prefix("heads/"))
+        .unwrap_or(name)
 }
 
 fn read_remotes(repo_path: &Path, remote_branches: &[RemoteBranchItem]) -> Vec<RemoteItem> {
@@ -4666,6 +4674,42 @@ mod tests {
         assert!(current.is_head);
         assert!(current.upstream.is_none());
         assert!(current.name.contains("HEAD"));
+    }
+
+    #[test]
+    fn parse_branch_line_trims_heads_prefix_and_marks_head() {
+        let branch = parse_branch_line("*\0heads/feature\0origin/feature")
+            .expect("branch line should parse");
+
+        assert_eq!(
+            branch,
+            BranchItem {
+                name: "feature".to_string(),
+                is_head: true,
+                upstream: Some("origin/feature".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_branch_line_handles_missing_upstream() {
+        let branch =
+            parse_branch_line("\0topic\0").expect("branch line without upstream should parse");
+
+        assert_eq!(
+            branch,
+            BranchItem {
+                name: "topic".to_string(),
+                is_head: false,
+                upstream: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_branch_line_ignores_blank_and_malformed_rows() {
+        assert!(parse_branch_line("").is_none());
+        assert!(parse_branch_line("warning: ignored row").is_none());
     }
 
     #[test]
