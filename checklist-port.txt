@@ -30,7 +30,7 @@
 ./references/lazygit-master/Makefile
 ./references/lazygit-master/README.md
 ./references/lazygit-master/VISION.md
-./references/lazygit-master/cmd/i18n/main.go
+[x] ./references/lazygit-master/cmd/i18n/main.go
 ./references/lazygit-master/cmd/integration_test/main.go
 ./references/lazygit-master/default.nix
 ./references/lazygit-master/demo/README.md
