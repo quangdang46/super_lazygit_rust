@@ -103,6 +103,16 @@ struct ListViewportState {
     detached: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RepoFilteredListContext<'a> {
+    filter_query: &'a str,
+    filter_focused: bool,
+    is_focused: bool,
+    viewport_lines: usize,
+    scroll_state: ListViewportState,
+    theme: Theme,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum RepoListScrollTarget {
     MainUnstaged,
@@ -4674,48 +4684,55 @@ impl TuiApp {
                 RepoSubview::Remotes => repo_remote_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.remotes_view.selected_index,
-                    repo_mode
-                        .subview_filter(RepoSubview::Remotes)
-                        .map(|filter| filter.query.as_str())
-                        .unwrap_or(""),
-                    repo_mode
-                        .subview_filter(RepoSubview::Remotes)
-                        .is_some_and(|filter| filter.focused),
-                    self.state.focused_pane == PaneId::RepoDetail,
-                    usize::from(area.height.saturating_sub(2)),
-                    self.repo_scroll_state(RepoListScrollTarget::DetailRemotes),
-                    theme,
+                    RepoFilteredListContext {
+                        filter_query: repo_mode
+                            .subview_filter(RepoSubview::Remotes)
+                            .map(|filter| filter.query.as_str())
+                            .unwrap_or(""),
+                        filter_focused: repo_mode
+                            .subview_filter(RepoSubview::Remotes)
+                            .is_some_and(|filter| filter.focused),
+                        is_focused: self.state.focused_pane == PaneId::RepoDetail,
+                        viewport_lines: usize::from(area.height.saturating_sub(2)),
+                        scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailRemotes),
+                        theme,
+                    },
                 ),
                 RepoSubview::RemoteBranches => repo_remote_branch_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.remote_branches_view.selected_index,
-                    repo_mode
-                        .subview_filter(RepoSubview::RemoteBranches)
-                        .map(|filter| filter.query.as_str())
-                        .unwrap_or(""),
-                    repo_mode
-                        .subview_filter(RepoSubview::RemoteBranches)
-                        .is_some_and(|filter| filter.focused),
                     repo_mode.remote_branch_sort_mode,
-                    self.state.focused_pane == PaneId::RepoDetail,
-                    usize::from(area.height.saturating_sub(2)),
-                    self.repo_scroll_state(RepoListScrollTarget::DetailRemoteBranches),
-                    theme,
+                    RepoFilteredListContext {
+                        filter_query: repo_mode
+                            .subview_filter(RepoSubview::RemoteBranches)
+                            .map(|filter| filter.query.as_str())
+                            .unwrap_or(""),
+                        filter_focused: repo_mode
+                            .subview_filter(RepoSubview::RemoteBranches)
+                            .is_some_and(|filter| filter.focused),
+                        is_focused: self.state.focused_pane == PaneId::RepoDetail,
+                        viewport_lines: usize::from(area.height.saturating_sub(2)),
+                        scroll_state: self
+                            .repo_scroll_state(RepoListScrollTarget::DetailRemoteBranches),
+                        theme,
+                    },
                 ),
                 RepoSubview::Tags => repo_tag_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.tags_view.selected_index,
-                    repo_mode
-                        .subview_filter(RepoSubview::Tags)
-                        .map(|filter| filter.query.as_str())
-                        .unwrap_or(""),
-                    repo_mode
-                        .subview_filter(RepoSubview::Tags)
-                        .is_some_and(|filter| filter.focused),
-                    self.state.focused_pane == PaneId::RepoDetail,
-                    usize::from(area.height.saturating_sub(2)),
-                    self.repo_scroll_state(RepoListScrollTarget::DetailTags),
-                    theme,
+                    RepoFilteredListContext {
+                        filter_query: repo_mode
+                            .subview_filter(RepoSubview::Tags)
+                            .map(|filter| filter.query.as_str())
+                            .unwrap_or(""),
+                        filter_focused: repo_mode
+                            .subview_filter(RepoSubview::Tags)
+                            .is_some_and(|filter| filter.focused),
+                        is_focused: self.state.focused_pane == PaneId::RepoDetail,
+                        viewport_lines: usize::from(area.height.saturating_sub(2)),
+                        scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailTags),
+                        theme,
+                    },
                 ),
                 RepoSubview::Commits => repo_commit_lines(
                     repo_mode,
@@ -4759,47 +4776,54 @@ impl TuiApp {
                 RepoSubview::Reflog => repo_reflog_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.reflog_view.selected_index,
-                    repo_mode
-                        .subview_filter(RepoSubview::Reflog)
-                        .map(|filter| filter.query.as_str())
-                        .unwrap_or(""),
-                    repo_mode
-                        .subview_filter(RepoSubview::Reflog)
-                        .is_some_and(|filter| filter.focused),
-                    self.state.focused_pane == PaneId::RepoDetail,
-                    usize::from(area.height.saturating_sub(2)),
-                    self.repo_scroll_state(RepoListScrollTarget::DetailReflog),
-                    theme,
+                    RepoFilteredListContext {
+                        filter_query: repo_mode
+                            .subview_filter(RepoSubview::Reflog)
+                            .map(|filter| filter.query.as_str())
+                            .unwrap_or(""),
+                        filter_focused: repo_mode
+                            .subview_filter(RepoSubview::Reflog)
+                            .is_some_and(|filter| filter.focused),
+                        is_focused: self.state.focused_pane == PaneId::RepoDetail,
+                        viewport_lines: usize::from(area.height.saturating_sub(2)),
+                        scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailReflog),
+                        theme,
+                    },
                 ),
                 RepoSubview::Worktrees => repo_worktree_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.worktree_view.selected_index,
-                    repo_mode
-                        .subview_filter(RepoSubview::Worktrees)
-                        .map(|filter| filter.query.as_str())
-                        .unwrap_or(""),
-                    repo_mode
-                        .subview_filter(RepoSubview::Worktrees)
-                        .is_some_and(|filter| filter.focused),
-                    self.state.focused_pane == PaneId::RepoDetail,
-                    usize::from(area.height.saturating_sub(2)),
-                    self.repo_scroll_state(RepoListScrollTarget::DetailWorktrees),
-                    theme,
+                    RepoFilteredListContext {
+                        filter_query: repo_mode
+                            .subview_filter(RepoSubview::Worktrees)
+                            .map(|filter| filter.query.as_str())
+                            .unwrap_or(""),
+                        filter_focused: repo_mode
+                            .subview_filter(RepoSubview::Worktrees)
+                            .is_some_and(|filter| filter.focused),
+                        is_focused: self.state.focused_pane == PaneId::RepoDetail,
+                        viewport_lines: usize::from(area.height.saturating_sub(2)),
+                        scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailWorktrees),
+                        theme,
+                    },
                 ),
                 RepoSubview::Submodules => repo_submodule_lines(
                     repo_mode.detail.as_ref(),
                     repo_mode.submodules_view.selected_index,
-                    repo_mode
-                        .subview_filter(RepoSubview::Submodules)
-                        .map(|filter| filter.query.as_str())
-                        .unwrap_or(""),
-                    repo_mode
-                        .subview_filter(RepoSubview::Submodules)
-                        .is_some_and(|filter| filter.focused),
-                    self.state.focused_pane == PaneId::RepoDetail,
-                    usize::from(area.height.saturating_sub(2)),
-                    self.repo_scroll_state(RepoListScrollTarget::DetailSubmodules),
-                    theme,
+                    RepoFilteredListContext {
+                        filter_query: repo_mode
+                            .subview_filter(RepoSubview::Submodules)
+                            .map(|filter| filter.query.as_str())
+                            .unwrap_or(""),
+                        filter_focused: repo_mode
+                            .subview_filter(RepoSubview::Submodules)
+                            .is_some_and(|filter| filter.focused),
+                        is_focused: self.state.focused_pane == PaneId::RepoDetail,
+                        viewport_lines: usize::from(area.height.saturating_sub(2)),
+                        scroll_state: self
+                            .repo_scroll_state(RepoListScrollTarget::DetailSubmodules),
+                        theme,
+                    },
                 ),
             };
             (
@@ -6632,14 +6656,17 @@ fn repo_branch_lines(
 fn repo_remote_branch_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
     remote_branch_sort_mode: super_lazygit_core::RemoteBranchSortMode,
-    is_focused: bool,
-    viewport_lines: usize,
-    scroll_state: ListViewportState,
-    theme: Theme,
+    list: RepoFilteredListContext<'_>,
 ) -> Vec<Line<'static>> {
+    let RepoFilteredListContext {
+        filter_query,
+        filter_focused,
+        is_focused,
+        viewport_lines,
+        scroll_state,
+        theme,
+    } = list;
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
@@ -6748,13 +6775,16 @@ fn repo_remote_branch_lines(
 fn repo_remote_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
-    is_focused: bool,
-    viewport_lines: usize,
-    scroll_state: ListViewportState,
-    theme: Theme,
+    list: RepoFilteredListContext<'_>,
 ) -> Vec<Line<'static>> {
+    let RepoFilteredListContext {
+        filter_query,
+        filter_focused,
+        is_focused,
+        viewport_lines,
+        scroll_state,
+        theme,
+    } = list;
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
@@ -6856,13 +6886,16 @@ fn repo_remote_lines(
 fn repo_tag_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
-    is_focused: bool,
-    viewport_lines: usize,
-    scroll_state: ListViewportState,
-    theme: Theme,
+    list: RepoFilteredListContext<'_>,
 ) -> Vec<Line<'static>> {
+    let RepoFilteredListContext {
+        filter_query,
+        filter_focused,
+        is_focused,
+        viewport_lines,
+        scroll_state,
+        theme,
+    } = list;
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
@@ -7124,12 +7157,14 @@ fn repo_stash_lines(
         StashSubviewMode::List => repo_stash_list_lines(
             detail,
             selected_index,
-            filter_query,
-            filter_focused,
-            is_focused,
-            viewport_lines,
-            list_scroll_state,
-            theme,
+            RepoFilteredListContext {
+                filter_query,
+                filter_focused,
+                is_focused,
+                viewport_lines,
+                scroll_state: list_scroll_state,
+                theme,
+            },
         ),
         StashSubviewMode::Files => repo_stash_file_lines(
             detail,
@@ -7145,13 +7180,16 @@ fn repo_stash_lines(
 fn repo_stash_list_lines(
     detail: &RepoDetail,
     selected_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
-    is_focused: bool,
-    viewport_lines: usize,
-    scroll_state: ListViewportState,
-    theme: Theme,
+    list: RepoFilteredListContext<'_>,
 ) -> Vec<Line<'static>> {
+    let RepoFilteredListContext {
+        filter_query,
+        filter_focused,
+        is_focused,
+        viewport_lines,
+        scroll_state,
+        theme,
+    } = list;
     let visible_indices = visible_stash_indices(detail, filter_query);
     if visible_indices.is_empty() {
         return vec![
@@ -7308,13 +7346,16 @@ fn repo_stash_file_lines(
 fn repo_reflog_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
-    is_focused: bool,
-    viewport_lines: usize,
-    scroll_state: ListViewportState,
-    theme: Theme,
+    list: RepoFilteredListContext<'_>,
 ) -> Vec<Line<'static>> {
+    let RepoFilteredListContext {
+        filter_query,
+        filter_focused,
+        is_focused,
+        viewport_lines,
+        scroll_state,
+        theme,
+    } = list;
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
@@ -7432,13 +7473,16 @@ fn repo_reflog_lines(
 fn repo_worktree_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
-    is_focused: bool,
-    viewport_lines: usize,
-    scroll_state: ListViewportState,
-    theme: Theme,
+    list: RepoFilteredListContext<'_>,
 ) -> Vec<Line<'static>> {
+    let RepoFilteredListContext {
+        filter_query,
+        filter_focused,
+        is_focused,
+        viewport_lines,
+        scroll_state,
+        theme,
+    } = list;
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
@@ -7538,13 +7582,16 @@ fn repo_worktree_lines(
 fn repo_submodule_lines(
     detail: Option<&RepoDetail>,
     selected_index: Option<usize>,
-    filter_query: &str,
-    filter_focused: bool,
-    is_focused: bool,
-    viewport_lines: usize,
-    scroll_state: ListViewportState,
-    theme: Theme,
+    list: RepoFilteredListContext<'_>,
 ) -> Vec<Line<'static>> {
+    let RepoFilteredListContext {
+        filter_query,
+        filter_focused,
+        is_focused,
+        viewport_lines,
+        scroll_state,
+        theme,
+    } = list;
     let Some(detail) = detail else {
         return vec![
             Line::from(vec![Span::styled(
