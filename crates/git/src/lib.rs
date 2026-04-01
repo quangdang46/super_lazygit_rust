@@ -829,11 +829,12 @@ impl GitBackend for CliGitBackend {
     fn read_repo_detail(&self, request: RepoDetailRequest) -> GitResult<RepoDetail> {
         let repo_path = repo_path(&request.repo_id)?;
         let status = read_status_snapshot(&repo_path, request.rename_similarity_threshold)?;
+        let selected_path = request.selected_path.clone();
         let diff = read_diff_model(
             &repo_path,
             None,
             None,
-            request.selected_path.or(status.first_path.clone()),
+            selected_path.clone().or(status.first_path.clone()),
             DiffReadOptions {
                 presentation: request.diff_presentation,
                 ignore_whitespace: request.ignore_whitespace_in_diff,
@@ -863,7 +864,7 @@ impl GitBackend for CliGitBackend {
             commit_graph_lines: commit_history.graph_lines,
             bisect_state: read_bisect_state(&repo_path),
             rebase_state: read_rebase_state(&repo_path),
-            stashes: read_stashes(&repo_path),
+            stashes: read_stashes(&repo_path, selected_path.as_deref()),
             reflog_items: read_reflog(&repo_path),
             worktrees: read_worktrees(&repo_path),
             submodules,
@@ -4578,7 +4579,16 @@ fn commit_status_kind(code: &str) -> FileStatusKind {
     }
 }
 
-fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
+fn read_stashes(repo_path: &Path, filter_path: Option<&Path>) -> Vec<StashItem> {
+    let Some(filter_path) = filter_path.filter(|path| !path.as_os_str().is_empty()) else {
+        return read_unfiltered_stashes(repo_path);
+    };
+
+    read_filtered_stashes(repo_path, filter_path)
+        .unwrap_or_else(|| read_unfiltered_stashes(repo_path))
+}
+
+fn read_unfiltered_stashes(repo_path: &Path) -> Vec<StashItem> {
     git_stdout(repo_path, ["stash", "list", "--format=%gd%x00%s"])
         .map(|output| {
             output
@@ -4598,6 +4608,77 @@ fn read_stashes(repo_path: &Path) -> Vec<StashItem> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn read_filtered_stashes(repo_path: &Path, filter_path: &Path) -> Option<Vec<StashItem>> {
+    let filter_path = normalize_git_path(filter_path);
+    if filter_path.is_empty() {
+        return Some(read_unfiltered_stashes(repo_path));
+    }
+
+    let output = git_stdout(
+        repo_path,
+        ["stash", "list", "--name-only", "--pretty=%gd:%H|%ct|%gs"],
+    )
+    .ok()?;
+    parse_filtered_stashes_output(repo_path, &output, &filter_path)
+}
+
+fn parse_filtered_stashes_output(
+    repo_path: &Path,
+    output: &str,
+    filter_path: &str,
+) -> Option<Vec<StashItem>> {
+    let lines = output.lines().collect::<Vec<_>>();
+    let mut stashes = Vec::new();
+    let mut index = 0;
+
+    while index < lines.len() {
+        let line = lines[index];
+        let Some(mut stash) = parse_filtered_stash_line(line) else {
+            index += 1;
+            continue;
+        };
+
+        index += 1;
+        while index < lines.len() && !lines[index].starts_with("stash@{") {
+            if lines[index].starts_with(filter_path) {
+                stash.changed_files = read_stash_files(repo_path, &stash.stash_ref);
+                stashes.push(stash);
+                index += 1;
+                break;
+            }
+            index += 1;
+        }
+    }
+
+    Some(stashes)
+}
+
+fn parse_filtered_stash_line(line: &str) -> Option<StashItem> {
+    let (stash_ref, metadata) = line.split_once(':')?;
+    parse_stash_ref_index(stash_ref)?;
+    let summary = metadata
+        .split_once('|')
+        .and_then(|(_, rest)| rest.split_once('|').map(|(_, message)| message))
+        .unwrap_or(metadata);
+    Some(StashItem {
+        stash_ref: stash_ref.to_string(),
+        label: format!("{stash_ref}: {summary}"),
+        changed_files: Vec::new(),
+    })
+}
+
+fn parse_stash_ref_index(stash_ref: &str) -> Option<usize> {
+    stash_ref
+        .strip_prefix("stash@{")?
+        .strip_suffix('}')?
+        .parse()
+        .ok()
+}
+
+fn normalize_git_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn read_stash_files(repo_path: &Path, stash_ref: &str) -> Vec<CommitFileItem> {
@@ -6415,6 +6496,58 @@ mod tests {
         assert!(changed_files.iter().any(|file| {
             file.path == Path::new("renamed-after.txt") && file.kind == FileStatusKind::Added
         }));
+    }
+
+    #[test]
+    fn cli_backend_filters_stashes_by_selected_path_prefix() {
+        let repo = filtered_stash_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        let src_detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: repo_id.clone(),
+                selected_path: Some(PathBuf::from("src/only-first.txt")),
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load for src filter");
+        assert_eq!(src_detail.stashes.len(), 1);
+        assert_eq!(src_detail.stashes[0].stash_ref, "stash@{1}");
+        assert!(src_detail.stashes[0].label.ends_with("first path"));
+        assert!(src_detail.stashes[0]
+            .changed_files
+            .iter()
+            .any(|file| file.path == Path::new("src/only-first.txt")));
+
+        let docs_detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id,
+                selected_path: Some(PathBuf::from("docs")),
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load for docs filter");
+        assert_eq!(docs_detail.stashes.len(), 1);
+        assert_eq!(docs_detail.stashes[0].stash_ref, "stash@{0}");
+        assert!(docs_detail.stashes[0].label.ends_with("second path"));
+        assert!(docs_detail.stashes[0]
+            .changed_files
+            .iter()
+            .any(|file| file.path == Path::new("docs/only-second.txt")));
+    }
+
+    #[test]
+    fn parse_filtered_stash_line_rejects_invalid_stash_refs() {
+        assert!(parse_filtered_stash_line("stash@{bad}:deadbeef|123|message").is_none());
     }
 
     #[test]
@@ -11173,6 +11306,21 @@ mod tests {
         repo.git(["mv", "renamed-before.txt", "renamed-after.txt"])?;
         fs::remove_file(repo.path().join("deleted.txt"))?;
         repo.git(["stash", "push", "-m", "inventory"])?;
+
+        Ok(repo)
+    }
+
+    fn filtered_stash_repo() -> std::io::Result<super_lazygit_test_support::TempRepo> {
+        let repo = temp_repo()?;
+        repo.write_file("src/only-first.txt", "base\n")?;
+        repo.write_file("docs/only-second.txt", "base\n")?;
+        repo.commit_all("initial")?;
+
+        repo.write_file("src/only-first.txt", "first stash\n")?;
+        repo.git(["stash", "push", "-m", "first path"])?;
+
+        repo.write_file("docs/only-second.txt", "second stash\n")?;
+        repo.git(["stash", "push", "-m", "second path"])?;
 
         Ok(repo)
     }
