@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io;
@@ -17,6 +18,7 @@ pub struct AppConfig {
     pub theme: ThemeConfig,
     pub keybindings: KeybindingConfig,
     pub diagnostics: DiagnosticsConfig,
+    pub services: BTreeMap<String, String>,
 }
 
 impl AppConfig {

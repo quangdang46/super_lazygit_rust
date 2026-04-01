@@ -4,6 +4,7 @@ use crate::effect::{
     RebaseStartMode, ShellCommandRequest,
 };
 use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
+use crate::hosting_service;
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
     CommitFilesMode, CommitHistoryMode, ComparisonTarget, ConfirmableOperation, DiffLineKind,
@@ -457,7 +458,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             let Some((repo_id, url, label)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 let detail = repo_mode.detail.as_ref()?;
                 let (_, entry) = selected_reflog_entry(repo_mode)?;
-                let url = selected_commit_browser_url(detail, &entry.oid)?;
+                let url = selected_commit_browser_url(state, detail, &entry.oid)?;
                 Some((
                     repo_mode.current_repo_id.clone(),
                     url,
@@ -7289,7 +7290,7 @@ fn selected_commit_browser_target(
     let Some(detail) = repo_mode.detail.as_ref() else {
         return Err("Load repository details before opening a commit in the browser.".to_string());
     };
-    let Some(target) = selected_commit_browser_url(detail, &commit.oid) else {
+    let Some(target) = selected_commit_browser_url(state, detail, &commit.oid) else {
         return Err("No browser-compatible remote URL found for the selected commit.".to_string());
     };
     Ok(Some((repo_mode.current_repo_id.clone(), target)))
@@ -7355,7 +7356,7 @@ fn selected_commit_clipboard_target(
                     "Load repository details before copying the commit browser URL.".to_string(),
                 );
             };
-            let Some(value) = selected_commit_browser_url(detail, &commit.oid) else {
+            let Some(value) = selected_commit_browser_url(state, detail, &commit.oid) else {
                 return Err(
                     "No browser-compatible remote URL found for the selected commit.".to_string(),
                 );
@@ -7369,6 +7370,7 @@ fn selected_commit_clipboard_target(
 }
 
 fn selected_commit_browser_url(
+    state: &AppState,
     detail: &crate::state::RepoDetail,
     commit_oid: &str,
 ) -> Option<String> {
@@ -7383,102 +7385,23 @@ fn selected_commit_browser_url(
                 .filter(|remote| remote.name != "origin"),
         )
         .find_map(|remote| {
-            commit_browser_url_for_remote(&remote.fetch_url, commit_oid)
-                .or_else(|| commit_browser_url_for_remote(&remote.push_url, commit_oid))
+            hosting_service::commit_browser_url_for_remote(
+                &remote.fetch_url,
+                commit_oid,
+                &state.service_domains,
+                &mut Vec::new(),
+            )
+            .ok()
+            .or_else(|| {
+                hosting_service::commit_browser_url_for_remote(
+                    &remote.push_url,
+                    commit_oid,
+                    &state.service_domains,
+                    &mut Vec::new(),
+                )
+                .ok()
+            })
         })
-}
-
-fn commit_browser_url_for_remote(remote_url: &str, commit_oid: &str) -> Option<String> {
-    let (host, repo_path) = parse_remote_browser_root(remote_url)?;
-    let commit_segment = if host.contains("gitlab") {
-        "-/commit"
-    } else if host.contains("bitbucket") {
-        "commits"
-    } else {
-        "commit"
-    };
-    Some(format!(
-        "https://{host}/{repo_path}/{commit_segment}/{commit_oid}"
-    ))
-}
-
-fn pull_request_url_for_remote(remote_url: &str, branch_name: &str) -> Option<String> {
-    let (host, repo_path) = parse_remote_browser_root(remote_url)?;
-    let branch_name = url_encode_component(branch_name);
-    if host.contains("gitlab") {
-        return Some(format!(
-            "https://{host}/{repo_path}/-/merge_requests/new?merge_request[source_branch]={branch_name}"
-        ));
-    }
-    if host.contains("bitbucket") {
-        return Some(format!(
-            "https://{host}/{repo_path}/pull-requests/new?source={branch_name}"
-        ));
-    }
-    Some(format!(
-        "https://{host}/{repo_path}/compare/{branch_name}?expand=1"
-    ))
-}
-
-fn parse_remote_browser_root(remote_url: &str) -> Option<(String, String)> {
-    let remote_url = remote_url.trim();
-    if remote_url.is_empty() {
-        return None;
-    }
-
-    if let Some(rest) = remote_url
-        .strip_prefix("https://")
-        .or_else(|| remote_url.strip_prefix("http://"))
-    {
-        let (authority, path) = rest.split_once('/')?;
-        let host = authority
-            .rsplit_once('@')
-            .map_or(authority, |(_, host)| host)
-            .split(':')
-            .next()?;
-        return Some((host.to_string(), normalize_remote_repo_path(path)?));
-    }
-
-    if let Some(rest) = remote_url.strip_prefix("ssh://") {
-        let rest = rest.rsplit_once('@').map_or(rest, |(_, value)| value);
-        let (authority, path) = rest.split_once('/')?;
-        let host = authority.split(':').next()?;
-        return Some((host.to_string(), normalize_remote_repo_path(path)?));
-    }
-
-    if let Some((authority, path)) = remote_url.split_once(':') {
-        if authority.contains('@') {
-            let host = authority
-                .rsplit_once('@')
-                .map_or(authority, |(_, host)| host);
-            return Some((host.to_string(), normalize_remote_repo_path(path)?));
-        }
-    }
-
-    None
-}
-
-fn normalize_remote_repo_path(path: &str) -> Option<String> {
-    let normalized = path.trim().trim_start_matches('/').trim_end_matches('/');
-    let normalized = normalized.strip_suffix(".git").unwrap_or(normalized);
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized.to_string())
-    }
-}
-
-fn url_encode_component(value: &str) -> String {
-    let mut encoded = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
 }
 
 fn external_difftool_command(path: &std::path::Path, pane: PaneId) -> String {
@@ -7739,8 +7662,24 @@ fn selected_branch_pull_request_target(
                 .filter(|remote| remote.name != "origin"),
         )
         .find_map(|remote| {
-            pull_request_url_for_remote(&remote.fetch_url, &branch.name)
-                .or_else(|| pull_request_url_for_remote(&remote.push_url, &branch.name))
+            hosting_service::pull_request_url_for_remote(
+                &remote.fetch_url,
+                &branch.name,
+                None,
+                &state.service_domains,
+                &mut Vec::new(),
+            )
+            .ok()
+            .or_else(|| {
+                hosting_service::pull_request_url_for_remote(
+                    &remote.push_url,
+                    &branch.name,
+                    None,
+                    &state.service_domains,
+                    &mut Vec::new(),
+                )
+                .ok()
+            })
         })
     else {
         return Err("No browser-compatible remote URL found for the selected branch.".to_string());
@@ -7775,8 +7714,24 @@ fn selected_remote_branch_pull_request_target(
                 .filter(|remote| remote.name != branch.remote_name),
         )
         .find_map(|remote| {
-            pull_request_url_for_remote(&remote.fetch_url, &branch.branch_name)
-                .or_else(|| pull_request_url_for_remote(&remote.push_url, &branch.branch_name))
+            hosting_service::pull_request_url_for_remote(
+                &remote.fetch_url,
+                &branch.branch_name,
+                None,
+                &state.service_domains,
+                &mut Vec::new(),
+            )
+            .ok()
+            .or_else(|| {
+                hosting_service::pull_request_url_for_remote(
+                    &remote.push_url,
+                    &branch.branch_name,
+                    None,
+                    &state.service_domains,
+                    &mut Vec::new(),
+                )
+                .ok()
+            })
         })
     else {
         return Err(

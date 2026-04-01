@@ -2,6 +2,7 @@ pub mod action;
 pub mod diagnostics;
 pub mod effect;
 pub mod event;
+mod hosting_service;
 pub mod reducer;
 pub mod state;
 

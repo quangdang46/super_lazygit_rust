@@ -16,6 +16,7 @@ pub struct AppState {
     pub notifications: VecDeque<Notification>,
     pub background_jobs: BTreeMap<JobId, BackgroundJob>,
     pub settings: SettingsSnapshot,
+    pub service_domains: BTreeMap<String, String>,
     pub config_path: Option<PathBuf>,
     pub repository_url: Option<String>,
     pub recent_repo_stack: Vec<RepoId>,

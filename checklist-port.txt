@@ -116,7 +116,7 @@
 ./references/lazygit-master/pkg/commands/git_config/fake_git_config.go
 ./references/lazygit-master/pkg/commands/git_config/get_key.go
 ./references/lazygit-master/pkg/commands/hosting_service/definitions.go
-./references/lazygit-master/pkg/commands/hosting_service/hosting_service.go
+[x] ./references/lazygit-master/pkg/commands/hosting_service/hosting_service.go
 ./references/lazygit-master/pkg/commands/hosting_service/hosting_service_test.go
 ./references/lazygit-master/pkg/commands/models/author.go
 ./references/lazygit-master/pkg/commands/models/branch.go

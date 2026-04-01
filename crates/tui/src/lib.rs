@@ -226,6 +226,7 @@ impl TuiApp {
     #[must_use]
     pub fn new(mut state: AppState, config: AppConfig) -> Self {
         state.workspace.ensure_visible_selection();
+        state.service_domains = config.services.clone();
         let keybinding_overrides = compile_keybinding_overrides(&config);
         Self {
             state,
