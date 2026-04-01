@@ -1583,11 +1583,61 @@ pub struct TagItem {
     pub annotated: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitStatus {
+    #[default]
+    None,
+    Unpushed,
+    Pushed,
+    Merged,
+    Rebasing,
+    CherryPickingOrReverting,
+    Conflicted,
+    Reflog,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitTodoAction {
+    #[default]
+    None,
+    Pick,
+    Reword,
+    Edit,
+    Squash,
+    Fixup,
+    Exec,
+    Break,
+    Drop,
+    Label,
+    Reset,
+    Merge,
+    UpdateRef,
+    Revert,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitDivergence {
+    #[default]
+    None,
+    Left,
+    Right,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitItem {
     pub oid: String,
     pub short_oid: String,
     pub summary: String,
+    pub tags: Vec<String>,
+    pub extra_info: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub unix_timestamp: i64,
+    pub parents: Vec<String>,
+    pub status: CommitStatus,
+    pub todo_action: CommitTodoAction,
+    pub todo_action_flag: String,
+    pub divergence: CommitDivergence,
     pub changed_files: Vec<CommitFileItem>,
     pub diff: DiffModel,
 }
@@ -1977,9 +2027,28 @@ pub fn tag_matches_filter(tag: &TagItem, normalized_query: &str) -> bool {
 
 #[must_use]
 pub fn commit_matches_filter(commit: &CommitItem, normalized_query: &str) -> bool {
-    fuzzy_matches(&normalize_search_text(&commit.oid), normalized_query)
-        || fuzzy_matches(&normalize_search_text(&commit.short_oid), normalized_query)
-        || fuzzy_matches(&normalize_search_text(&commit.summary), normalized_query)
+    [
+        commit.oid.as_str(),
+        commit.short_oid.as_str(),
+        commit.summary.as_str(),
+        commit.extra_info.as_str(),
+        commit.author_name.as_str(),
+        commit.author_email.as_str(),
+        commit.todo_action_flag.as_str(),
+    ]
+    .into_iter()
+    .map(normalize_search_text)
+    .any(|field| fuzzy_matches(&field, normalized_query))
+        || commit
+            .parents
+            .iter()
+            .map(|field| normalize_search_text(field))
+            .any(|field| fuzzy_matches(&field, normalized_query))
+        || commit
+            .tags
+            .iter()
+            .map(|field| normalize_search_text(field))
+            .any(|field| fuzzy_matches(&field, normalized_query))
         || commit.changed_files.iter().any(|file| {
             fuzzy_matches(
                 &normalize_search_text(&file.path.to_string_lossy()),

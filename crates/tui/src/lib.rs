@@ -10881,6 +10881,7 @@ mod tests {
                         selected_hunk: Some(0),
                         hunk_count: 1,
                     },
+                    ..CommitItem::default()
                 },
                 CommitItem {
                     oid: "1234567890abcdef".to_string(),
@@ -10907,6 +10908,7 @@ mod tests {
                         selected_hunk: None,
                         hunk_count: 0,
                     },
+                    ..CommitItem::default()
                 },
             ],
             commit_graph_lines: vec![
@@ -17599,6 +17601,7 @@ mod tests {
                 summary: format!("commit {index}"),
                 changed_files: Vec::new(),
                 diff: super_lazygit_core::DiffModel::default(),
+                ..super_lazygit_core::CommitItem::default()
             })
             .collect();
         detail.commit_graph_lines = vec![

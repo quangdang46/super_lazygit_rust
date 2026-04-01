@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::{
-    BisectState, BranchItem, CommitFileItem, CommitHistoryMode, CommitItem, ComparisonTarget,
-    Diagnostics, DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel,
-    DiffPresentation, FileStatus, FileStatusKind, GitCommand, GitCommandRequest, HeadKind,
-    MergeFastForwardPreference, MergeState, MergeVariant, PatchApplicationMode, RebaseKind,
-    RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem, RemoteItem, RemoteSummary,
-    RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem, StashMode, SubmoduleItem,
-    TagItem, Timestamp, WatcherFreshness, WorktreeItem,
+    BisectState, BranchItem, CommitDivergence, CommitFileItem, CommitHistoryMode, CommitItem,
+    CommitStatus, CommitTodoAction, ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffHunk,
+    DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind, GitCommand,
+    GitCommandRequest, HeadKind, MergeFastForwardPreference, MergeState, MergeVariant,
+    PatchApplicationMode, RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem,
+    RemoteItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem,
+    StashMode, SubmoduleItem, TagItem, Timestamp, WatcherFreshness, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -3620,6 +3620,28 @@ struct CommitHistoryResult {
     graph_lines: Vec<String>,
 }
 
+const COMMIT_HISTORY_PRETTY_FORMAT: &str = "%H%x00%at%x00%aN%x00%ae%x00%P%x00%m%x00%D%x00%s";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedCommitLine {
+    oid: String,
+    short_oid: String,
+    summary: String,
+    tags: Vec<String>,
+    extra_info: String,
+    author_name: String,
+    author_email: String,
+    unix_timestamp: i64,
+    parents: Vec<String>,
+    divergence: CommitDivergence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PushedStatusRef {
+    local_ref: String,
+    upstream_ref: String,
+}
+
 fn read_commits(
     repo_path: &Path,
     commit_ref: Option<&str>,
@@ -3632,27 +3654,47 @@ fn read_commits(
 }
 
 fn read_linear_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHistoryResult {
-    let mut args = vec!["log", "--format=%H%x00%s", "-n", "64"];
+    let main_branch_refs = existing_main_branch_refs(repo_path).unwrap_or_default();
+    let unmerged_hashes = reachable_hashes(
+        repo_path,
+        commit_ref.unwrap_or("HEAD"),
+        main_branch_refs.as_slice(),
+    );
+    let unpushed_hashes = resolve_pushed_status_ref(repo_path, commit_ref).and_then(|status_ref| {
+        let mut excluded_refs = vec![status_ref.upstream_ref];
+        excluded_refs.extend(main_branch_refs.iter().cloned());
+        reachable_hashes(
+            repo_path,
+            status_ref.local_ref.as_str(),
+            excluded_refs.as_slice(),
+        )
+    });
+
+    let mut args = vec![
+        OsString::from("log"),
+        OsString::from("--no-show-signature"),
+        OsString::from(format!("--format={COMMIT_HISTORY_PRETTY_FORMAT}")),
+        OsString::from("-n"),
+        OsString::from("64"),
+    ];
     if let Some(commit_ref) = commit_ref {
-        args.push(commit_ref);
+        args.push(OsString::from(commit_ref));
     }
     git_stdout(repo_path, args)
         .map(|output| {
-            output
+            let mut commits = output
                 .lines()
                 .filter_map(|line| {
-                    let (oid, summary) = line.split_once('\0')?;
-                    let changed_files = read_commit_files(repo_path, oid);
-                    let diff = read_commit_diff(repo_path, oid);
-                    Some(CommitItem {
-                        oid: oid.to_string(),
-                        short_oid: oid.chars().take(7).collect(),
-                        summary: summary.to_string(),
-                        changed_files,
-                        diff,
-                    })
+                    extract_commit_from_line(line, false)
+                        .map(|parsed| hydrate_commit_item(repo_path, parsed))
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            set_commit_statuses(
+                unpushed_hashes.as_ref(),
+                unmerged_hashes.as_ref(),
+                &mut commits,
+            );
+            commits
         })
         .map(|commits| CommitHistoryResult {
             commits,
@@ -3662,14 +3704,27 @@ fn read_linear_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHist
 }
 
 fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
+    let main_branch_refs = existing_main_branch_refs(repo_path).unwrap_or_default();
+    let unmerged_hashes = reachable_hashes(repo_path, "HEAD", main_branch_refs.as_slice());
+    let unpushed_hashes = resolve_pushed_status_ref(repo_path, None).and_then(|status_ref| {
+        let mut excluded_refs = vec![status_ref.upstream_ref];
+        excluded_refs.extend(main_branch_refs.iter().cloned());
+        reachable_hashes(
+            repo_path,
+            status_ref.local_ref.as_str(),
+            excluded_refs.as_slice(),
+        )
+    });
+
     let args = vec![
-        "log",
-        "--decorate=short",
-        "--topo-order",
-        "--format=%H%x00%h%x00%P%x00%D%x00%s",
-        "--all",
-        "-n",
-        "64",
+        OsString::from("log"),
+        OsString::from("--decorate=short"),
+        OsString::from("--topo-order"),
+        OsString::from("--no-show-signature"),
+        OsString::from(format!("--format={COMMIT_HISTORY_PRETTY_FORMAT}")),
+        OsString::from("--all"),
+        OsString::from("-n"),
+        OsString::from("64"),
     ];
     git_stdout(repo_path, args)
         .map(|output| {
@@ -3677,40 +3732,22 @@ fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
             let mut graph_commits = Vec::new();
             let mut graph_suffixes = Vec::new();
             for line in output.lines() {
-                let mut parts = line.splitn(5, '\0');
-                let Some(oid) = parts.next() else {
+                let Some(parsed) = extract_commit_from_line(line, false) else {
                     continue;
                 };
-                let Some(short_oid) = parts.next() else {
-                    continue;
-                };
-                let parents = parts
-                    .next()
-                    .unwrap_or_default()
-                    .split_whitespace()
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
-                let decorations = parts.next().unwrap_or_default().trim();
-                let summary = parts.next().unwrap_or_default();
-                let changed_files = read_commit_files(repo_path, oid);
-                let diff = read_commit_diff(repo_path, oid);
-                commits.push(CommitItem {
-                    oid: oid.to_string(),
-                    short_oid: short_oid.to_string(),
-                    summary: summary.to_string(),
-                    changed_files,
-                    diff,
-                });
+                let row = format_commit_graph_suffix(&parsed);
                 graph_commits.push(GraphCommit {
-                    oid: oid.to_string(),
-                    parents,
+                    oid: parsed.oid.clone(),
+                    parents: parsed.parents.clone(),
                 });
-                graph_suffixes.push(if decorations.is_empty() {
-                    format!("{short_oid} {summary}")
-                } else {
-                    format!("{short_oid} ({decorations}) {summary}")
-                });
+                graph_suffixes.push(row);
+                commits.push(hydrate_commit_item(repo_path, parsed));
             }
+            set_commit_statuses(
+                unpushed_hashes.as_ref(),
+                unmerged_hashes.as_ref(),
+                &mut commits,
+            );
             let graph_rows = render_commit_graph(&graph_commits);
             let mut graph_lines = if graph_rows.len() == graph_suffixes.len() {
                 graph_rows
@@ -3731,6 +3768,177 @@ fn read_graph_commits(repo_path: &Path, reverse: bool) -> CommitHistoryResult {
             }
         })
         .unwrap_or_default()
+}
+
+fn extract_commit_from_line(line: &str, show_divergence: bool) -> Option<ParsedCommitLine> {
+    let split = line.splitn(8, '\0').collect::<Vec<_>>();
+    if split.len() < 7 {
+        return None;
+    }
+
+    let oid = split[0].to_string();
+    if oid.is_empty() {
+        return None;
+    }
+
+    let author_name = split[2].to_string();
+    let author_email = split[3].to_string();
+    let parents = split[4]
+        .split_whitespace()
+        .filter(|parent| !parent.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let divergence = if show_divergence {
+        match split[5] {
+            "<" => CommitDivergence::Left,
+            ">" => CommitDivergence::Right,
+            _ => CommitDivergence::None,
+        }
+    } else {
+        CommitDivergence::None
+    };
+
+    let raw_extra_info = split[6].trim();
+    let tags = raw_extra_info
+        .split(',')
+        .map(str::trim)
+        .filter_map(|field| field.strip_prefix("tag: ").map(str::to_string))
+        .collect::<Vec<_>>();
+    let extra_info = if raw_extra_info.is_empty() {
+        String::new()
+    } else {
+        format!("({raw_extra_info})")
+    };
+    let summary = split.get(7).copied().unwrap_or_default().to_string();
+
+    Some(ParsedCommitLine {
+        short_oid: oid.chars().take(7).collect(),
+        oid,
+        summary,
+        tags,
+        extra_info,
+        author_name,
+        author_email,
+        unix_timestamp: split[1].parse::<i64>().unwrap_or_default(),
+        parents,
+        divergence,
+    })
+}
+
+fn hydrate_commit_item(repo_path: &Path, parsed: ParsedCommitLine) -> CommitItem {
+    let changed_files = read_commit_files(repo_path, parsed.oid.as_str());
+    let diff = read_commit_diff(repo_path, parsed.oid.as_str());
+    CommitItem {
+        oid: parsed.oid,
+        short_oid: parsed.short_oid,
+        summary: parsed.summary,
+        tags: parsed.tags,
+        extra_info: parsed.extra_info,
+        author_name: parsed.author_name,
+        author_email: parsed.author_email,
+        unix_timestamp: parsed.unix_timestamp,
+        parents: parsed.parents,
+        status: CommitStatus::None,
+        todo_action: CommitTodoAction::None,
+        todo_action_flag: String::new(),
+        divergence: parsed.divergence,
+        changed_files,
+        diff,
+    }
+}
+
+fn format_commit_graph_suffix(parsed: &ParsedCommitLine) -> String {
+    match (parsed.extra_info.is_empty(), parsed.summary.is_empty()) {
+        (true, true) => parsed.short_oid.clone(),
+        (true, false) => format!("{} {}", parsed.short_oid, parsed.summary),
+        (false, true) => format!("{} {}", parsed.short_oid, parsed.extra_info),
+        (false, false) => format!(
+            "{} {} {}",
+            parsed.short_oid, parsed.extra_info, parsed.summary
+        ),
+    }
+}
+
+fn resolve_pushed_status_ref(
+    repo_path: &Path,
+    commit_ref: Option<&str>,
+) -> Option<PushedStatusRef> {
+    let local_ref = resolve_local_branch_ref(repo_path, commit_ref)?;
+    let branch_name = normalize_local_branch_name(local_ref.as_str());
+    let upstream = format!("{branch_name}@{{u}}");
+    let upstream_ref = git_stdout_allow_failure(
+        repo_path,
+        ["rev-parse", "--symbolic-full-name", upstream.as_str()],
+    )
+    .ok()?;
+    let upstream_ref = upstream_ref.trim().to_string();
+    if upstream_ref.is_empty() {
+        return None;
+    }
+
+    Some(PushedStatusRef {
+        local_ref,
+        upstream_ref,
+    })
+}
+
+fn resolve_local_branch_ref(repo_path: &Path, commit_ref: Option<&str>) -> Option<String> {
+    match commit_ref {
+        Some(reference) if reference.starts_with("refs/heads/") => Some(reference.to_string()),
+        Some(reference) => {
+            git_stdout_allow_failure(repo_path, ["rev-parse", "--symbolic-full-name", reference])
+                .ok()
+                .map(|output| output.trim().to_string())
+                .filter(|output| output.starts_with("refs/heads/"))
+        }
+        None => current_branch_name(repo_path)
+            .ok()
+            .map(|branch| format!("refs/heads/{branch}")),
+    }
+}
+
+fn reachable_hashes(
+    repo_path: &Path,
+    reference: &str,
+    excluded_refs: &[String],
+) -> Option<HashSet<String>> {
+    let mut args = vec![OsString::from("rev-list"), OsString::from(reference)];
+    args.extend(
+        excluded_refs
+            .iter()
+            .map(|excluded| OsString::from(format!("^{excluded}"))),
+    );
+    let output = git_stdout_allow_failure(repo_path, args).ok()?;
+    Some(
+        output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+fn set_commit_statuses(
+    unpushed_hashes: Option<&HashSet<String>>,
+    unmerged_hashes: Option<&HashSet<String>>,
+    commits: &mut [CommitItem],
+) {
+    for commit in commits {
+        if commit.todo_action != CommitTodoAction::None {
+            continue;
+        }
+
+        commit.status = if unmerged_hashes.is_none_or(|hashes| hashes.contains(&commit.oid)) {
+            if unpushed_hashes.is_some_and(|hashes| hashes.contains(&commit.oid)) {
+                CommitStatus::Unpushed
+            } else {
+                CommitStatus::Pushed
+            }
+        } else {
+            CommitStatus::Merged
+        };
+    }
 }
 
 fn read_commit_files(repo_path: &Path, oid: &str) -> Vec<CommitFileItem> {
@@ -4211,8 +4419,8 @@ struct ParsedHunk {
 mod tests {
     use super::*;
     use super_lazygit_core::{
-        DiffModel, GitCommand, GitCommandRequest, JobId, RebaseKind, RebaseStartMode, RepoId,
-        ResetMode,
+        CommitDivergence, CommitStatus, CommitTodoAction, DiffModel, GitCommand, GitCommandRequest,
+        JobId, RebaseKind, RebaseStartMode, RepoId, ResetMode,
     };
     use super_lazygit_test_support::{
         clean_repo, conflicted_repo, detached_head_repo, dirty_repo, history_preview_repo,
@@ -5717,6 +5925,87 @@ mod tests {
     }
 
     #[test]
+    fn extract_commit_from_line_parses_metadata_tags_and_divergence() {
+        let parsed = extract_commit_from_line(
+            "abc123456789\x001640000000\x00Jane Smith\x00jane@example.com\x00parent1 parent2\x00<\x00HEAD -> feature, tag: v1.0, tag: latest\x00ship it",
+            true,
+        )
+        .expect("commit line should parse");
+
+        assert_eq!(parsed.oid, "abc123456789");
+        assert_eq!(parsed.short_oid, "abc1234");
+        assert_eq!(parsed.summary, "ship it");
+        assert_eq!(parsed.tags, vec!["v1.0".to_string(), "latest".to_string()]);
+        assert_eq!(
+            parsed.extra_info,
+            "(HEAD -> feature, tag: v1.0, tag: latest)"
+        );
+        assert_eq!(parsed.author_name, "Jane Smith");
+        assert_eq!(parsed.author_email, "jane@example.com");
+        assert_eq!(parsed.unix_timestamp, 1_640_000_000);
+        assert_eq!(
+            parsed.parents,
+            vec!["parent1".to_string(), "parent2".to_string()]
+        );
+        assert_eq!(parsed.divergence, CommitDivergence::Left);
+    }
+
+    #[test]
+    fn extract_commit_from_line_accepts_missing_message_field() {
+        let parsed = extract_commit_from_line(
+            "abc123\x00timestamp\x00author\x00email\x00parent\x00>\x00tag: v1.0",
+            true,
+        )
+        .expect("minimal commit line should parse");
+
+        assert_eq!(parsed.summary, "");
+        assert_eq!(parsed.tags, vec!["v1.0".to_string()]);
+        assert_eq!(parsed.extra_info, "(tag: v1.0)");
+        assert_eq!(parsed.divergence, CommitDivergence::Right);
+        assert_eq!(parsed.unix_timestamp, 0);
+    }
+
+    #[test]
+    fn set_commit_statuses_marks_unpushed_pushed_and_merged_commits() {
+        let mut commits = vec![
+            CommitItem {
+                oid: "unpushed".to_string(),
+                summary: "unpushed".to_string(),
+                ..CommitItem::default()
+            },
+            CommitItem {
+                oid: "todo".to_string(),
+                summary: "todo".to_string(),
+                todo_action: CommitTodoAction::UpdateRef,
+                ..CommitItem::default()
+            },
+            CommitItem {
+                oid: "pushed".to_string(),
+                summary: "pushed".to_string(),
+                ..CommitItem::default()
+            },
+            CommitItem {
+                oid: "merged".to_string(),
+                summary: "merged".to_string(),
+                ..CommitItem::default()
+            },
+        ];
+        let unpushed = HashSet::from(["unpushed".to_string()]);
+        let unmerged = HashSet::from([
+            "unpushed".to_string(),
+            "pushed".to_string(),
+            "todo".to_string(),
+        ]);
+
+        set_commit_statuses(Some(&unpushed), Some(&unmerged), &mut commits);
+
+        assert_eq!(commits[0].status, CommitStatus::Unpushed);
+        assert_eq!(commits[1].status, CommitStatus::None);
+        assert_eq!(commits[2].status, CommitStatus::Pushed);
+        assert_eq!(commits[3].status, CommitStatus::Merged);
+    }
+
+    #[test]
     fn cli_backend_reads_commit_files_with_whitespace_paths() {
         let repo = temp_repo().expect("fixture repo");
         repo.write_file("dir/space name.txt", "base\n")
@@ -5800,6 +6089,40 @@ mod tests {
             .commits
             .iter()
             .all(|commit| commit.summary != "main branch commit"));
+    }
+
+    #[test]
+    fn cli_backend_reads_commit_metadata_and_statuses_from_linear_history() {
+        let repo = upstream_diverged_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        let latest = detail.commits.first().expect("latest commit");
+        assert_eq!(latest.summary, "local change");
+        assert_eq!(latest.author_name, "Super Lazygit Tests");
+        assert_eq!(latest.author_email, "tests@example.com");
+        assert_eq!(latest.parents.len(), 1);
+        assert_eq!(latest.status, CommitStatus::Unpushed);
+        assert_eq!(latest.divergence, CommitDivergence::None);
+
+        let initial = detail
+            .commits
+            .iter()
+            .find(|commit| commit.summary == "initial")
+            .expect("initial commit should be present");
+        assert_eq!(initial.status, CommitStatus::Merged);
     }
 
     #[test]

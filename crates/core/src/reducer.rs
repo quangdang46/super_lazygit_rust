@@ -12022,6 +12022,7 @@ mod tests {
                         summary: "add lib".to_string(),
                         changed_files: vec![],
                         diff: DiffModel::default(),
+                        ..crate::state::CommitItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -12102,6 +12103,7 @@ mod tests {
                         summary: "add lib".to_string(),
                         changed_files: vec![],
                         diff: DiffModel::default(),
+                        ..crate::state::CommitItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -12218,6 +12220,7 @@ mod tests {
                                 summary: "alpha".to_string(),
                                 changed_files: Vec::new(),
                                 diff: DiffModel::default(),
+                                ..crate::state::CommitItem::default()
                             },
                             crate::state::CommitItem {
                                 oid: "0002".to_string(),
@@ -12225,6 +12228,7 @@ mod tests {
                                 summary: "hidden".to_string(),
                                 changed_files: Vec::new(),
                                 diff: DiffModel::default(),
+                                ..crate::state::CommitItem::default()
                             },
                             crate::state::CommitItem {
                                 oid: "0003".to_string(),
@@ -12232,6 +12236,7 @@ mod tests {
                                 summary: "beta".to_string(),
                                 changed_files: Vec::new(),
                                 diff: DiffModel::default(),
+                                ..crate::state::CommitItem::default()
                             },
                             crate::state::CommitItem {
                                 oid: "0004".to_string(),
@@ -12239,6 +12244,7 @@ mod tests {
                                 summary: "gamma".to_string(),
                                 changed_files: Vec::new(),
                                 diff: DiffModel::default(),
+                                ..crate::state::CommitItem::default()
                             },
                         ],
                         ..RepoDetail::default()
@@ -12564,6 +12570,7 @@ mod tests {
                             summary: "add lib".to_string(),
                             changed_files: vec![],
                             diff: DiffModel::default(),
+                            ..crate::state::CommitItem::default()
                         },
                         crate::state::CommitItem {
                             oid: "1234567890abcdef".to_string(),
@@ -12571,6 +12578,7 @@ mod tests {
                             summary: "second".to_string(),
                             changed_files: vec![],
                             diff: DiffModel::default(),
+                            ..crate::state::CommitItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -17243,6 +17251,7 @@ mod tests {
                         kind: FileStatusKind::Added,
                     }],
                     diff: DiffModel::default(),
+                    ..CommitItem::default()
                 },
                 CommitItem {
                     oid: "1234567890abcdef".to_string(),
@@ -17253,6 +17262,7 @@ mod tests {
                         kind: FileStatusKind::Added,
                     }],
                     diff: DiffModel::default(),
+                    ..CommitItem::default()
                 },
             ],
             ..RepoDetail::default()
@@ -18306,6 +18316,7 @@ mod tests {
             summary: "init".to_string(),
             changed_files: vec![],
             diff: DiffModel::default(),
+            ..CommitItem::default()
         }];
         let state = AppState {
             mode: AppMode::Repository,
@@ -18526,6 +18537,7 @@ mod tests {
                     kind: FileStatusKind::Added,
                 }],
                 diff: DiffModel::default(),
+                ..CommitItem::default()
             }],
             reflog_items: vec![ReflogItem {
                 selector: "HEAD@{0}".to_string(),
