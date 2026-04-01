@@ -47,9 +47,9 @@
 [x] ./references/lazygit-master/pkg/app/app.go
 [x] ./references/lazygit-master/pkg/app/daemon/daemon.go
 [x] ./references/lazygit-master/pkg/app/daemon/rebase.go
-./references/lazygit-master/pkg/app/entry_point.go
-./references/lazygit-master/pkg/app/errors.go
-./references/lazygit-master/pkg/app/types/types.go
+[x] ./references/lazygit-master/pkg/app/entry_point.go
+[x] ./references/lazygit-master/pkg/app/errors.go
+[x] ./references/lazygit-master/pkg/app/types/types.go
 ./references/lazygit-master/pkg/cheatsheet/generate.go
 ./references/lazygit-master/pkg/cheatsheet/generate_test.go
 ./references/lazygit-master/pkg/cheatsheet/generator.go
