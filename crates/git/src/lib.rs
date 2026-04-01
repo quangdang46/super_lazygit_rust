@@ -4793,6 +4793,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_name_status_entries_preserves_multi_file_order_and_status_kinds() {
+        let parsed = parse_name_status_entries("MM\0Myfile\0M \0MyOtherFile\0 M\0YetAnother\0");
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].path, PathBuf::from("Myfile"));
+        assert_eq!(parsed[0].kind, FileStatusKind::Modified);
+        assert_eq!(parsed[1].path, PathBuf::from("MyOtherFile"));
+        assert_eq!(parsed[1].kind, FileStatusKind::Modified);
+        assert_eq!(parsed[2].path, PathBuf::from("YetAnother"));
+        assert_eq!(parsed[2].kind, FileStatusKind::Modified);
+    }
+
+    #[test]
     fn parse_name_status_entries_ignores_empty_and_incomplete_chunks() {
         assert!(parse_name_status_entries("").is_empty());
         assert!(parse_name_status_entries("\0").is_empty());
