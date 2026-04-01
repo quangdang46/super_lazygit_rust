@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
@@ -6,7 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::state::GitFlowBranchType;
@@ -2458,7 +2458,7 @@ fn resolve_git_flow_finish_parts(
     repo_path: &Path,
     branch_name: &str,
 ) -> GitResult<(String, String)> {
-    let prefixes = git_flow_prefixes(repo_path)?;
+    let prefixes = git_flow_prefixes(repo_path);
     let (prefix, suffix) = git_flow_branch_prefix_and_suffix(branch_name);
     for line in prefixes
         .lines()
@@ -2487,19 +2487,121 @@ fn git_flow_branch_prefix_and_suffix(branch_name: &str) -> (String, String) {
     }
 }
 
-fn git_flow_prefixes(repo_path: &Path) -> GitResult<String> {
-    let output = Command::new("git")
-        .args(["config", "--local", "--get-regexp", "gitflow.prefix"])
-        .current_dir(repo_path)
-        .output()
-        .map_err(io_error)?;
-    if output.status.success() {
-        stdout_string(output)
-    } else if output.status.code() == Some(1) {
-        Ok(String::new())
-    } else {
-        Err(command_failure(output))
+type GitConfigRunner = dyn Fn(&Path, &[OsString]) -> GitResult<String> + Send + Sync;
+
+struct CachedGitConfig {
+    cache: Mutex<HashMap<String, String>>,
+    repo_path: PathBuf,
+    run_git_config_cmd: Arc<GitConfigRunner>,
+}
+
+impl CachedGitConfig {
+    fn new(repo_path: &Path) -> Self {
+        Self::with_runner(repo_path, run_git_config_cmd)
     }
+
+    fn with_runner(
+        repo_path: &Path,
+        run_git_config_cmd: impl Fn(&Path, &[OsString]) -> GitResult<String> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+            repo_path: canonicalize_existing_path(repo_path),
+            run_git_config_cmd: Arc::new(run_git_config_cmd),
+        }
+    }
+
+    fn get(&self, key: &str) -> String {
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(value) = cache.get(key) {
+            return value.clone();
+        }
+
+        let value = self.get_aux(key);
+        cache.insert(key.to_string(), value.clone());
+        value
+    }
+
+    fn get_general(&self, args: &str) -> String {
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(value) = cache.get(args) {
+            return value.clone();
+        }
+
+        let value = self.get_general_aux(args);
+        cache.insert(args.to_string(), value.clone());
+        value
+    }
+
+    #[allow(dead_code)]
+    fn get_bool(&self, key: &str) -> bool {
+        is_truthy(&self.get(key))
+    }
+
+    #[allow(dead_code)]
+    fn drop_cache(&self) {
+        self.cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
+    fn get_aux(&self, key: &str) -> String {
+        self.run_git_config(get_git_config_args(key))
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    fn get_general_aux(&self, args: &str) -> String {
+        self.run_git_config(get_git_config_general_args(args))
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    fn run_git_config(&self, args: Vec<OsString>) -> GitResult<String> {
+        (self.run_git_config_cmd)(self.repo_path.as_path(), &args)
+    }
+}
+
+fn run_git_config_cmd(repo_path: &Path, args: &[OsString]) -> GitResult<String> {
+    let output = git_output(repo_path, args.iter())?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    stdout_string(output).map(|value| value.trim_end_matches('\0').to_string())
+}
+
+fn get_git_config_args(key: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("config"),
+        OsString::from("--get"),
+        OsString::from("--null"),
+        OsString::from(key),
+    ]
+}
+
+fn get_git_config_general_args(args: &str) -> Vec<OsString> {
+    std::iter::once(OsString::from("config"))
+        .chain(args.split(' ').map(OsString::from))
+        .collect()
+}
+
+#[allow(dead_code)]
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
+}
+
+fn git_flow_prefixes(repo_path: &Path) -> String {
+    CachedGitConfig::new(repo_path).get_general("--local --get-regexp gitflow.prefix")
 }
 
 fn merge_ref_args(target_ref: &str, variant: MergeVariant) -> Vec<OsString> {
@@ -2670,13 +2772,11 @@ fn resolve_main_branch_ref(repo_path: &Path, branch_name: &str) -> GitResult<Opt
 }
 
 fn read_merge_fast_forward_preference(repo_path: &Path) -> MergeFastForwardPreference {
-    match git_stdout_allow_failure(repo_path, ["config", "--get", "merge.ff"]) {
-        Ok(value) => match value.trim() {
-            "true" | "only" => MergeFastForwardPreference::FastForward,
-            "false" => MergeFastForwardPreference::NoFastForward,
-            _ => MergeFastForwardPreference::Default,
-        },
-        Err(_) => MergeFastForwardPreference::Default,
+    let value = CachedGitConfig::new(repo_path).get("merge.ff");
+    match value.as_str() {
+        "true" | "only" => MergeFastForwardPreference::FastForward,
+        "false" => MergeFastForwardPreference::NoFastForward,
+        _ => MergeFastForwardPreference::Default,
     }
 }
 
@@ -4977,7 +5077,7 @@ fn finalize_reflog_commit(
 }
 
 fn parse_reflog_commit_line(repo_path: &Path, line: &str) -> Option<CommitItem> {
-    let fields = line.splitn(4, ' ').collect::<Vec<_>>();
+    let fields = line.splitn(4, '\0').collect::<Vec<_>>();
     if fields.len() <= 3 {
         return None;
     }
@@ -5033,7 +5133,7 @@ fn read_reflog(repo_path: &Path) -> Vec<ReflogItem> {
         output
             .lines()
             .map(|line| {
-                let mut parts = line.split(' ');
+                let mut parts = line.split('\0');
                 let selector = parts.next().unwrap_or_default().to_string();
                 let oid = parts.next().unwrap_or_default().to_string();
                 let short_oid = parts.next().unwrap_or_default().to_string();
@@ -10714,6 +10814,100 @@ mod tests {
                 OsString::from("feature"),
             ]
         );
+    }
+
+    #[test]
+    fn cached_git_config_get_and_drop_cache_match_upstream_behavior() {
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let runner_calls = call_count.clone();
+        let config =
+            CachedGitConfig::with_runner(Path::new("/tmp/repo"), move |_repo_path, args| {
+                runner_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(
+                    args,
+                    &[
+                        OsString::from("config"),
+                        OsString::from("--get"),
+                        OsString::from("--null"),
+                        OsString::from("commit.gpgsign"),
+                    ]
+                );
+                Ok(" true ".to_string())
+            });
+
+        assert_eq!(config.get("commit.gpgsign"), "true");
+        assert_eq!(config.get("commit.gpgsign"), "true");
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        config.drop_cache();
+
+        assert_eq!(config.get("commit.gpgsign"), "true");
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn cached_git_config_get_general_splits_args_and_caches_by_args() {
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let runner_calls = call_count.clone();
+        let config =
+            CachedGitConfig::with_runner(Path::new("/tmp/repo"), move |_repo_path, args| {
+                runner_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(
+                    args,
+                    &[
+                        OsString::from("config"),
+                        OsString::from("--local"),
+                        OsString::from("--get-regexp"),
+                        OsString::from("gitflow.prefix"),
+                    ]
+                );
+                Ok("gitflow.prefix.feature feature/\n".to_string())
+            });
+
+        assert_eq!(
+            config.get_general("--local --get-regexp gitflow.prefix"),
+            "gitflow.prefix.feature feature/"
+        );
+        assert_eq!(
+            config.get_general("--local --get-regexp gitflow.prefix"),
+            "gitflow.prefix.feature feature/"
+        );
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cached_git_config_get_bool_matches_upstream_truthy_values() {
+        let scenarios = [
+            (
+                Err(GitError::OperationFailed {
+                    message: "missing".to_string(),
+                }),
+                false,
+            ),
+            (Ok("True".to_string()), true),
+            (Ok("ON".to_string()), true),
+            (Ok("YeS".to_string()), true),
+            (Ok("1".to_string()), true),
+            (Ok("false".to_string()), false),
+        ];
+
+        for (result, expected) in scenarios {
+            let config =
+                CachedGitConfig::with_runner(Path::new("/tmp/repo"), move |_repo_path, args| {
+                    assert_eq!(
+                        args,
+                        &[
+                            OsString::from("config"),
+                            OsString::from("--get"),
+                            OsString::from("--null"),
+                            OsString::from("commit.gpgsign"),
+                        ]
+                    );
+                    result.clone()
+                });
+
+            assert_eq!(config.get_bool("commit.gpgsign"), expected);
+        }
     }
 
     #[test]
