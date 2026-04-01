@@ -3332,7 +3332,7 @@ fn read_rebase_state(repo_path: &Path) -> Option<RebaseState> {
 }
 
 fn read_bisect_state(repo_path: &Path) -> Option<BisectState> {
-    if !git_path_exists(repo_path, "BISECT_LOG") {
+    if !git_path_exists(repo_path, "BISECT_START") {
         return None;
     }
 
@@ -3351,18 +3351,8 @@ fn read_bisect_state(repo_path: &Path) -> Option<BisectState> {
         })
         .unwrap_or_else(|| ("bad".to_string(), "good".to_string()));
 
-    let current_commit = if git_path_exists(repo_path, "refs/bisect/bad")
-        && resolve_git_path(repo_path, "refs/bisect")
-            .and_then(|path| fs::read_dir(path).ok())
-            .is_some_and(|entries| {
-                entries
-                    .flatten()
-                    .any(|entry| entry.file_name().to_string_lossy().starts_with("good-"))
-            }) {
-        git_stdout(repo_path, ["rev-parse", "HEAD"]).ok()
-    } else {
-        None
-    };
+    let current_commit = resolve_git_path(repo_path, "BISECT_EXPECTED_REV")
+        .and_then(|path| read_trimmed_file(&path));
     let current_summary = current_commit
         .as_deref()
         .and_then(|commit| git_stdout(repo_path, ["show", "-s", "--format=%s", commit]).ok());
@@ -5039,6 +5029,59 @@ mod tests {
                 .as_ref()
                 .map(|state| state.good_term.as_str()),
             Some("good")
+        );
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .and_then(|state| state.current_summary.as_deref()),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn cli_backend_reads_bisect_custom_terms_and_expected_revision() {
+        let repo = history_preview_repo().expect("fixture repo");
+        repo.git(["bisect", "start", "--term-old=old", "--term-new=new"])
+            .expect("start bisect with custom terms");
+        repo.git(["bisect", "new", "HEAD"]).expect("mark new");
+        repo.git(["bisect", "old", "HEAD~2"]).expect("mark old");
+        let expected_commit = repo.rev_parse("HEAD").expect("bisect current head");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .map(|state| state.bad_term.as_str()),
+            Some("new")
+        );
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .map(|state| state.good_term.as_str()),
+            Some("old")
+        );
+        assert_eq!(
+            detail
+                .bisect_state
+                .as_ref()
+                .and_then(|state| state.current_commit.as_deref()),
+            Some(expected_commit.as_str())
         );
         assert_eq!(
             detail
