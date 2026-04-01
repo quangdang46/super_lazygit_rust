@@ -1575,11 +1575,6 @@ fn current_branch_name(repo_path: &Path) -> GitResult<String> {
 fn current_branch_list_entry(repo_path: &Path) -> Option<String> {
     let symbolic_ref =
         git_stdout_allow_failure(repo_path, ["symbolic-ref", "--short", "HEAD"]).ok()?;
-    let symbolic_ref = symbolic_ref.trim();
-    if !symbolic_ref.is_empty() && symbolic_ref != "HEAD" {
-        return Some(symbolic_ref.to_string());
-    }
-
     let detached = git_stdout_allow_failure(
         repo_path,
         [
@@ -1590,7 +1585,26 @@ fn current_branch_list_entry(repo_path: &Path) -> Option<String> {
     )
     .ok()?;
 
-    for line in detached.lines() {
+    Some(parse_current_branch_list_entry(
+        symbolic_ref.trim(),
+        detached.as_str(),
+    ))
+}
+
+fn parse_current_branch_list_entry(symbolic_ref: &str, detached_output: &str) -> String {
+    if !symbolic_ref.is_empty() && symbolic_ref != "HEAD" {
+        return symbolic_ref.to_string();
+    }
+
+    if let Some(entry) = parse_detached_head_entry(detached_output) {
+        return entry;
+    }
+
+    "HEAD".to_string()
+}
+
+fn parse_detached_head_entry(detached_output: &str) -> Option<String> {
+    for line in detached_output.lines() {
         let parts: Vec<_> = line.trim_end_matches(['\r', '\n']).split('\0').collect();
         if parts.len() != 3 || parts[0].trim() != "*" {
             continue;
@@ -1606,7 +1620,7 @@ fn current_branch_list_entry(repo_path: &Path) -> Option<String> {
         }
     }
 
-    Some("HEAD".to_string())
+    None
 }
 
 fn fetch_head_timestamp(repo_path: &Path) -> GitResult<Option<Timestamp>> {
@@ -4710,6 +4724,41 @@ mod tests {
     fn parse_branch_line_ignores_blank_and_malformed_rows() {
         assert!(parse_branch_line("").is_none());
         assert!(parse_branch_line("warning: ignored row").is_none());
+    }
+
+    #[test]
+    fn parse_current_branch_list_entry_prefers_attached_symbolic_ref() {
+        assert_eq!(
+            parse_current_branch_list_entry("master", ""),
+            "master".to_string()
+        );
+    }
+
+    #[test]
+    fn parse_current_branch_list_entry_prefers_detached_display_name() {
+        let detached_output = concat!(
+            "*\0",
+            "679b0456\0",
+            "（头指针在 679b0456 分离）\n",
+            " \0",
+            "679b0456\0",
+            "refs/heads/master\n"
+        );
+
+        assert_eq!(
+            parse_current_branch_list_entry("", detached_output),
+            "（头指针在 679b0456 分离）".to_string()
+        );
+    }
+
+    #[test]
+    fn parse_current_branch_list_entry_falls_back_to_short_oid_for_detached_head() {
+        let detached_output = concat!("*\0", "6f71c57a\0\n");
+
+        assert_eq!(
+            parse_current_branch_list_entry("", detached_output),
+            "(HEAD detached at 6f71c57a)".to_string()
+        );
     }
 
     #[test]
