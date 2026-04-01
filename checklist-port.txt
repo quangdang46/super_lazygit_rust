@@ -1,4 +1,3 @@
-
 ./references/lazygit-master/README.md
 ./references/lazygit-master/VISION.md
 ./references/lazygit-master/demo/README.md
@@ -997,15 +996,4 @@
 ./references/lazygit-master/pkg/utils/yaml_utils/yaml_utils_test.go
 ./references/lazygit-master/schema-master/config.json
 ./references/lazygit-master/schema/config.json
-./references/lazygit-master/scripts/bisect.sh
-./references/lazygit-master/scripts/bump_gocui.sh
-./references/lazygit-master/scripts/bump_lazycore.sh
-./references/lazygit-master/scripts/bump_modules.sh
-./references/lazygit-master/scripts/check_filenames.sh
-./references/lazygit-master/scripts/check_for_fixups.sh
-./references/lazygit-master/scripts/golangci-lint-shim.sh
-./references/lazygit-master/scripts/record_demo.sh
-./references/lazygit-master/scripts/run_integration_tests.sh
-./references/lazygit-master/scripts/update_docs_for_release.sh
-./references/lazygit-master/scripts/update_language_files.sh
 ./references/lazygit-master/test/README.md

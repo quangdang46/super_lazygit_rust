@@ -1,42 +1,3 @@
-#
-# Please do not add personal files
-#
-
-# Logs
-*.log
-
-# Notes
-*.notes
-
-# Tests
-test/repos/repo
-coverage.txt
-
-# JetBrains stuff
-.idea/
-
-# Binaries
-lazygit
-lazygit.exe
-
-test/git_server/data
-
-test/_results/**
-
-oryxBuildBinary
-__debug_bin*
-
-.worktrees
-demo/output/*
-
-coverage.out
-
-# Nix
-result
-result-*
-.direnv
-.envrc
-
 references/
 /target/
 
@@ -48,3 +9,4 @@ references/
 .scope/
 .super-lazygit/
 registry.*
+.beads/
