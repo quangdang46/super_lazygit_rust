@@ -1312,7 +1312,7 @@ impl GitBackend for CliGitBackend {
                     StashMode::IncludeUntracked => {
                         stash_push(&repo_path, &["--include-untracked"], message.as_deref())?
                     }
-                    StashMode::Staged => stash_push(&repo_path, &["--staged"], message.as_deref())?,
+                    StashMode::Staged => stash_staged_changes(&repo_path, message.as_deref())?,
                     StashMode::Unstaged => stash_unstaged_changes(&repo_path, message.as_deref())?,
                 };
                 match (mode, message) {
@@ -3049,6 +3049,26 @@ fn stash_push(repo_path: &Path, extra_args: &[&str], message: Option<&str>) -> G
     Ok(())
 }
 
+fn stash_staged_changes(repo_path: &Path, message: Option<&str>) -> GitResult<()> {
+    if git_version_at_least(repo_path, 2, 35, 0)? {
+        return stash_push(repo_path, &["--staged"], message);
+    }
+
+    stash_staged_changes_legacy(repo_path, message)
+}
+
+fn stash_staged_changes_legacy(repo_path: &Path, message: Option<&str>) -> GitResult<()> {
+    git(repo_path, ["stash", "--keep-index"])?;
+    stash_push(repo_path, &[], message)?;
+    git(repo_path, ["stash", "apply", "refs/stash@{1}"])?;
+
+    let staged_patch = git_stdout_raw(repo_path, ["stash", "show", "-p"])?;
+    git_with_stdin(repo_path, ["apply", "-R"], staged_patch.as_bytes())?;
+    git(repo_path, ["stash", "drop", "refs/stash@{1}"])?;
+
+    cleanup_staged_added_deleted_entries(repo_path)
+}
+
 fn stash_unstaged_changes(repo_path: &Path, message: Option<&str>) -> GitResult<()> {
     if has_staged_entries(repo_path)? {
         git(
@@ -3077,6 +3097,24 @@ fn has_staged_entries(repo_path: &Path) -> GitResult<bool> {
         .is_empty())
 }
 
+fn cleanup_staged_added_deleted_entries(repo_path: &Path) -> GitResult<()> {
+    let status = git_stdout_raw(
+        repo_path,
+        ["status", "--porcelain", "-z", "--untracked-files=all"],
+    )?;
+    let parsed = parse_status(&status);
+
+    for file in parsed
+        .file_tree
+        .iter()
+        .filter(|file| file.short_status == "AD")
+    {
+        unstage_path(repo_path, &file.path)?;
+    }
+
+    Ok(())
+}
+
 fn rename_stash(repo_path: &Path, stash_ref: &str, message: &str) -> GitResult<()> {
     let hash = git_stdout(repo_path, ["rev-parse", stash_ref])?;
     git(repo_path, ["stash", "drop", stash_ref])?;
@@ -3094,6 +3132,42 @@ fn rename_stash(repo_path: &Path, stash_ref: &str, message: &str) -> GitResult<(
         return Err(command_failure(output));
     }
     Ok(())
+}
+
+fn git_version_at_least(repo_path: &Path, major: u32, minor: u32, patch: u32) -> GitResult<bool> {
+    Ok(parse_git_version(&git_stdout(repo_path, ["version"])?)? >= (major, minor, patch))
+}
+
+fn parse_git_version(raw: &str) -> GitResult<(u32, u32, u32)> {
+    let Some(token) = raw.split_whitespace().find(|token| {
+        token
+            .chars()
+            .next()
+            .is_some_and(|char| char.is_ascii_digit())
+    }) else {
+        return Err(GitError::OperationFailed {
+            message: format!("failed to parse git version from {raw:?}"),
+        });
+    };
+
+    let mut numbers = Vec::new();
+    for segment in token.split('.') {
+        let Ok(number) = segment.parse::<u32>() else {
+            break;
+        };
+        numbers.push(number);
+        if numbers.len() == 3 {
+            break;
+        }
+    }
+
+    if numbers.len() < 2 {
+        return Err(GitError::OperationFailed {
+            message: format!("failed to parse git version from {raw:?}"),
+        });
+    }
+
+    Ok((numbers[0], numbers[1], numbers.get(2).copied().unwrap_or(0)))
 }
 
 fn edit_submodule_url(repo_path: &Path, name: &str, path: &Path, url: &str) -> GitResult<()> {
@@ -6655,6 +6729,59 @@ mod tests {
         .expect("stash index diff should succeed");
         assert!(stashed_index_patch.contains("+1 staged"));
         assert!(!stashed_index_patch.contains("+2 unstaged"));
+    }
+
+    #[test]
+    fn legacy_staged_stash_path_preserves_unstaged_changes() {
+        let repo = staged_and_unstaged_repo().expect("fixture repo");
+
+        stash_staged_changes_legacy(repo.path(), Some("legacy staged checkpoint"))
+            .expect("legacy staged stash should succeed");
+
+        assert!(repo
+            .stash_list()
+            .expect("stash list")
+            .contains("legacy staged checkpoint"));
+        assert_eq!(
+            repo.status_porcelain().expect("status"),
+            "M tracked.txt
+?? untracked.txt"
+        );
+        let stashed_patch = git_stdout_raw(repo.path(), ["stash", "show", "-p", "stash@{0}"])
+            .expect("stash show should succeed");
+        assert!(stashed_patch.contains("staged.txt"));
+        assert!(!stashed_patch.contains("tracked.txt"));
+    }
+
+    #[test]
+    fn legacy_staged_stash_cleans_up_added_deleted_entries() {
+        let repo = staged_untracked_with_unstaged_repo().expect("fixture repo");
+
+        stash_staged_changes_legacy(repo.path(), Some("legacy staged untracked"))
+            .expect("legacy staged stash should succeed");
+
+        assert!(repo
+            .stash_list()
+            .expect("stash list")
+            .contains("legacy staged untracked"));
+        assert_eq!(repo.status_porcelain().expect("status"), "M tracked.txt");
+        assert!(!repo.path().join("staged-untracked.txt").exists());
+    }
+
+    #[test]
+    fn parse_git_version_accepts_apple_git_suffix() {
+        assert_eq!(
+            parse_git_version("git version 2.39.3 (Apple Git-146)"),
+            Ok((2, 39, 3))
+        );
+    }
+
+    #[test]
+    fn parse_git_version_accepts_windows_git_suffix() {
+        assert_eq!(
+            parse_git_version("git version 2.44.0.windows.1"),
+            Ok((2, 44, 0))
+        );
     }
 
     #[test]
@@ -11047,6 +11174,17 @@ mod tests {
         fs::remove_file(repo.path().join("deleted.txt"))?;
         repo.git(["stash", "push", "-m", "inventory"])?;
 
+        Ok(repo)
+    }
+
+    fn staged_untracked_with_unstaged_repo() -> std::io::Result<super_lazygit_test_support::TempRepo>
+    {
+        let repo = temp_repo()?;
+        repo.write_file("tracked.txt", "base\n")?;
+        repo.commit_all("initial")?;
+        repo.write_file("staged-untracked.txt", "new file\n")?;
+        repo.stage("staged-untracked.txt")?;
+        repo.write_file("tracked.txt", "base changed\n")?;
         Ok(repo)
     }
 
