@@ -197,6 +197,15 @@ mod tests {
     };
     use super_lazygit_test_support::{clean_repo, TempRepo};
 
+    fn normalized_path(path: &Path) -> PathBuf {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.components().collect::<PathBuf>())
+    }
+
+    fn normalized_repo_id(path: &Path) -> RepoId {
+        RepoId::new(normalized_path(path).display().to_string())
+    }
+
     #[test]
     fn cli_parses_startup_flags_and_focus_argument() {
         let cli = Cli::try_parse_from([
@@ -477,7 +486,8 @@ mod tests {
         let repo_path = root.path().join("repo-a");
         fs::create_dir_all(repo_path.join(".git")).expect("repo fixture");
 
-        let repo_id = RepoId::new(repo_path.display().to_string());
+        let repo_path = normalized_path(&repo_path);
+        let repo_id = normalized_repo_id(&repo_path);
         let workspace_state = WorkspaceState {
             current_root: Some(root.path().to_path_buf()),
             discovered_repo_ids: vec![repo_id.clone()],
@@ -535,8 +545,10 @@ mod tests {
     #[test]
     fn runtime_refresh_batch_keeps_successes_when_one_repo_fails() {
         let repo = clean_repo().expect("fixture repo");
-        let valid_repo_id = RepoId::new(repo.path().display().to_string());
-        let invalid_repo_id = RepoId::new(repo.path().join("missing-repo").display().to_string());
+        let valid_repo_path = normalized_path(repo.path());
+        let valid_repo_id = normalized_repo_id(&valid_repo_path);
+        let invalid_repo_id =
+            RepoId::new(valid_repo_path.join("missing-repo").display().to_string());
 
         let config = AppConfig::default();
         let state = AppState::default();
@@ -566,7 +578,7 @@ mod tests {
     #[test]
     fn runtime_configures_watcher_and_marks_health_healthy() {
         let repo = clean_repo().expect("fixture repo");
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let handle = ScriptedWatcherHandle::new();
 
         let config = AppConfig::default();
@@ -595,7 +607,7 @@ mod tests {
             handle.registrations(),
             vec![watcher::WatchRegistration {
                 repo_id,
-                path: repo.path().to_path_buf(),
+                path: normalized_path(repo.path()),
             }]
         );
     }
@@ -603,7 +615,7 @@ mod tests {
     #[test]
     fn runtime_marks_watcher_health_degraded_when_configuration_fails() {
         let repo = clean_repo().expect("fixture repo");
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let handle = ScriptedWatcherHandle::new();
         handle.set_configure_error("watch backend unavailable");
 
@@ -632,7 +644,7 @@ mod tests {
     #[test]
     fn runtime_periodic_refresh_polls_when_watcher_is_degraded() {
         let repo = clean_repo().expect("fixture repo");
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let handle = ScriptedWatcherHandle::new();
         handle.set_configure_error("watch backend unavailable");
 
@@ -676,7 +688,7 @@ mod tests {
     #[test]
     fn runtime_drains_repo_invalidations_from_watcher_backend() {
         let repo = clean_repo().expect("fixture repo");
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let handle = ScriptedWatcherHandle::new();
         handle.push_event(AppWatcherEvent::RepoInvalidated {
             repo_id: repo_id.clone(),
@@ -713,7 +725,7 @@ mod tests {
     #[test]
     fn runtime_debounces_watcher_invalidations_into_single_refresh_cycle() {
         let repo = clean_repo().expect("fixture repo");
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let handle = ScriptedWatcherHandle::new();
 
         let config = AppConfig::default();
@@ -805,7 +817,7 @@ mod tests {
     #[test]
     fn runtime_reconfigures_watcher_after_degraded_scan_and_recovers_health() {
         let repo = clean_repo().expect("fixture repo");
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let handle = ScriptedWatcherHandle::new();
         handle.set_configure_error("watch backend unavailable");
 
@@ -862,7 +874,7 @@ mod tests {
     #[test]
     fn runtime_surfaces_pull_failure_without_upstream() {
         let repo = clean_repo().expect("fixture repo");
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
 
         let config = AppConfig::default();
         let state = AppState::default();
@@ -917,7 +929,7 @@ mod tests {
         repo.append_file("tracked.txt", "local change\n")
             .expect("make local change");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -1046,7 +1058,7 @@ mod tests {
         repo.git(["checkout", "main"])
             .expect("return main checkout after feature commit");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -1201,7 +1213,7 @@ mod tests {
         repo.git(["branch", "--set-upstream-to=origin/main", "main"])
             .expect("set upstream");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -1316,7 +1328,7 @@ mod tests {
         repo.git(["branch", "--set-upstream-to=origin/main", "main"])
             .expect("set upstream");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -1485,7 +1497,7 @@ mod tests {
         repo.git(["branch", "--set-upstream-to=origin/main", "main"])
             .expect("set upstream");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -1624,7 +1636,7 @@ mod tests {
         repo.commit_all("second commit")
             .expect("commit updated state");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -1688,7 +1700,7 @@ mod tests {
         repo.commit_all("second commit")
             .expect("commit updated state");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -1747,7 +1759,7 @@ mod tests {
         repo.git(["stash", "push", "-m", "beta stash"])
             .expect("create beta stash");
 
-        let repo_id = RepoId::new(repo.path().display().to_string());
+        let repo_id = normalized_repo_id(repo.path());
         let mut harness = E2eHarness::new(repo.path().to_path_buf());
         harness.bootstrap();
         harness.assert_state(
@@ -2012,7 +2024,8 @@ mod tests {
         fs::create_dir_all(repo_root.join(".git")).expect("repo fixture");
         fs::write(repo_root.join("README.md"), "fixture").expect("repo file");
         let log_path = root.path().join("editor.log");
-        let repo_id = RepoId::new(repo_root.display().to_string());
+        let repo_root = normalized_path(&repo_root);
+        let repo_id = normalized_repo_id(&repo_root);
 
         let config = AppConfig {
             editor: super_lazygit_config::EditorConfig {
