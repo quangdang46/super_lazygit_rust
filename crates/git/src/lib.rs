@@ -1572,6 +1572,43 @@ fn current_branch_name(repo_path: &Path) -> GitResult<String> {
     Ok(branch)
 }
 
+fn current_branch_list_entry(repo_path: &Path) -> Option<String> {
+    let symbolic_ref =
+        git_stdout_allow_failure(repo_path, ["symbolic-ref", "--short", "HEAD"]).ok()?;
+    let symbolic_ref = symbolic_ref.trim();
+    if !symbolic_ref.is_empty() && symbolic_ref != "HEAD" {
+        return Some(symbolic_ref.to_string());
+    }
+
+    let detached = git_stdout_allow_failure(
+        repo_path,
+        [
+            "branch",
+            "--points-at=HEAD",
+            "--format=%(HEAD)%00%(objectname:short)%00%(refname)",
+        ],
+    )
+    .ok()?;
+
+    for line in detached.lines() {
+        let parts: Vec<_> = line.trim_end_matches(['\r', '\n']).split('\0').collect();
+        if parts.len() != 3 || parts[0].trim() != "*" {
+            continue;
+        }
+
+        let short_oid = parts[1].trim();
+        let display_name = parts[2].trim();
+        if !display_name.is_empty() {
+            return Some(display_name.to_string());
+        }
+        if !short_oid.is_empty() {
+            return Some(format!("(HEAD detached at {short_oid})"));
+        }
+    }
+
+    Some("HEAD".to_string())
+}
+
 fn fetch_head_timestamp(repo_path: &Path) -> GitResult<Option<Timestamp>> {
     let fetch_head = RepoPaths::resolve(repo_path)?.git_dir().join("FETCH_HEAD");
     match fs::metadata(fetch_head) {
@@ -2730,7 +2767,7 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
         ],
     )
     .map(|output| {
-        output
+        let mut branches: Vec<_> = output
             .lines()
             .filter_map(|line| {
                 let trimmed = line.trim();
@@ -2750,7 +2787,23 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
                     upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
                 })
             })
-            .collect()
+            .collect();
+
+        if let Some(head_index) = branches.iter().position(|branch| branch.is_head) {
+            let head_branch = branches.remove(head_index);
+            branches.insert(0, head_branch);
+        } else if let Some(current_ref) = current_branch_list_entry(repo_path) {
+            branches.insert(
+                0,
+                BranchItem {
+                    name: current_ref,
+                    is_head: true,
+                    upstream: None,
+                },
+            );
+        }
+
+        branches
     })
     .unwrap_or_default()
 }
@@ -4578,6 +4631,10 @@ mod tests {
             })
             .expect("detail should load");
 
+        assert_eq!(
+            detail.branches.first().map(|branch| branch.name.as_str()),
+            Some("main")
+        );
         assert!(detail.branches.iter().any(|branch| branch.name == "main"
             && branch.is_head
             && branch.upstream.as_deref() == Some("origin/main")));
@@ -4585,6 +4642,30 @@ mod tests {
             .branches
             .iter()
             .all(|branch| !branch.name.starts_with("origin/")));
+    }
+
+    #[test]
+    fn cli_backend_prepends_detached_head_to_branch_list() {
+        let repo = detached_head_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        let current = detail.branches.first().expect("detached head branch row");
+        assert!(current.is_head);
+        assert!(current.upstream.is_none());
+        assert!(current.name.contains("HEAD"));
     }
 
     #[test]
