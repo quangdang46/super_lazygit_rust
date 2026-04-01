@@ -8939,6 +8939,12 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             "Enter the new branch name. The branch will be created from HEAD and checked out."
                 .to_string()
         }
+        super_lazygit_core::InputPromptOperation::StartGitFlow { branch_type } => {
+            format!(
+                "Enter the new {} name. Git-flow will create the branch and check it out.",
+                branch_type.command_name()
+            )
+        }
         super_lazygit_core::InputPromptOperation::CreateRemote => {
             "Enter remote details as: <name> <url>. Example: upstream git@github.com:owner/repo.git."
                 .to_string()
@@ -9072,7 +9078,7 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
             "Switch the commits panel between current-branch history and the whole-repository graph."
         }
         super_lazygit_core::MenuOperation::BranchGitFlowOptions => {
-            "Run one of the shipped git-flow finish commands for the selected branch."
+            "Finish the selected git-flow branch or start a new feature, hotfix, bugfix, or release branch."
         }
         super_lazygit_core::MenuOperation::BranchPullRequestOptions => {
             "Open or copy the browser pull request URL for the selected branch."
@@ -9761,9 +9767,11 @@ fn branch_git_flow_menu_lines(state: &AppState) -> Vec<String> {
         return Vec::new();
     };
     vec![
-        format!("git flow feature finish {}", branch.name),
-        format!("git flow release finish {}", branch.name),
-        format!("git flow hotfix finish {}", branch.name),
+        format!("finish branch '{}'", branch.name),
+        "start feature".to_string(),
+        "start hotfix".to_string(),
+        "start bugfix".to_string(),
+        "start release".to_string(),
     ]
 }
 

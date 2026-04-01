@@ -9,6 +9,7 @@ use std::process::{Command, Output};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use super_lazygit_core::state::GitFlowBranchType;
 use super_lazygit_core::{
     BisectState, BranchItem, CommitDivergence, CommitFileItem, CommitHistoryMode, CommitItem,
     CommitStatus, CommitTodoAction, ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffHunk,
@@ -30,6 +31,132 @@ const GIT_INDEX_LOCK_MARKER: &str = ".git/index.lock";
 const GIT_INDEX_LOCK_RETRY_COUNT: usize = 5;
 const GIT_INDEX_LOCK_RETRY_WAIT: Duration = Duration::from_millis(50);
 const DEFAULT_MAIN_BRANCH_NAMES: [&str; 2] = ["master", "main"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitCommandBuilder {
+    args: Vec<OsString>,
+}
+
+#[allow(dead_code)]
+impl GitCommandBuilder {
+    fn new(command: impl Into<OsString>) -> Self {
+        Self {
+            args: vec![command.into()],
+        }
+    }
+
+    fn arg<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    fn arg_if<I, S>(self, condition: bool, if_true: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        if condition {
+            self.arg(if_true)
+        } else {
+            self
+        }
+    }
+
+    fn arg_if_else(
+        mut self,
+        condition: bool,
+        if_true: impl Into<OsString>,
+        if_false: impl Into<OsString>,
+    ) -> Self {
+        self.args.push(if condition {
+            if_true.into()
+        } else {
+            if_false.into()
+        });
+        self
+    }
+
+    fn config(self, value: impl Into<OsString>) -> Self {
+        self.prepend_pair("-c", value)
+    }
+
+    fn config_if(self, condition: bool, value: impl Into<OsString>) -> Self {
+        if condition {
+            self.config(value)
+        } else {
+            self
+        }
+    }
+
+    fn dir(self, path: impl Into<OsString>) -> Self {
+        self.prepend_pair("-C", path)
+    }
+
+    fn dir_if(self, condition: bool, path: impl Into<OsString>) -> Self {
+        if condition {
+            self.dir(path)
+        } else {
+            self
+        }
+    }
+
+    fn worktree(self, path: impl Into<OsString>) -> Self {
+        self.prepend_pair("--work-tree", path)
+    }
+
+    fn worktree_path_if(self, condition: bool, path: impl Into<OsString>) -> Self {
+        if condition {
+            self.worktree(path)
+        } else {
+            self
+        }
+    }
+
+    fn git_dir(self, path: impl Into<OsString>) -> Self {
+        self.prepend_pair("--git-dir", path)
+    }
+
+    fn git_dir_if(self, condition: bool, path: impl Into<OsString>) -> Self {
+        if condition {
+            self.git_dir(path)
+        } else {
+            self
+        }
+    }
+
+    fn to_argv(&self) -> Vec<OsString> {
+        std::iter::once(OsString::from("git"))
+            .chain(self.args.iter().cloned())
+            .collect()
+    }
+
+    fn into_args(self) -> Vec<OsString> {
+        self.args
+    }
+
+    fn prepend_pair(mut self, flag: &'static str, value: impl Into<OsString>) -> Self {
+        self.args.splice(0..0, [OsString::from(flag), value.into()]);
+        self
+    }
+}
+
+impl fmt::Display for GitCommandBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.to_argv()
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    }
+}
 
 pub trait GitBackend: Send + Sync + 'static {
     fn kind(&self) -> GitBackendKind;
@@ -757,18 +884,12 @@ impl GitBackend for CliGitBackend {
                 include_file_changes,
             } => {
                 let amend_subject = format!("amend! {original_subject}");
-                let mut args = vec![
-                    "commit".to_string(),
-                    "-m".to_string(),
-                    amend_subject,
-                    "-m".to_string(),
-                    message.clone(),
-                ];
-                if !*include_file_changes {
-                    args.push("--only".to_string());
-                    args.push("--allow-empty".to_string());
-                }
-                git(&repo_path, args)?;
+                git_builder(
+                    &repo_path,
+                    GitCommandBuilder::new("commit")
+                        .arg(["-m", amend_subject.as_str(), "-m", message.as_str()])
+                        .arg_if(!*include_file_changes, ["--only", "--allow-empty"]),
+                )?;
                 if *include_file_changes {
                     format!("Created amend! commit with changes for {original_subject}")
                 } else {
@@ -864,9 +985,9 @@ impl GitBackend for CliGitBackend {
                 format!("Restored HEAD to {target}")
             }
             GitCommand::ContinueRebase => {
-                git_with_env(
+                git_builder_with_env(
                     &repo_path,
-                    ["rebase", "--continue"],
+                    GitCommandBuilder::new("rebase").arg(["--continue"]),
                     &[("GIT_EDITOR", OsStr::new(":"))],
                 )?;
                 "Continued rebase".to_string()
@@ -876,9 +997,9 @@ impl GitBackend for CliGitBackend {
                 "Aborted rebase".to_string()
             }
             GitCommand::SkipRebase => {
-                git_with_env(
+                git_builder_with_env(
                     &repo_path,
-                    ["rebase", "--skip"],
+                    GitCommandBuilder::new("rebase").arg(["--skip"]),
                     &[("GIT_EDITOR", OsStr::new(":"))],
                 )?;
                 "Skipped current rebase step".to_string()
@@ -886,6 +1007,10 @@ impl GitBackend for CliGitBackend {
             GitCommand::CreateBranch { branch_name } => {
                 git(&repo_path, ["checkout", "-b", branch_name.as_str()])?;
                 format!("Created and checked out {branch_name}")
+            }
+            GitCommand::StartGitFlow { branch_type, name } => {
+                git(&repo_path, git_flow_start_args(*branch_type, name))?;
+                format!("Started git-flow {} {name}", branch_type.command_name())
             }
             GitCommand::AddRemote {
                 remote_name,
@@ -929,6 +1054,11 @@ impl GitBackend for CliGitBackend {
                 } else {
                     format!("Created {branch_name} from {start_point} without tracking")
                 }
+            }
+            GitCommand::FinishGitFlow { branch_name } => {
+                let (branch_type, suffix) = resolve_git_flow_finish_parts(&repo_path, branch_name)?;
+                git(&repo_path, git_flow_finish_args(&branch_type, &suffix))?;
+                format!("Finished git-flow {branch_type} {suffix}")
             }
             GitCommand::CreateBranchFromStash {
                 stash_ref,
@@ -1116,45 +1246,30 @@ impl GitBackend for CliGitBackend {
                 format!("Dropped {stash_ref}")
             }
             GitCommand::CreateWorktree { path, branch_ref } => {
-                let output = Command::new("git")
-                    .arg("worktree")
-                    .arg("add")
-                    .arg(path)
-                    .arg(branch_ref)
-                    .current_dir(&repo_path)
-                    .output()
-                    .map_err(io_error)?;
-                if !output.status.success() {
-                    return Err(command_failure(output));
-                }
+                git_builder(
+                    &repo_path,
+                    GitCommandBuilder::new("worktree")
+                        .arg(["add"])
+                        .arg([path.as_os_str(), OsStr::new(branch_ref)]),
+                )?;
                 format!("Created worktree {} from {branch_ref}", path.display())
             }
             GitCommand::RemoveWorktree { path } => {
-                let output = Command::new("git")
-                    .arg("worktree")
-                    .arg("remove")
-                    .arg(path)
-                    .current_dir(&repo_path)
-                    .output()
-                    .map_err(io_error)?;
-                if !output.status.success() {
-                    return Err(command_failure(output));
-                }
+                git_builder(
+                    &repo_path,
+                    GitCommandBuilder::new("worktree")
+                        .arg(["remove"])
+                        .arg([path.as_os_str()]),
+                )?;
                 format!("Removed worktree {}", path.display())
             }
             GitCommand::AddSubmodule { path, url } => {
                 let path_value = path.to_string_lossy().into_owned();
-                git_with_env(
+                git_builder(
                     &repo_path,
-                    [
-                        "-c",
-                        "protocol.file.allow=always",
-                        "submodule",
-                        "add",
-                        url.as_str(),
-                        path_value.as_str(),
-                    ],
-                    &[],
+                    GitCommandBuilder::new("submodule")
+                        .config("protocol.file.allow=always")
+                        .arg(["add", url.as_str(), path_value.as_str()]),
                 )?;
                 format!("Added submodule {} from {url}", path.display())
             }
@@ -1164,33 +1279,21 @@ impl GitBackend for CliGitBackend {
             }
             GitCommand::InitSubmodule { path } => {
                 let path_value = path.to_string_lossy().into_owned();
-                git(
+                git_builder(
                     &repo_path,
-                    [
-                        "-c",
-                        "protocol.file.allow=always",
-                        "submodule",
-                        "update",
-                        "--init",
-                        "--",
-                        path_value.as_str(),
-                    ],
+                    GitCommandBuilder::new("submodule")
+                        .config("protocol.file.allow=always")
+                        .arg(["update", "--init", "--", path_value.as_str()]),
                 )?;
                 format!("Initialized submodule {}", path.display())
             }
             GitCommand::UpdateSubmodule { path } => {
                 let path_value = path.to_string_lossy().into_owned();
-                git(
+                git_builder(
                     &repo_path,
-                    [
-                        "-c",
-                        "protocol.file.allow=always",
-                        "submodule",
-                        "update",
-                        "--remote",
-                        "--",
-                        path_value.as_str(),
-                    ],
+                    GitCommandBuilder::new("submodule")
+                        .config("protocol.file.allow=always")
+                        .arg(["update", "--remote", "--", path_value.as_str()]),
                 )?;
                 format!("Updated submodule {}", path.display())
             }
@@ -1399,11 +1502,18 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::AbortRebase => "abort_rebase",
         GitCommand::SkipRebase => "skip_rebase",
         GitCommand::CreateBranch { .. } => "create_branch",
+        GitCommand::StartGitFlow { branch_type, .. } => match branch_type {
+            GitFlowBranchType::Feature => "start_git_flow_feature",
+            GitFlowBranchType::Hotfix => "start_git_flow_hotfix",
+            GitFlowBranchType::Bugfix => "start_git_flow_bugfix",
+            GitFlowBranchType::Release => "start_git_flow_release",
+        },
         GitCommand::AddRemote { .. } => "add_remote",
         GitCommand::CreateTag { .. } => "create_tag",
         GitCommand::CreateTagFromCommit { .. } => "create_tag_from_commit",
         GitCommand::CreateBranchFromCommit { .. } => "create_branch_from_commit",
         GitCommand::CreateBranchFromRef { .. } => "create_branch_from_ref",
+        GitCommand::FinishGitFlow { .. } => "finish_git_flow",
         GitCommand::CreateBranchFromStash { .. } => "create_branch_from_stash",
         GitCommand::CheckoutBranch { .. } => "checkout_branch",
         GitCommand::ForceCheckoutRef { .. } => "force_checkout_ref",
@@ -2131,6 +2241,72 @@ fn create_branch_from_ref_args(branch_name: &str, start_point: &str, track: bool
     ]
 }
 
+fn git_flow_start_args(branch_type: GitFlowBranchType, name: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("flow"),
+        OsString::from(branch_type.command_name()),
+        OsString::from("start"),
+        OsString::from(name),
+    ]
+}
+
+fn git_flow_finish_args(branch_type: &str, suffix: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("flow"),
+        OsString::from(branch_type),
+        OsString::from("finish"),
+        OsString::from(suffix),
+    ]
+}
+
+fn resolve_git_flow_finish_parts(
+    repo_path: &Path,
+    branch_name: &str,
+) -> GitResult<(String, String)> {
+    let prefixes = git_flow_prefixes(repo_path)?;
+    let (prefix, suffix) = git_flow_branch_prefix_and_suffix(branch_name);
+    for line in prefixes
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let Some(config) = line.strip_prefix("gitflow.prefix.") else {
+            continue;
+        };
+        let Some((branch_type, configured_prefix)) = config.split_once(char::is_whitespace) else {
+            continue;
+        };
+        if configured_prefix.trim() == prefix {
+            return Ok((branch_type.to_string(), suffix));
+        }
+    }
+    Err(GitError::OperationFailed {
+        message: "This does not seem to be a git flow branch".to_string(),
+    })
+}
+
+fn git_flow_branch_prefix_and_suffix(branch_name: &str) -> (String, String) {
+    match branch_name.split_once('/') {
+        Some((prefix, suffix)) => (format!("{prefix}/"), suffix.to_string()),
+        None => (branch_name.to_string(), String::new()),
+    }
+}
+
+fn git_flow_prefixes(repo_path: &Path) -> GitResult<String> {
+    let output = Command::new("git")
+        .args(["config", "--local", "--get-regexp", "gitflow.prefix"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(io_error)?;
+    if output.status.success() {
+        stdout_string(output)
+    } else if output.status.code() == Some(1) {
+        Ok(String::new())
+    } else {
+        Err(command_failure(output))
+    }
+}
+
 fn merge_ref_args(target_ref: &str, variant: MergeVariant) -> Vec<OsString> {
     let mut args = vec![OsString::from("merge"), OsString::from("--no-edit")];
     match variant {
@@ -2586,18 +2762,60 @@ fn should_retry_git_output(output: &Output) -> bool {
             || String::from_utf8_lossy(&output.stderr).contains(GIT_INDEX_LOCK_MARKER))
 }
 
+fn git_builder_output(repo_path: &Path, builder: GitCommandBuilder) -> GitResult<Output> {
+    git_output(repo_path, builder.into_args())
+}
+
+fn git_builder_output_with_env(
+    repo_path: &Path,
+    builder: GitCommandBuilder,
+    envs: &[(&'static str, &OsStr)],
+) -> GitResult<Output> {
+    git_output_with_env(repo_path, builder.into_args(), envs)
+}
+
+fn git_builder(repo_path: &Path, builder: GitCommandBuilder) -> GitResult<()> {
+    git_builder_with_env(repo_path, builder, &[])
+}
+
+fn git_builder_with_env(
+    repo_path: &Path,
+    builder: GitCommandBuilder,
+    envs: &[(&'static str, &OsStr)],
+) -> GitResult<()> {
+    let output = git_builder_output_with_env(repo_path, builder, envs)?;
+    if !output.status.success() {
+        return Err(command_failure(output));
+    }
+    Ok(())
+}
+
+fn build_git_path_command<I, S>(args: I, path: &Path) -> GitResult<GitCommandBuilder>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut args = args.into_iter();
+    let command = args
+        .next()
+        .ok_or_else(|| GitError::OperationFailed {
+            message: "git path command requires at least one argument".to_string(),
+        })?
+        .as_ref()
+        .to_os_string();
+
+    Ok(GitCommandBuilder::new(command)
+        .arg(args.map(|arg| arg.as_ref().to_os_string()))
+        .arg(["--"])
+        .arg([path.as_os_str().to_os_string()]))
+}
+
 fn git_path<I, S>(repo_path: &Path, args: I, path: &Path) -> GitResult<()>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new("git")
-        .args(args)
-        .arg("--")
-        .arg(path)
-        .current_dir(repo_path)
-        .output()
-        .map_err(io_error)?;
+    let output = git_builder_output(repo_path, build_git_path_command(args, path)?)?;
     if !output.status.success() {
         return Err(command_failure(output));
     }
@@ -2609,13 +2827,57 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new("git")
-        .args(args)
-        .arg("--")
-        .arg(path)
-        .current_dir(repo_path)
-        .output()
-        .map_err(io_error)
+    git_builder_output(repo_path, build_git_path_command(args, path)?)
+}
+
+#[allow(dead_code)]
+fn run_git_cmd_on_paths(repo_path: &Path, subcommand: &str, paths: &[PathBuf]) -> GitResult<()> {
+    run_git_cmd_on_paths_with_runner(
+        subcommand,
+        paths.iter().map(|path| path.as_os_str().to_os_string()),
+        |builder| git_builder(repo_path, builder),
+    )
+}
+
+#[allow(dead_code)]
+fn run_git_cmd_on_paths_with_runner<I, S, F>(
+    subcommand: &str,
+    paths: I,
+    mut run_builder: F,
+) -> GitResult<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+    F: FnMut(GitCommandBuilder) -> GitResult<()>,
+{
+    const MAX_ARG_BYTES: usize = 30_000;
+
+    let paths: Vec<OsString> = paths
+        .into_iter()
+        .map(|path| path.as_ref().to_os_string())
+        .collect();
+
+    let mut start = 0;
+    while start < paths.len() {
+        let mut end = start;
+        let mut total = 0;
+        while end < paths.len() {
+            total += paths[end].as_os_str().as_encoded_bytes().len() + 1;
+            if total > MAX_ARG_BYTES && end > start {
+                break;
+            }
+            end += 1;
+        }
+
+        run_builder(
+            GitCommandBuilder::new(subcommand)
+                .arg(["--"])
+                .arg(paths[start..end].iter().cloned()),
+        )?;
+        start = end;
+    }
+
+    Ok(())
 }
 
 fn git_stdout_raw<I, S>(repo_path: &Path, args: I) -> GitResult<String>
@@ -4650,6 +4912,12 @@ mod tests {
         }
     }
 
+    fn argv_strings(args: Vec<OsString>) -> Vec<String> {
+        args.into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
     fn run_git(dir: &Path, args: &[&str]) -> std::io::Result<()> {
         let output = Command::new("git").args(args).current_dir(dir).output()?;
         if output.status.success() {
@@ -4710,6 +4978,146 @@ mod tests {
         )?;
 
         Ok(root)
+    }
+
+    #[test]
+    fn git_command_builder_matches_upstream_argv_ordering() {
+        let scenarios = vec![
+            (
+                GitCommandBuilder::new("push")
+                    .arg(["--force-with-lease"])
+                    .arg(["--set-upstream"])
+                    .arg(["origin"])
+                    .arg(["master"])
+                    .to_argv(),
+                vec![
+                    "git",
+                    "push",
+                    "--force-with-lease",
+                    "--set-upstream",
+                    "origin",
+                    "master",
+                ],
+            ),
+            (
+                GitCommandBuilder::new("push")
+                    .arg_if(true, ["--test"])
+                    .to_argv(),
+                vec!["git", "push", "--test"],
+            ),
+            (
+                GitCommandBuilder::new("push")
+                    .arg_if(false, ["--test"])
+                    .to_argv(),
+                vec!["git", "push"],
+            ),
+            (
+                GitCommandBuilder::new("push")
+                    .arg_if_else(true, "-b", "-a")
+                    .to_argv(),
+                vec!["git", "push", "-b"],
+            ),
+            (
+                GitCommandBuilder::new("push")
+                    .arg_if_else(false, "-a", "-b")
+                    .to_argv(),
+                vec!["git", "push", "-b"],
+            ),
+            (
+                GitCommandBuilder::new("push").arg(["-a", "-b"]).to_argv(),
+                vec!["git", "push", "-a", "-b"],
+            ),
+            (
+                GitCommandBuilder::new("push")
+                    .config("user.name=foo")
+                    .config("user.email=bar")
+                    .to_argv(),
+                vec!["git", "-c", "user.email=bar", "-c", "user.name=foo", "push"],
+            ),
+            (
+                GitCommandBuilder::new("push").dir("a/b/c").to_argv(),
+                vec!["git", "-C", "a/b/c", "push"],
+            ),
+        ];
+
+        for (input, expected) in scenarios {
+            let expected: Vec<String> = expected.into_iter().map(str::to_owned).collect();
+            assert_eq!(argv_strings(input), expected);
+        }
+
+        assert_eq!(
+            GitCommandBuilder::new("push").dir("a/b/c").to_string(),
+            "git -C a/b/c push"
+        );
+    }
+
+    #[test]
+    fn run_git_cmd_on_paths_matches_upstream_batching() {
+        let long_path = |ch: &str| ch.repeat(9_000);
+        let p1 = long_path("a");
+        let p2 = long_path("b");
+        let p3 = long_path("c");
+        let p4 = long_path("d");
+
+        let mut runs = Vec::new();
+        run_git_cmd_on_paths_with_runner("checkout", Vec::<String>::new(), |builder| {
+            runs.push(argv_strings(builder.to_argv()));
+            Ok(())
+        })
+        .expect("empty path list succeeds");
+        assert!(runs.is_empty());
+
+        let mut runs = Vec::new();
+        run_git_cmd_on_paths_with_runner(
+            "checkout",
+            vec![p1.clone(), p2.clone(), p3.clone()],
+            |builder| {
+                runs.push(argv_strings(builder.to_argv()));
+                Ok(())
+            },
+        )
+        .expect("single batch succeeds");
+        assert_eq!(
+            runs,
+            vec![vec![
+                "git".to_string(),
+                "checkout".to_string(),
+                "--".to_string(),
+                p1.clone(),
+                p2.clone(),
+                p3.clone(),
+            ]],
+        );
+
+        let mut runs = Vec::new();
+        run_git_cmd_on_paths_with_runner(
+            "checkout",
+            vec![p1.clone(), p2.clone(), p3.clone(), p4.clone()],
+            |builder| {
+                runs.push(argv_strings(builder.to_argv()));
+                Ok(())
+            },
+        )
+        .expect("split batch succeeds");
+        assert_eq!(
+            runs,
+            vec![
+                vec![
+                    "git".to_string(),
+                    "checkout".to_string(),
+                    "--".to_string(),
+                    p1,
+                    p2,
+                    p3,
+                ],
+                vec![
+                    "git".to_string(),
+                    "checkout".to_string(),
+                    "--".to_string(),
+                    p4,
+                ],
+            ],
+        );
     }
 
     #[test]
@@ -8960,6 +9368,41 @@ mod tests {
                 OsString::from("--ff"),
                 OsString::from("feature"),
             ]
+        );
+    }
+
+    #[test]
+    fn git_flow_start_args_match_upstream_shape() {
+        assert_eq!(
+            git_flow_start_args(GitFlowBranchType::Feature, "test"),
+            vec![
+                OsString::from("flow"),
+                OsString::from("feature"),
+                OsString::from("start"),
+                OsString::from("test"),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_git_flow_finish_parts_requires_matching_configured_prefix() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.git(["config", "gitflow.prefix.feature", "feature/"])
+            .expect("configure git-flow prefix");
+
+        assert_eq!(
+            resolve_git_flow_finish_parts(repo.path(), "feature/mybranch")
+                .expect("git-flow branch should resolve"),
+            ("feature".to_string(), "mybranch".to_string())
+        );
+        assert_eq!(
+            resolve_git_flow_finish_parts(repo.path(), "mybranch")
+                .expect_err("plain branch should fail")
+                .to_string(),
+            "git operation failed: This does not seem to be a git flow branch"
         );
     }
 

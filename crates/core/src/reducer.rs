@@ -2486,49 +2486,23 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
-        Action::RunGitFlowFeatureFinish => {
+        Action::RunGitFlowFinish => {
             if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_branch_item(repo_mode)
                     .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
             }) {
-                let command = format!("git flow feature finish {branch_name}");
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(
+                let job = git_job(
+                    repo_id,
+                    GitCommand::FinishGitFlow {
+                        branch_name: branch_name.clone(),
+                    },
+                );
+                enqueue_git_job(
                     state,
                     &job,
-                    &format!("Finish git-flow feature {branch_name}"),
+                    &format!("Finish git-flow branch {branch_name}"),
                 );
-                effects.push(Effect::RunShellCommand(job));
-            }
-        }
-        Action::RunGitFlowReleaseFinish => {
-            if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
-                selected_branch_item(repo_mode)
-                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
-            }) {
-                let command = format!("git flow release finish {branch_name}");
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(
-                    state,
-                    &job,
-                    &format!("Finish git-flow release {branch_name}"),
-                );
-                effects.push(Effect::RunShellCommand(job));
-            }
-        }
-        Action::RunGitFlowHotfixFinish => {
-            if let Some((repo_id, branch_name)) = state.repo_mode.as_ref().and_then(|repo_mode| {
-                selected_branch_item(repo_mode)
-                    .map(|branch| (repo_mode.current_repo_id.clone(), branch.name.clone()))
-            }) {
-                let command = format!("git flow hotfix finish {branch_name}");
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(
-                    state,
-                    &job,
-                    &format!("Finish git-flow hotfix {branch_name}"),
-                );
-                effects.push(Effect::RunShellCommand(job));
+                effects.push(Effect::RunGitCommand(job));
             }
         }
         Action::DeleteSelectedRemote => {
@@ -4636,6 +4610,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
     match operation {
         InputPromptOperation::CheckoutBranch => "Check out branch".to_string(),
         InputPromptOperation::CreateBranch => "Create branch".to_string(),
+        InputPromptOperation::StartGitFlow { branch_type } => {
+            format!("New {} name", branch_type.command_name())
+        }
         InputPromptOperation::CreateRemote => "Add remote".to_string(),
         InputPromptOperation::ForkRemote { suggested_name, .. } => {
             format!("Fork remote into {suggested_name}")
@@ -4699,6 +4676,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
     match operation {
         InputPromptOperation::CheckoutBranch => String::new(),
         InputPromptOperation::CreateBranch => String::new(),
+        InputPromptOperation::StartGitFlow { .. } => String::new(),
         InputPromptOperation::CreateRemote => String::new(),
         InputPromptOperation::ForkRemote {
             suggested_name,
@@ -4776,6 +4754,16 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
                 },
             )),
             format!("Create branch {value}"),
+        ),
+        InputPromptOperation::StartGitFlow { branch_type } => (
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::StartGitFlow {
+                    branch_type,
+                    name: value.clone(),
+                },
+            )),
+            format!("Start git-flow {} {value}", branch_type.command_name()),
         ),
         InputPromptOperation::CreateRemote => {
             let Some((remote_name, remote_url)) = parse_remote_input(&value) else {
@@ -5297,16 +5285,40 @@ fn branch_git_flow_menu_entries(state: &AppState) -> Vec<MenuEntry> {
     };
     vec![
         MenuEntry {
-            label: format!("git flow feature finish {}", branch.name),
-            action: Action::RunGitFlowFeatureFinish,
+            label: format!("finish branch '{}'", branch.name),
+            action: Action::RunGitFlowFinish,
         },
         MenuEntry {
-            label: format!("git flow release finish {}", branch.name),
-            action: Action::RunGitFlowReleaseFinish,
+            label: "start feature".to_string(),
+            action: Action::OpenInputPrompt {
+                operation: InputPromptOperation::StartGitFlow {
+                    branch_type: crate::state::GitFlowBranchType::Feature,
+                },
+            },
         },
         MenuEntry {
-            label: format!("git flow hotfix finish {}", branch.name),
-            action: Action::RunGitFlowHotfixFinish,
+            label: "start hotfix".to_string(),
+            action: Action::OpenInputPrompt {
+                operation: InputPromptOperation::StartGitFlow {
+                    branch_type: crate::state::GitFlowBranchType::Hotfix,
+                },
+            },
+        },
+        MenuEntry {
+            label: "start bugfix".to_string(),
+            action: Action::OpenInputPrompt {
+                operation: InputPromptOperation::StartGitFlow {
+                    branch_type: crate::state::GitFlowBranchType::Bugfix,
+                },
+            },
+        },
+        MenuEntry {
+            label: "start release".to_string(),
+            action: Action::OpenInputPrompt {
+                operation: InputPromptOperation::StartGitFlow {
+                    branch_type: crate::state::GitFlowBranchType::Release,
+                },
+            },
         },
     ]
 }
@@ -9377,10 +9389,17 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::SkipBisect { .. } => "skip-bisect",
         GitCommand::ResetBisect => "reset-bisect",
         GitCommand::CreateBranch { .. } => "create-branch",
+        GitCommand::StartGitFlow { branch_type, .. } => match branch_type {
+            crate::state::GitFlowBranchType::Feature => "start-git-flow-feature",
+            crate::state::GitFlowBranchType::Hotfix => "start-git-flow-hotfix",
+            crate::state::GitFlowBranchType::Bugfix => "start-git-flow-bugfix",
+            crate::state::GitFlowBranchType::Release => "start-git-flow-release",
+        },
         GitCommand::CreateTag { .. } => "create-tag",
         GitCommand::CreateTagFromCommit { .. } => "create-tag-from-commit",
         GitCommand::CreateBranchFromCommit { .. } => "create-branch-from-commit",
         GitCommand::CreateBranchFromRef { .. } => "create-branch-from-ref",
+        GitCommand::FinishGitFlow { .. } => "finish-git-flow",
         GitCommand::CheckoutBranch { .. } => "checkout-branch",
         GitCommand::ForceCheckoutRef { .. } => "force-checkout-ref",
         GitCommand::CheckoutRemoteBranch { .. } => "checkout-remote-branch",
