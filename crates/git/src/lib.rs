@@ -977,7 +977,7 @@ impl GitBackend for CliGitBackend {
                 format!("Renamed {stash_ref}")
             }
             GitCommand::DeleteBranch { branch_name } => {
-                git(&repo_path, ["branch", "-D", branch_name.as_str()])?;
+                git(&repo_path, ["branch", "-d", branch_name.as_str()])?;
                 format!("Deleted {branch_name}")
             }
             GitCommand::RemoveRemote { remote_name } => {
@@ -6493,6 +6493,71 @@ mod tests {
         )
         .expect("branch output");
         assert!(!branch_list.contains("topic"));
+    }
+
+    #[test]
+    fn cli_backend_refuses_to_delete_unmerged_branch() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-create-unmerged-branch"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CreateBranch {
+                    branch_name: "feature".to_string(),
+                },
+            })
+            .expect("branch creation should succeed");
+        repo.write_file("feature.txt", "feature work\n")
+            .expect("write feature file");
+        repo.commit_all("feature work")
+            .expect("commit feature work");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-checkout-main-for-safe-delete"),
+                repo_id: repo_id.clone(),
+                command: GitCommand::CheckoutBranch {
+                    branch_ref: "main".to_string(),
+                },
+            })
+            .expect("checkout main should succeed");
+
+        let error = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("job-delete-unmerged-branch"),
+                repo_id,
+                command: GitCommand::DeleteBranch {
+                    branch_name: "feature".to_string(),
+                },
+            })
+            .expect_err("safe branch deletion should reject unmerged branches");
+
+        let message = if let GitError::OperationFailed { message } = error {
+            message
+        } else {
+            String::new()
+        };
+        assert!(
+            !message.is_empty(),
+            "expected operation failure for safe-delete"
+        );
+        assert!(
+            message.contains("not fully merged"),
+            "expected safe-delete failure, got: {message}"
+        );
+        let branch_list = stdout_string(
+            repo.git_capture(["branch", "--list"])
+                .expect("branch list should load"),
+        )
+        .expect("branch output");
+        assert!(branch_list.contains("feature"));
     }
 
     #[test]
