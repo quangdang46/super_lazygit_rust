@@ -395,12 +395,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::OpenSelectedReflogCommits => {
-            let Some((repo_id, oid)) = state.repo_mode.as_ref().and_then(|repo_mode| {
-                selected_reflog_entry(repo_mode).and_then(|(_, entry)| {
-                    (!entry.oid.is_empty())
-                        .then_some((repo_mode.current_repo_id.clone(), entry.oid.clone()))
+            let Some((repo_id, pending_selection)) =
+                state.repo_mode.as_ref().and_then(|repo_mode| {
+                    selected_reflog_entry(repo_mode).and_then(|(_, entry)| {
+                        (!entry.oid.is_empty()).then_some((
+                            repo_mode.current_repo_id.clone(),
+                            pending_reflog_commit_selection(entry),
+                        ))
+                    })
                 })
-            }) else {
+            else {
                 push_warning(
                     state,
                     "Select a reflog entry that still points to a commit before opening commit history.",
@@ -413,9 +417,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 clear_repo_subview_filter_focus(repo_mode);
                 repo_mode.active_subview = crate::state::RepoSubview::Commits;
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
-                repo_mode.commit_history_mode = CommitHistoryMode::Graph { reverse: false };
+                repo_mode.commit_history_mode = CommitHistoryMode::Reflog;
                 repo_mode.commit_history_ref = None;
-                repo_mode.pending_commit_selection_oid = Some(oid);
+                repo_mode.pending_commit_selection_oid = Some(pending_selection);
                 repo_mode.commits_filter = crate::state::RepoSubviewFilterState::default();
                 repo_mode.commit_files_filter = crate::state::RepoSubviewFilterState::default();
                 repo_mode.diff_scroll = 0;
@@ -6719,12 +6723,12 @@ fn sync_commit_selection(repo_mode: &mut RepoModeState) {
     };
 
     let visible_indices = filtered_commit_indices(repo_mode);
-    if let Some(target_oid) = repo_mode.pending_commit_selection_oid.as_deref() {
+    if let Some(pending_selection) = repo_mode.pending_commit_selection_oid.as_deref() {
         if let Some(index) = visible_indices.iter().copied().find(|index| {
             detail
                 .commits
                 .get(*index)
-                .is_some_and(|commit| commit.oid == target_oid)
+                .is_some_and(|commit| commit_matches_pending_selection(commit, pending_selection))
         }) {
             repo_mode.commits_view.selected_index = Some(index);
             repo_mode.pending_commit_selection_oid = None;
@@ -7967,6 +7971,26 @@ fn selected_reflog_entry(repo_mode: &RepoModeState) -> Option<(usize, &crate::st
         .reflog_items
         .get(selected_index)
         .map(|entry| (selected_index, entry))
+}
+
+fn pending_reflog_commit_selection(entry: &crate::state::ReflogItem) -> String {
+    format!("{} {} {}", entry.oid, entry.unix_timestamp, entry.summary)
+}
+
+fn commit_matches_pending_selection(
+    commit: &crate::state::CommitItem,
+    pending_selection: &str,
+) -> bool {
+    let parts = pending_selection.splitn(3, ' ').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [oid] => commit.oid == *oid,
+        [oid, unix_timestamp, summary] => {
+            commit.oid == *oid
+                && commit.unix_timestamp.to_string() == *unix_timestamp
+                && commit.summary == *summary
+        }
+        _ => false,
+    }
 }
 
 fn selected_commit_file_item(repo_mode: &RepoModeState) -> Option<&crate::state::CommitFileItem> {
@@ -10011,6 +10035,7 @@ mod tests {
                         selector: "HEAD@{1}".to_string(),
                         oid: "1234567890abcdef".to_string(),
                         short_oid: "1234567".to_string(),
+                        unix_timestamp: 0,
                         summary: "commit: prior".to_string(),
                         description: "HEAD@{1}: commit: prior".to_string(),
                     }],
@@ -12110,7 +12135,7 @@ mod tests {
             repo_mode: Some(crate::state::RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
-                commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                commit_history_mode: CommitHistoryMode::Reflog,
                 status_view: crate::state::ListViewState {
                     selected_index: Some(1),
                 },
@@ -12898,6 +12923,7 @@ mod tests {
                             selector: "HEAD@{0}".to_string(),
                             oid: "abcdef1234567890".to_string(),
                             short_oid: "abcdef1".to_string(),
+                            unix_timestamp: 0,
                             summary: "checkout".to_string(),
                             description: "HEAD@{0}: checkout".to_string(),
                         },
@@ -12905,6 +12931,7 @@ mod tests {
                             selector: "HEAD@{1}".to_string(),
                             oid: "1234567890abcdef".to_string(),
                             short_oid: "1234567".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit".to_string(),
                             description: "HEAD@{1}: commit".to_string(),
                         },
@@ -12947,6 +12974,7 @@ mod tests {
                             selector: "HEAD@{0}".to_string(),
                             oid: "abcdef1234567890".to_string(),
                             short_oid: "abcdef1".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: current".to_string(),
                             description: "HEAD@{0}: commit: current".to_string(),
                         },
@@ -12954,6 +12982,7 @@ mod tests {
                             selector: "HEAD@{1}".to_string(),
                             oid: "1234567890abcdef".to_string(),
                             short_oid: "1234567".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: prior".to_string(),
                             description: "HEAD@{1}: commit: prior".to_string(),
                         },
@@ -13010,6 +13039,7 @@ mod tests {
                             selector: "HEAD@{0}".to_string(),
                             oid: "abcdef1234567890".to_string(),
                             short_oid: "abcdef1".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: current".to_string(),
                             description: "HEAD@{0}: commit: current".to_string(),
                         },
@@ -13017,6 +13047,7 @@ mod tests {
                             selector: "HEAD@{1}".to_string(),
                             oid: "1234567890abcdef".to_string(),
                             short_oid: "1234567".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: prior".to_string(),
                             description: "HEAD@{1}: commit: prior".to_string(),
                         },
@@ -13046,7 +13077,7 @@ mod tests {
     }
 
     #[test]
-    fn open_selected_reflog_commits_switches_to_graph_history_and_targets_entry() {
+    fn open_selected_reflog_commits_switches_to_reflog_history_and_targets_entry() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
             mode: AppMode::Repository,
@@ -13060,6 +13091,7 @@ mod tests {
                             selector: "HEAD@{0}".to_string(),
                             oid: "abcdef1234567890".to_string(),
                             short_oid: "abcdef1".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: current".to_string(),
                             description: "HEAD@{0}: commit: current".to_string(),
                         },
@@ -13067,6 +13099,7 @@ mod tests {
                             selector: "HEAD@{1}".to_string(),
                             oid: "1234567890abcdef".to_string(),
                             short_oid: "1234567".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: prior".to_string(),
                             description: "HEAD@{1}: commit: prior".to_string(),
                         },
@@ -13101,7 +13134,7 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .map(|repo_mode| repo_mode.commit_history_mode),
-            Some(CommitHistoryMode::Graph { reverse: false })
+            Some(CommitHistoryMode::Reflog)
         );
         assert_eq!(
             result
@@ -13109,7 +13142,13 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.pending_commit_selection_oid.as_deref()),
-            Some("1234567890abcdef")
+            Some(concat!(
+                "1234567890abcdef",
+                "\0",
+                "0",
+                "\0",
+                "commit: prior"
+            ))
         );
         assert_eq!(
             result
@@ -13127,7 +13166,7 @@ mod tests {
                     selected_path: None,
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
-                    commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                    commit_history_mode: CommitHistoryMode::Reflog,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -13151,6 +13190,7 @@ mod tests {
                         selector: "HEAD@{1}".to_string(),
                         oid: "1234567890abcdef".to_string(),
                         short_oid: "1234567".to_string(),
+                        unix_timestamp: 0,
                         summary: "commit: prior".to_string(),
                         description: "HEAD@{1}: commit: prior".to_string(),
                     }],
@@ -13192,6 +13232,7 @@ mod tests {
                             selector: "HEAD@{0}".to_string(),
                             oid: "abcdef1234567890".to_string(),
                             short_oid: "abcdef1".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: current".to_string(),
                             description: "HEAD@{0}: commit: current".to_string(),
                         },
@@ -13199,6 +13240,7 @@ mod tests {
                             selector: "HEAD@{1}".to_string(),
                             oid: "1234567890abcdef".to_string(),
                             short_oid: "1234567".to_string(),
+                            unix_timestamp: 0,
                             summary: "commit: prior".to_string(),
                             description: "HEAD@{1}: commit: prior".to_string(),
                         },
@@ -18578,6 +18620,7 @@ mod tests {
                 selector: "HEAD@{0}".to_string(),
                 oid: "abcdef1234567890".to_string(),
                 short_oid: "abcdef1".to_string(),
+                unix_timestamp: 0,
                 summary: "commit: add lib".to_string(),
                 description: "HEAD@{0}: commit: add lib".to_string(),
             }],

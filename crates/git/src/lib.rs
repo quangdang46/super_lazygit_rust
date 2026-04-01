@@ -4058,6 +4058,7 @@ fn read_commits(
     match commit_history_mode {
         CommitHistoryMode::Linear => read_linear_commits(repo_path, commit_ref),
         CommitHistoryMode::Graph { reverse } => read_graph_commits(repo_path, reverse),
+        CommitHistoryMode::Reflog => read_reflog_commit_history(repo_path),
     }
 }
 
@@ -4250,6 +4251,7 @@ fn hydrate_commit_item(repo_path: &Path, parsed: ParsedCommitLine) -> CommitItem
         todo_action: CommitTodoAction::None,
         todo_action_flag: String::new(),
         divergence: parsed.divergence,
+        filter_paths: Vec::new(),
         changed_files,
         diff,
     }
@@ -4449,19 +4451,196 @@ fn parse_name_status_entries(output: &str) -> Vec<CommitFileItem> {
         .collect()
 }
 
+fn read_reflog_commit_history(repo_path: &Path) -> CommitHistoryResult {
+    match read_reflog_commits(repo_path, None, None, None) {
+        Ok((commits, _)) => CommitHistoryResult {
+            commits,
+            graph_lines: Vec::new(),
+        },
+        Err(_) => CommitHistoryResult::default(),
+    }
+}
+
+fn read_reflog_commits(
+    repo_path: &Path,
+    last_reflog_commit: Option<&CommitItem>,
+    filter_path: Option<&Path>,
+    filter_author: Option<&str>,
+) -> GitResult<(Vec<CommitItem>, bool)> {
+    let output = git_stdout(
+        repo_path,
+        build_reflog_commit_command(filter_path, filter_author).into_args(),
+    )?;
+    Ok(parse_reflog_commits_output(
+        repo_path,
+        &output,
+        last_reflog_commit,
+        filter_path,
+    ))
+}
+
+fn build_reflog_commit_command(
+    filter_path: Option<&Path>,
+    filter_author: Option<&str>,
+) -> GitCommandBuilder {
+    let mut builder = GitCommandBuilder::new("log")
+        .config("log.showSignature=false")
+        .arg(["-g", "--format=+%H%x00%ct%x00%gs%x00%P"]);
+    if let Some(filter_author) = filter_author.filter(|author| !author.is_empty()) {
+        builder = builder.arg([OsString::from(format!("--author={filter_author}"))]);
+    }
+    if let Some(filter_path) = filter_path.filter(|path| !path.as_os_str().is_empty()) {
+        builder = builder.arg(vec![
+            OsString::from("--follow"),
+            OsString::from("--name-status"),
+            OsString::from("--"),
+            filter_path.as_os_str().to_os_string(),
+        ]);
+    }
+    builder
+}
+
+fn parse_reflog_commits_output(
+    repo_path: &Path,
+    output: &str,
+    last_reflog_commit: Option<&CommitItem>,
+    filter_path: Option<&Path>,
+) -> (Vec<CommitItem>, bool) {
+    let mut commits = Vec::new();
+    let mut current_commit = None;
+    let mut current_filter_paths = Vec::new();
+    let mut only_obtained_new_reflog_commits = false;
+
+    for line in output.lines() {
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(line) = line.strip_prefix('+') {
+            if let Some(commit) = finalize_reflog_commit(
+                current_commit.take(),
+                &mut current_filter_paths,
+                filter_path,
+            ) {
+                commits.push(commit);
+            }
+
+            let Some(commit) = parse_reflog_commit_line(repo_path, line) else {
+                continue;
+            };
+            if last_reflog_commit.is_some_and(|last| same_reflog_commit(&commit, last)) {
+                only_obtained_new_reflog_commits = true;
+                current_filter_paths.clear();
+                current_commit = None;
+                break;
+            }
+            current_commit = Some(commit);
+            continue;
+        }
+
+        if current_commit.is_some() && filter_path.is_some() {
+            let mut fields = line.split('\t');
+            let _ = fields.next();
+            current_filter_paths.extend(fields.map(PathBuf::from));
+        }
+    }
+
+    if let Some(commit) =
+        finalize_reflog_commit(current_commit, &mut current_filter_paths, filter_path)
+    {
+        commits.push(commit);
+    }
+
+    (commits, only_obtained_new_reflog_commits)
+}
+
+fn finalize_reflog_commit(
+    commit: Option<CommitItem>,
+    filter_paths: &mut Vec<PathBuf>,
+    filter_path: Option<&Path>,
+) -> Option<CommitItem> {
+    let mut commit = commit?;
+    if let Some(filter_path) = filter_path {
+        if filter_paths
+            .iter()
+            .any(|path| !path.starts_with(filter_path))
+        {
+            commit.filter_paths = std::mem::take(filter_paths);
+        } else {
+            filter_paths.clear();
+        }
+    } else {
+        filter_paths.clear();
+    }
+    Some(commit)
+}
+
+fn parse_reflog_commit_line(repo_path: &Path, line: &str) -> Option<CommitItem> {
+    let fields = line.splitn(4, ' ').collect::<Vec<_>>();
+    if fields.len() <= 3 {
+        return None;
+    }
+
+    let oid = fields[0].to_string();
+    if oid.is_empty() {
+        return None;
+    }
+
+    let changed_files = read_commit_files(repo_path, oid.as_str());
+    let diff = read_commit_diff(repo_path, oid.as_str());
+    let parents = fields[3]
+        .split_whitespace()
+        .filter(|parent| !parent.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    Some(CommitItem {
+        short_oid: oid.chars().take(7).collect(),
+        oid,
+        summary: fields[2].to_string(),
+        tags: Vec::new(),
+        extra_info: String::new(),
+        author_name: String::new(),
+        author_email: String::new(),
+        unix_timestamp: fields[1].parse::<i64>().unwrap_or_default(),
+        parents,
+        status: CommitStatus::Reflog,
+        todo_action: CommitTodoAction::None,
+        todo_action_flag: String::new(),
+        divergence: CommitDivergence::None,
+        filter_paths: Vec::new(),
+        changed_files,
+        diff,
+    })
+}
+
+fn same_reflog_commit(a: &CommitItem, b: &CommitItem) -> bool {
+    a.oid == b.oid && a.unix_timestamp == b.unix_timestamp && a.summary == b.summary
+}
+
 fn read_reflog(repo_path: &Path) -> Vec<ReflogItem> {
     git_stdout(
         repo_path,
-        ["reflog", "--format=%gD%x00%H%x00%h%x00%gs", "-n", "64"],
+        [
+            "reflog",
+            "--format=%gD%x00%H%x00%h%x00%ct%x00%gs",
+            "-n",
+            "64",
+        ],
     )
     .map(|output| {
         output
             .lines()
             .map(|line| {
-                let mut parts = line.split('\0');
+                let mut parts = line.split(' ');
                 let selector = parts.next().unwrap_or_default().to_string();
                 let oid = parts.next().unwrap_or_default().to_string();
                 let short_oid = parts.next().unwrap_or_default().to_string();
+                let unix_timestamp = parts
+                    .next()
+                    .unwrap_or_default()
+                    .parse::<i64>()
+                    .unwrap_or_default();
                 let summary = parts.next().unwrap_or_default().to_string();
                 let description = if selector.is_empty() {
                     line.to_string()
@@ -4474,6 +4653,7 @@ fn read_reflog(repo_path: &Path) -> Vec<ReflogItem> {
                     selector,
                     oid,
                     short_oid,
+                    unix_timestamp,
                     summary,
                     description,
                 }
@@ -5118,6 +5298,126 @@ mod tests {
                 ],
             ],
         );
+    }
+
+    fn reflog_loader_repo(
+    ) -> std::io::Result<(super_lazygit_test_support::TempRepo, String, String)> {
+        let repo = temp_repo()?;
+        repo.write_file("reflog.txt", "base\n")?;
+        repo.commit_all("initial")?;
+        let parent = repo.rev_parse("HEAD")?;
+        repo.write_file("reflog.txt", "base\nnext\n")?;
+        repo.commit_all("next")?;
+        let head = repo.rev_parse("HEAD")?;
+        Ok((repo, head, parent))
+    }
+
+    #[test]
+    fn build_reflog_commit_command_matches_upstream_argv() {
+        let argv =
+            build_reflog_commit_command(Some(Path::new("path")), Some("John Doe <john@doe.com>"))
+                .to_argv();
+
+        assert_eq!(
+            argv_strings(argv),
+            vec![
+                "git".to_string(),
+                "-c".to_string(),
+                "log.showSignature=false".to_string(),
+                "log".to_string(),
+                "-g".to_string(),
+                "--format=+%H%x00%ct%x00%gs%x00%P".to_string(),
+                "--author=John Doe <john@doe.com>".to_string(),
+                "--follow".to_string(),
+                "--name-status".to_string(),
+                "--".to_string(),
+                "path".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn parse_reflog_commits_output_matches_upstream_stop_logic() {
+        let (repo, head, parent) = reflog_loader_repo().expect("fixture repo");
+        let output = concat!(
+            "+{head}\0{ts_new}\0checkout: moving from A to B\0{parent}\n",
+            "+{head}\0{ts_new}\0checkout: moving from B to A\0{parent}\n",
+            "+{head}\0{ts_new}\0checkout: moving from A to B\0{parent}\n",
+            "+{parent}\0{ts_old}\0checkout: moving from A to master\0\n",
+        )
+        .replace("{head}", &head)
+        .replace("{parent}", &parent)
+        .replace("{ts_new}", "1643150483")
+        .replace("{ts_old}", "1643149435");
+
+        let (commits, only_new) = parse_reflog_commits_output(repo.path(), &output, None, None);
+        assert!(!only_new);
+        assert_eq!(commits.len(), 4);
+        assert_eq!(commits[0].oid, head);
+        assert_eq!(commits[0].summary, "checkout: moving from A to B");
+        assert_eq!(commits[0].status, CommitStatus::Reflog);
+        assert_eq!(commits[0].parents, vec![parent.clone()]);
+        assert_eq!(commits[1].summary, "checkout: moving from B to A");
+        assert_eq!(commits[3].oid, parent);
+    }
+
+    #[test]
+    fn parse_reflog_commits_output_returns_only_new_entries() {
+        let (repo, head, parent) = reflog_loader_repo().expect("fixture repo");
+        let output = concat!(
+            "+{head}\0{ts_new}\0checkout: moving from A to B\0{parent}\n",
+            "+{head}\0{ts_new}\0checkout: moving from B to A\0{parent}\n",
+            "+{parent}\0{ts_old}\0checkout: moving from A to master\0\n",
+        )
+        .replace("{head}", &head)
+        .replace("{parent}", &parent)
+        .replace("{ts_new}", "1643150483")
+        .replace("{ts_old}", "1643149435");
+        let last_reflog_commit = CommitItem {
+            oid: head.clone(),
+            summary: "checkout: moving from B to A".to_string(),
+            unix_timestamp: 1_643_150_483,
+            ..CommitItem::default()
+        };
+
+        let (commits, only_new) =
+            parse_reflog_commits_output(repo.path(), &output, Some(&last_reflog_commit), None);
+        assert!(only_new);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].oid, head);
+        assert_eq!(commits[0].summary, "checkout: moving from A to B");
+    }
+
+    #[test]
+    fn parse_reflog_commits_output_tracks_filter_paths_for_renames() {
+        let (repo, head, parent) = reflog_loader_repo().expect("fixture repo");
+        let output = concat!(
+            "+{head}\0{ts_new}\0checkout: moving from A to B\0{parent}\n",
+            "R100\tpath/file.txt\tpath-renamed/file.txt\n",
+            "+{parent}\0{ts_old}\0checkout: moving from A to master\0\n",
+            "M\tpath/file.txt\n",
+        )
+        .replace("{head}", &head)
+        .replace("{parent}", &parent)
+        .replace("{ts_new}", "1643150483")
+        .replace("{ts_old}", "1643149435");
+
+        let (commits, only_new) = parse_reflog_commits_output(
+            repo.path(),
+            &output,
+            None,
+            Some(Path::new("path/file.txt")),
+        );
+        assert!(!only_new);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(
+            commits[0].filter_paths,
+            vec![
+                PathBuf::from("path/file.txt"),
+                PathBuf::from("path-renamed/file.txt"),
+            ],
+        );
+        assert!(commits[1].filter_paths.is_empty());
     }
 
     #[test]

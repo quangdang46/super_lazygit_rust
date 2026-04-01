@@ -965,6 +965,7 @@ pub enum CommitHistoryMode {
     Graph {
         reverse: bool,
     },
+    Reflog,
 }
 
 impl CommitHistoryMode {
@@ -1710,6 +1711,7 @@ pub struct CommitItem {
     pub todo_action: CommitTodoAction,
     pub todo_action_flag: String,
     pub divergence: CommitDivergence,
+    pub filter_paths: Vec<PathBuf>,
     pub changed_files: Vec<CommitFileItem>,
     pub diff: DiffModel,
 }
@@ -1739,6 +1741,7 @@ pub struct ReflogItem {
     pub selector: String,
     pub oid: String,
     pub short_oid: String,
+    pub unix_timestamp: i64,
     pub summary: String,
     pub description: String,
 }

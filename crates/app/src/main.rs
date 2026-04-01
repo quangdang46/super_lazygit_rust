@@ -1720,7 +1720,7 @@ mod tests {
 
         harness.press("open selected reflog entry in commits", "enter");
         harness.assert_latest_contains("Detail: Commits");
-        harness.assert_latest_contains("initial commit");
+        harness.assert_latest_contains("commit (initial): initial");
 
         harness.press("return to reflog detail", "7");
         harness.press("detach checkout selected reflog target", "space");

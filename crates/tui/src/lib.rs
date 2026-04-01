@@ -8253,7 +8253,9 @@ fn repo_commit_context_line(
     visible_count: usize,
     total_count: usize,
 ) -> String {
-    let mut line = if commit_history_mode.is_graph() || commit_history_ref.is_some() {
+    let mut line = if commit_history_mode != CommitHistoryMode::Linear
+        || commit_history_ref.is_some()
+    {
         "Context: Enter files. Ctrl+O copy hash. a amend attrs. y copy menu. o browser. 3 current branch. Ctrl+L log menu. 0 main. / filter. w worktrees."
             .to_string()
     } else {
@@ -10962,6 +10964,7 @@ mod tests {
                     selector: "HEAD@{0}".to_string(),
                     oid: "abcdef1234567890".to_string(),
                     short_oid: "abcdef1".to_string(),
+                    unix_timestamp: 0,
                     summary: "checkout: moving from feature to main".to_string(),
                     description: "HEAD@{0}: checkout: moving from feature to main".to_string(),
                 },
@@ -10969,6 +10972,7 @@ mod tests {
                     selector: "HEAD@{1}".to_string(),
                     oid: "1234567890abcdef".to_string(),
                     short_oid: "1234567".to_string(),
+                    unix_timestamp: 0,
                     summary: "commit: add repo-mode stash flows".to_string(),
                     description: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
                 },
@@ -16431,14 +16435,14 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .map(|repo_mode| repo_mode.commit_history_mode),
-            Some(CommitHistoryMode::Graph { reverse: false })
+            Some(CommitHistoryMode::Reflog)
         );
         assert_eq!(
             open.state
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.commits_view.selected_index),
-            Some(1)
+            Some(0)
         );
 
         let mut checkout_app = TuiApp::new(state.clone(), AppConfig::default());

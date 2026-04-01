@@ -45,8 +45,8 @@
 ./references/lazygit-master/docs/keybindings/Keybindings_ru.md
 [x] ./references/lazygit-master/main.go
 [x] ./references/lazygit-master/pkg/app/app.go
-./references/lazygit-master/pkg/app/daemon/daemon.go
-./references/lazygit-master/pkg/app/daemon/rebase.go
+[x] ./references/lazygit-master/pkg/app/daemon/daemon.go
+[x] ./references/lazygit-master/pkg/app/daemon/rebase.go
 ./references/lazygit-master/pkg/app/entry_point.go
 ./references/lazygit-master/pkg/app/errors.go
 ./references/lazygit-master/pkg/app/types/types.go
@@ -87,7 +87,7 @@
 ./references/lazygit-master/pkg/commands/git_commands/patch.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/rebase.go
 ./references/lazygit-master/pkg/commands/git_commands/rebase_test.go
-./references/lazygit-master/pkg/commands/git_commands/reflog_commit_loader.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/reflog_commit_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/reflog_commit_loader_test.go
 ./references/lazygit-master/pkg/commands/git_commands/remote.go
 ./references/lazygit-master/pkg/commands/git_commands/remote_loader.go
