@@ -101,7 +101,7 @@
 [x] ./references/lazygit-master/pkg/commands/git_commands/submodule.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/sync.go
 ./references/lazygit-master/pkg/commands/git_commands/sync_test.go
-./references/lazygit-master/pkg/commands/git_commands/tag.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/tag.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/tag_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/tag_loader_test.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/version.go
@@ -128,7 +128,7 @@
 ./references/lazygit-master/pkg/commands/models/remote_branch.go
 [x] ./references/lazygit-master/pkg/commands/models/stash_entry.go
 ./references/lazygit-master/pkg/commands/models/submodule_config.go
-./references/lazygit-master/pkg/commands/models/tag.go
+[x] ./references/lazygit-master/pkg/commands/models/tag.go
 ./references/lazygit-master/pkg/commands/models/working_tree_state.go
 ./references/lazygit-master/pkg/commands/models/worktree.go
 [x] ./references/lazygit-master/pkg/commands/oscommands/cmd_obj.go

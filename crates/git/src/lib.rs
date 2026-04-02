@@ -1262,11 +1262,11 @@ impl GitBackend for CliGitBackend {
                 format!("Added remote {remote_name}")
             }
             GitCommand::CreateTag { tag_name } => {
-                git(&repo_path, ["tag", tag_name.as_str()])?;
+                create_lightweight_tag(&repo_path, tag_name, None, false)?;
                 format!("Created tag {tag_name}")
             }
             GitCommand::CreateTagFromCommit { tag_name, commit } => {
-                git(&repo_path, ["tag", tag_name.as_str(), commit.as_str()])?;
+                create_lightweight_tag(&repo_path, tag_name, Some(commit), false)?;
                 format!("Created tag {tag_name} at {commit}")
             }
             GitCommand::CreateBranchFromCommit {
@@ -1422,15 +1422,14 @@ impl GitBackend for CliGitBackend {
                 format!("Deleted remote branch {remote_name}/{branch_name}")
             }
             GitCommand::DeleteTag { tag_name } => {
-                git(&repo_path, ["tag", "-d", tag_name.as_str()])?;
+                delete_local_tag(&repo_path, tag_name)?;
                 format!("Deleted tag {tag_name}")
             }
             GitCommand::PushTag {
                 remote_name,
                 tag_name,
             } => {
-                let refspec = format!("refs/tags/{tag_name}");
-                git(&repo_path, ["push", remote_name.as_str(), refspec.as_str()])?;
+                push_tag(&repo_path, remote_name, tag_name)?;
                 format!("Pushed tag {tag_name} to {remote_name}")
             }
             GitCommand::CreateStash { message, mode } => {
@@ -4718,6 +4717,76 @@ fn read_tags(repo_path: &Path) -> Vec<TagItem> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn create_lightweight_tag(
+    repo_path: &Path,
+    tag_name: &str,
+    reference: Option<&str>,
+    force: bool,
+) -> GitResult<()> {
+    let builder = GitCommandBuilder::new("tag")
+        .arg_if(force, ["--force"])
+        .arg(["--", tag_name])
+        .arg_if(reference.is_some(), [reference.unwrap_or_default()]);
+    git_builder(repo_path, builder)
+}
+
+#[allow(dead_code)]
+fn create_annotated_tag(
+    repo_path: &Path,
+    tag_name: &str,
+    reference: Option<&str>,
+    message: &str,
+    force: bool,
+) -> GitResult<()> {
+    let builder = GitCommandBuilder::new("tag")
+        .arg([tag_name])
+        .arg_if(force, ["--force"])
+        .arg_if(reference.is_some(), [reference.unwrap_or_default()])
+        .arg(["-m", message]);
+    git_builder(repo_path, builder)
+}
+
+#[allow(dead_code)]
+fn has_tag(repo_path: &Path, tag_name: &str) -> bool {
+    let tag_ref = format!("refs/tags/{tag_name}");
+    let builder = GitCommandBuilder::new("show-ref").arg([
+        "--tags",
+        "--quiet",
+        "--verify",
+        "--",
+        tag_ref.as_str(),
+    ]);
+    git_builder(repo_path, builder).is_ok()
+}
+
+fn delete_local_tag(repo_path: &Path, tag_name: &str) -> GitResult<()> {
+    git(repo_path, ["tag", "-d", tag_name])
+}
+
+fn push_tag(repo_path: &Path, remote_name: &str, tag_name: &str) -> GitResult<()> {
+    let refspec = format!("refs/tags/{tag_name}");
+    git(repo_path, ["push", remote_name, refspec.as_str()])
+}
+
+#[allow(dead_code)]
+fn show_tag_annotation_info(repo_path: &Path, tag_name: &str) -> GitResult<String> {
+    let tag_ref = format!("refs/tags/{tag_name}");
+    git_stdout_raw(
+        repo_path,
+        [
+            "for-each-ref",
+            "--format=Tagger:     %(taggername) %(taggeremail)%0aTaggerDate: %(taggerdate)%0a%0a%(contents)",
+            tag_ref.as_str(),
+        ],
+    )
+}
+
+#[allow(dead_code)]
+fn is_tag_annotated(repo_path: &Path, tag_name: &str) -> GitResult<bool> {
+    let tag_ref = format!("refs/tags/{tag_name}");
+    git_stdout(repo_path, ["cat-file", "-t", tag_ref.as_str()]).map(|output| output.trim() == "tag")
 }
 
 fn local_branch_exists(repo_path: &Path, branch_name: &str) -> GitResult<bool> {
@@ -12092,6 +12161,38 @@ garbage\n";
             lightweight.target_short_oid,
             lightweight_target.chars().take(7).collect::<String>()
         );
+    }
+
+    #[test]
+    fn tag_helpers_cover_annotation_and_existence_paths() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        let target = repo.rev_parse("HEAD").expect("head");
+
+        create_annotated_tag(
+            repo.path(),
+            "annotated-v1",
+            Some(target.as_str()),
+            "release v1",
+            false,
+        )
+        .expect("annotated tag");
+        create_lightweight_tag(repo.path(), "lightweight-v1", Some(target.as_str()), false)
+            .expect("lightweight tag");
+
+        assert!(has_tag(repo.path(), "annotated-v1"));
+        assert!(has_tag(repo.path(), "lightweight-v1"));
+        assert!(!has_tag(repo.path(), "missing-tag"));
+
+        assert!(is_tag_annotated(repo.path(), "annotated-v1").expect("annotated tag type"));
+        assert!(!is_tag_annotated(repo.path(), "lightweight-v1").expect("lightweight tag type"));
+
+        let annotation = show_tag_annotation_info(repo.path(), "annotated-v1").expect("annotation");
+        assert!(annotation.contains("Tagger:"));
+        assert!(annotation.contains("TaggerDate:"));
+        assert!(annotation.contains("release v1"));
     }
 
     #[test]
