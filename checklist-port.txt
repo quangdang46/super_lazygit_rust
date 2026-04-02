@@ -160,8 +160,8 @@
 ./references/lazygit-master/pkg/commands/testdata/a_file
 ./references/lazygit-master/pkg/common/common.go
 ./references/lazygit-master/pkg/common/dummies.go
-./references/lazygit-master/pkg/config/app_config.go
-./references/lazygit-master/pkg/config/app_config_test.go
+[x] ./references/lazygit-master/pkg/config/app_config.go
+[x] ./references/lazygit-master/pkg/config/app_config_test.go
 ./references/lazygit-master/pkg/config/config_default_platform.go
 ./references/lazygit-master/pkg/config/config_linux.go
 ./references/lazygit-master/pkg/config/config_windows.go

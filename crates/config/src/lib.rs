@@ -7,7 +7,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod legacy_yaml_migration;
+
+pub use legacy_yaml_migration::{compute_migrated_config, ChangesSet};
+
 const CONFIG_DIR_NAME: &str = "super-lazygit";
+const LEGACY_CONFIG_DIR_NAME: &str = "lazygit";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,8 +109,11 @@ impl ConfigDiscovery {
     #[must_use]
     pub fn from_env() -> Self {
         Self::with_overrides(
-            None,
+            env::var_os("CONFIG_DIR")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from),
             env::var_os("SUPER_LAZYGIT_CONFIG")
+                .or_else(|| env::var_os("LG_CONFIG_FILE"))
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
             env::var_os("XDG_CONFIG_HOME")
@@ -123,6 +131,7 @@ impl ConfigDiscovery {
             explicit_dir,
             explicit_path.or_else(|| {
                 env::var_os("SUPER_LAZYGIT_CONFIG")
+                    .or_else(|| env::var_os("LG_CONFIG_FILE"))
                     .filter(|value| !value.is_empty())
                     .map(PathBuf::from)
             }),
@@ -151,7 +160,8 @@ impl ConfigDiscovery {
         xdg_config_home: Option<PathBuf>,
         home_dir: Option<PathBuf>,
     ) -> Self {
-        let default_dir = default_config_dir(xdg_config_home, home_dir);
+        let default_dirs = default_config_dirs(xdg_config_home, home_dir);
+        let default_dir = default_dirs.first().cloned();
         let has_explicit_dir = explicit_dir.is_some();
         let config_dir = explicit_path
             .as_deref()
@@ -166,7 +176,7 @@ impl ConfigDiscovery {
             }
 
             if !has_explicit_dir {
-                if let Some(default_dir) = default_dir {
+                for default_dir in default_dirs {
                     push_unique(&mut candidates, config_file_path(&default_dir));
                 }
             }
@@ -760,9 +770,26 @@ pub fn default_config_dir(
     xdg_config_home: Option<PathBuf>,
     home_dir: Option<PathBuf>,
 ) -> Option<PathBuf> {
-    xdg_config_home
-        .map(|path| path.join(CONFIG_DIR_NAME))
-        .or_else(|| home_dir.map(|path| path.join(".config").join(CONFIG_DIR_NAME)))
+    default_config_dirs(xdg_config_home, home_dir)
+        .into_iter()
+        .next()
+}
+
+#[must_use]
+pub fn default_config_dirs(
+    xdg_config_home: Option<PathBuf>,
+    home_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(path) = xdg_config_home {
+        push_unique(&mut dirs, path.join(CONFIG_DIR_NAME));
+        push_unique(&mut dirs, path.join(LEGACY_CONFIG_DIR_NAME));
+    } else if let Some(path) = home_dir {
+        let config_root = path.join(".config");
+        push_unique(&mut dirs, config_root.join(CONFIG_DIR_NAME));
+        push_unique(&mut dirs, config_root.join(LEGACY_CONFIG_DIR_NAME));
+    }
+    dirs
 }
 
 #[must_use]
@@ -871,6 +898,16 @@ shellFunctionsFile = "~/.config/lazygit/functions.sh"
             config_file_path(Path::new("/tmp/config-dir")),
             PathBuf::from("/tmp/config-dir/config.toml")
         );
+        assert_eq!(
+            default_config_dirs(
+                Some(PathBuf::from("/xdg")),
+                Some(PathBuf::from("/home/quangdang"))
+            ),
+            vec![
+                PathBuf::from("/xdg/super-lazygit"),
+                PathBuf::from("/xdg/lazygit"),
+            ]
+        );
     }
 
     #[test]
@@ -917,6 +954,55 @@ shellFunctionsFile = "~/.config/lazygit/functions.sh"
             discovery.primary_config_path(),
             Some(Path::new("/tmp/override/config.toml"))
         );
+    }
+
+    #[test]
+    fn discovery_adds_legacy_lazygit_candidate_after_primary_dir() {
+        let discovery = ConfigDiscovery::with_overrides(
+            None,
+            None,
+            Some(PathBuf::from("/xdg")),
+            Some(PathBuf::from("/home/quangdang")),
+        );
+
+        assert_eq!(
+            discovery.candidates,
+            vec![
+                PathBuf::from("/xdg/super-lazygit/config.toml"),
+                PathBuf::from("/xdg/lazygit/config.toml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_prefers_legacy_lg_config_file_env_alias() {
+        let original_super = std::env::var_os("SUPER_LAZYGIT_CONFIG");
+        let original_legacy = std::env::var_os("LG_CONFIG_FILE");
+        let original_dir = std::env::var_os("CONFIG_DIR");
+        std::env::remove_var("SUPER_LAZYGIT_CONFIG");
+        std::env::set_var("LG_CONFIG_FILE", "/tmp/legacy-config.toml");
+        std::env::set_var("CONFIG_DIR", "/tmp/legacy-dir");
+
+        let discovery = ConfigDiscovery::from_env();
+
+        match original_super {
+            Some(value) => std::env::set_var("SUPER_LAZYGIT_CONFIG", value),
+            None => std::env::remove_var("SUPER_LAZYGIT_CONFIG"),
+        }
+        match original_legacy {
+            Some(value) => std::env::set_var("LG_CONFIG_FILE", value),
+            None => std::env::remove_var("LG_CONFIG_FILE"),
+        }
+        match original_dir {
+            Some(value) => std::env::set_var("CONFIG_DIR", value),
+            None => std::env::remove_var("CONFIG_DIR"),
+        }
+
+        assert_eq!(
+            discovery.primary_config_path(),
+            Some(Path::new("/tmp/legacy-config.toml"))
+        );
+        assert_eq!(discovery.config_dir(), Some(Path::new("/tmp")));
     }
 
     #[test]
