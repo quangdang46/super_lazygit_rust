@@ -98,7 +98,7 @@
 ./references/lazygit-master/pkg/commands/git_commands/stash_loader_test.go
 ./references/lazygit-master/pkg/commands/git_commands/stash_test.go
 ./references/lazygit-master/pkg/commands/git_commands/status.go
-./references/lazygit-master/pkg/commands/git_commands/submodule.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/submodule.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/sync.go
 ./references/lazygit-master/pkg/commands/git_commands/sync_test.go
 ./references/lazygit-master/pkg/commands/git_commands/tag.go
