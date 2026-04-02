@@ -1,5 +1,10 @@
-use std::io::{self, IsTerminal, Stdout};
-use std::process::{Command, ExitStatus};
+use std::io::{self, IsTerminal, Read, Stdout, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -14,7 +19,9 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use super_lazygit_core::{Event, InputEvent, KeyPress, TimerEvent, Timestamp};
+use super_lazygit_core::{
+    CredentialStrategy, Event, InputEvent, KeyPress, ShellCommandRequest, TimerEvent, Timestamp,
+};
 
 use crate::runtime::AppRuntime;
 
@@ -141,25 +148,318 @@ impl Drop for TerminalSession {
 }
 
 pub fn run_external_command_named(command: &mut Command, label: &str) -> io::Result<()> {
-    run_external_command_named_with_options(command, label, true)
+    run_external_command_named_with_options(command, label, true, None)
+}
+
+pub fn run_shell_command_request(request: &ShellCommandRequest) -> io::Result<()> {
+    let (program, argv) = request
+        .args()
+        .split_first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "shell command missing argv"))?;
+
+    let mut command = Command::new(program);
+    command.args(argv);
+    command.current_dir(
+        request
+            .working_dir
+            .clone()
+            .unwrap_or_else(|| request.repo_id.0.clone().into()),
+    );
+
+    for env_var in request.env_vars() {
+        let (key, value) = env_var.split_once('=').unwrap_or((env_var.as_str(), ""));
+        command.env(key, value);
+    }
+
+    if matches!(request.credential_strategy(), CredentialStrategy::Prompt) {
+        if request.stdin.is_none() && io::stdin().is_terminal() && io::stdout().is_terminal() {
+            return run_external_command_named_with_options(
+                &mut command,
+                "shell command",
+                true,
+                None,
+            );
+        }
+
+        return Err(io::Error::other(
+            "credential prompts require an interactive terminal session",
+        ));
+    }
+
+    if request.should_stream_output()
+        && !request.should_suppress_output_unless_error()
+        && matches!(request.credential_strategy(), CredentialStrategy::None)
+        && request.stdin.is_none()
+    {
+        return run_external_command_named_with_options(&mut command, "shell command", true, None);
+    }
+
+    let result = match request.credential_strategy() {
+        CredentialStrategy::Fail => {
+            command.env("LANG", "C");
+            command.env("LC_ALL", "C");
+            command.env("LC_MESSAGES", "C");
+            run_command_with_credential_detection(&mut command, request.stdin.as_deref())?
+        }
+        CredentialStrategy::None | CredentialStrategy::Prompt => {
+            run_command_captured(&mut command, request.stdin.as_deref())?
+        }
+    };
+
+    require_captured_success(result, "shell command", request.should_ignore_empty_error())
 }
 
 pub fn run_external_command_named_with_options(
     command: &mut Command,
     label: &str,
     suspend: bool,
+    stdin: Option<&str>,
 ) -> io::Result<()> {
     if !suspend || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return command
-            .status()
+        return run_command_with_optional_stdin(command, stdin)
             .and_then(|status| require_success(status, label));
     }
 
     suspend_terminal()?;
-    let status = command.status();
+    let status = run_command_with_optional_stdin(command, stdin);
     let resume = resume_terminal();
     resume?;
     status.and_then(|status| require_success(status, label))
+}
+
+fn run_command_with_optional_stdin(
+    command: &mut Command,
+    stdin: Option<&str>,
+) -> io::Result<ExitStatus> {
+    match stdin {
+        Some(input) => {
+            command.stdin(Stdio::piped());
+            let mut child = command.spawn()?;
+            if let Some(mut child_stdin) = child.stdin.take() {
+                child_stdin.write_all(input.as_bytes())?;
+            }
+            child.wait()
+        }
+        None => command.status(),
+    }
+}
+
+#[derive(Debug)]
+struct CapturedCommandResult {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    credential_prompt_detected: bool,
+}
+
+fn run_command_captured(
+    command: &mut Command,
+    stdin: Option<&str>,
+) -> io::Result<CapturedCommandResult> {
+    match stdin {
+        Some(input) => {
+            command.stdin(Stdio::piped());
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::piped());
+            let mut child = command.spawn()?;
+            if let Some(mut child_stdin) = child.stdin.take() {
+                child_stdin.write_all(input.as_bytes())?;
+            }
+            let output = child.wait_with_output()?;
+            Ok(CapturedCommandResult {
+                status: output.status,
+                stdout: output.stdout,
+                stderr: output.stderr,
+                credential_prompt_detected: false,
+            })
+        }
+        None => {
+            let output = command.output()?;
+            Ok(CapturedCommandResult {
+                status: output.status,
+                stdout: output.stdout,
+                stderr: output.stderr,
+                credential_prompt_detected: false,
+            })
+        }
+    }
+}
+
+fn run_command_with_credential_detection(
+    command: &mut Command,
+    stdin: Option<&str>,
+) -> io::Result<CapturedCommandResult> {
+    #[cfg(unix)]
+    command.process_group(0);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    if let Some(input) = stdin {
+        if let Some(mut child_stdin) = child.stdin.take() {
+            child_stdin.write_all(input.as_bytes())?;
+        }
+    } else {
+        let _ = child.stdin.take();
+    }
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("failed to open child stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("failed to open child stderr"))?;
+    let prompt_detected = Arc::new(AtomicBool::new(false));
+    let stdout_thread = spawn_pipe_reader(stdout, Arc::clone(&prompt_detected));
+    let stderr_thread = spawn_pipe_reader(stderr, Arc::clone(&prompt_detected));
+
+    loop {
+        if prompt_detected.load(Ordering::SeqCst) {
+            let _ = terminate_child(&mut child);
+            break;
+        }
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let status = child.wait()?;
+    let stdout = join_pipe_reader(stdout_thread)?;
+    let stderr = join_pipe_reader(stderr_thread)?;
+
+    Ok(CapturedCommandResult {
+        status,
+        stdout,
+        stderr,
+        credential_prompt_detected: prompt_detected.load(Ordering::SeqCst),
+    })
+}
+
+fn spawn_pipe_reader<R>(
+    mut reader: R,
+    prompt_detected: Arc<AtomicBool>,
+) -> thread::JoinHandle<io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut detector = CredentialPromptDetector::default();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let chunk = &buffer[..read];
+            output.extend_from_slice(chunk);
+            if detector.push(chunk) {
+                prompt_detected.store(true, Ordering::SeqCst);
+            }
+        }
+        Ok(output)
+    })
+}
+
+fn join_pipe_reader(handle: thread::JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
+    handle
+        .join()
+        .map_err(|_| io::Error::other("pipe reader panicked"))?
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn terminate_child(child: &mut std::process::Child) -> io::Result<()> {
+    const SIGKILL: i32 = 9;
+    let result = unsafe { kill(-(child.id() as i32), SIGKILL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        child.kill()
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_child(child: &mut std::process::Child) -> io::Result<()> {
+    child.kill()
+}
+
+fn require_captured_success(
+    result: CapturedCommandResult,
+    label: &str,
+    ignore_empty_error: bool,
+) -> io::Result<()> {
+    if result.status.success() {
+        return Ok(());
+    }
+
+    if result.credential_prompt_detected {
+        return Err(io::Error::other(format!(
+            "{label} requested credentials and was terminated"
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&result.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&result.stderr).trim().to_string();
+    if ignore_empty_error && stdout.is_empty() && stderr.is_empty() {
+        return Ok(());
+    }
+
+    if !stderr.is_empty() {
+        return Err(io::Error::other(stderr));
+    }
+    if !stdout.is_empty() {
+        return Err(io::Error::other(stdout));
+    }
+
+    require_success(result.status, label)
+}
+
+#[derive(Default)]
+struct CredentialPromptDetector {
+    buffer: String,
+}
+
+impl CredentialPromptDetector {
+    fn push(&mut self, bytes: &[u8]) -> bool {
+        let chunk = String::from_utf8_lossy(bytes).to_lowercase();
+        self.buffer.push_str(&chunk);
+        if self.buffer.len() > 512 {
+            let truncate_to = self.buffer.len() - 512;
+            self.buffer.drain(..truncate_to);
+        }
+
+        if self
+            .buffer
+            .split('\n')
+            .next_back()
+            .is_some_and(is_credential_prompt)
+        {
+            self.buffer.clear();
+            return true;
+        }
+
+        false
+    }
+}
+
+fn is_credential_prompt(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.contains("password:")
+        || trimmed.contains("'s password:")
+        || trimmed.contains("password for '")
+        || trimmed.contains("username for '")
+        || trimmed.contains("enter passphrase for key '")
+        || trimmed.contains("enter pin for")
+        || trimmed.contains("2fa token")
 }
 
 #[cfg(unix)]

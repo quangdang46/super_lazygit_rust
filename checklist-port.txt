@@ -133,7 +133,7 @@
 ./references/lazygit-master/pkg/commands/models/worktree.go
 [x] ./references/lazygit-master/pkg/commands/oscommands/cmd_obj.go
 ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_builder.go
-./references/lazygit-master/pkg/commands/oscommands/cmd_obj_runner.go
+[x] ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_runner.go
 ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_runner_default.go
 ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_runner_test.go
 ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_runner_windows.go

@@ -1,11 +1,11 @@
 use std::cmp;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -35,6 +35,7 @@ pub struct AppRuntime {
     diagnostics: Diagnostics,
     watcher: Box<dyn WatcherBackend>,
     watcher_debounce_scheduled: bool,
+    shell_command_mutexes: HashMap<String, Arc<Mutex<()>>>,
 }
 
 impl AppRuntime {
@@ -60,6 +61,7 @@ impl AppRuntime {
             diagnostics: Diagnostics::default(),
             watcher: Box::new(watcher),
             watcher_debounce_scheduled: false,
+            shell_command_mutexes: HashMap::new(),
         }
     }
 
@@ -135,21 +137,22 @@ impl AppRuntime {
         self.workspace.persist_cache(&self.app.state().workspace)
     }
 
-    fn run_shell_command(&self, request: &ShellCommandRequest) -> std::io::Result<()> {
-        #[cfg(windows)]
-        let mut command = {
-            let mut command = Command::new("cmd");
-            command.args(["/C", request.command.as_str()]);
-            command
-        };
-        #[cfg(not(windows))]
-        let mut command = {
-            let mut command = Command::new("sh");
-            command.args(["-lc", request.command.as_str()]);
-            command
-        };
-        command.current_dir(PathBuf::from(&request.repo_id.0));
-        crate::terminal::run_external_command_named(&mut command, "shell command")
+    fn run_shell_command(&mut self, request: &ShellCommandRequest) -> std::io::Result<()> {
+        let mutex = request.mutex_key().map(|key| {
+            self.shell_command_mutexes
+                .entry(key.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        });
+
+        if let Some(mutex) = mutex {
+            let _guard = mutex
+                .lock()
+                .map_err(|_| std::io::Error::other("shell command mutex poisoned"))?;
+            crate::terminal::run_shell_command_request(request)
+        } else {
+            crate::terminal::run_shell_command_request(request)
+        }
     }
 
     fn apply_effects(&mut self, effects: &[Effect]) -> Vec<Event> {
@@ -600,6 +603,7 @@ impl AppRuntime {
             &mut command,
             "editor",
             resolved.suspend,
+            None,
         )
         .err()
         .map(|error| {
@@ -1011,11 +1015,11 @@ mod tests {
             GitFacade::default(),
         );
 
-        let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest {
-            job_id: JobId::new("shell:repo:run-command"),
-            repo_id: repo_id.clone(),
-            command: "printf 'ok' > shell-command.txt".to_string(),
-        })]);
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest::new(
+            JobId::new("shell:repo:run-command"),
+            repo_id.clone(),
+            "printf 'ok' > shell-command.txt",
+        ))]);
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -1037,17 +1041,170 @@ mod tests {
             GitFacade::default(),
         );
 
-        let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest {
-            job_id: JobId::new("shell:repo:run-command"),
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest::new(
+            JobId::new("shell:repo:run-command"),
             repo_id,
-            command: "exit 7".to_string(),
-        })]);
+            "exit 7",
+        ))]);
 
         assert!(events.iter().any(|event| matches!(
             event,
             Event::Worker(WorkerEvent::GitOperationFailed { error, .. })
             if error.contains("shell command exited with status")
         )));
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_surfaces_command_output_on_failure() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest::new(
+            JobId::new("shell:repo:stderr"),
+            repo_id,
+            "printf 'credential failure' >&2; exit 7",
+        ))]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationFailed { error, .. })
+            if error.contains("credential failure")
+        )));
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_ignores_empty_error_when_requested() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let request = ShellCommandRequest::new(
+            JobId::new("shell:repo:ignore-empty-error"),
+            repo_id,
+            "exit 7",
+        )
+        .ignore_empty_error();
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(request)]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationCompleted { summary, .. })
+            if summary == "Ran shell command: exit 7"
+        )));
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_fails_fast_on_credential_prompt() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let request = ShellCommandRequest::from_args(
+            JobId::new("shell:repo:credential-prompt"),
+            repo_id,
+            "sh",
+            ["-lc", "printf 'Password:'; sleep 30"],
+        )
+        .fail_on_credential_request();
+        let started = Instant::now();
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(request)]);
+
+        assert!(started.elapsed().as_secs() < 5);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationFailed { error, .. })
+            if error.contains("requested credentials")
+        )));
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_respects_custom_working_dir() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let custom_dir = repo.path().join("nested");
+        std::fs::create_dir_all(&custom_dir)?;
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let request = ShellCommandRequest::new(
+            JobId::new("shell:repo:custom-working-dir"),
+            repo_id,
+            "printf 'wd' > custom-wd.txt",
+        )
+        .set_wd(custom_dir.clone());
+        let events = runtime.apply_effects(&[Effect::RunShellCommand(request)]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::GitOperationCompleted { summary, .. })
+            if summary == "Ran shell command: printf 'wd' > custom-wd.txt"
+        )));
+        assert!(!repo.path().join("custom-wd.txt").exists());
+        let contents = std::fs::read_to_string(custom_dir.join("custom-wd.txt"))?;
+        assert_eq!(contents, "wd");
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_passes_stdin() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let request =
+            ShellCommandRequest::new(JobId::new("shell:repo:stdin"), repo_id, "cat > stdin.txt")
+                .set_stdin("stdin payload");
+        runtime.apply_effects(&[Effect::RunShellCommand(request)]);
+
+        let contents = std::fs::read_to_string(repo.path().join("stdin.txt"))?;
+        assert_eq!(contents, "stdin payload");
+        Ok(())
+    }
+
+    #[test]
+    fn shell_command_effect_appends_env_vars() -> io::Result<()> {
+        let repo = staged_and_unstaged_repo()?;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let request = ShellCommandRequest::new(
+            JobId::new("shell:repo:env"),
+            repo_id,
+            "printf '%s' \"$SPECIAL_VALUE\" > env.txt",
+        )
+        .add_env_vars(["SPECIAL_VALUE=env-ok"]);
+        runtime.apply_effects(&[Effect::RunShellCommand(request)]);
+
+        let contents = std::fs::read_to_string(repo.path().join("env.txt"))?;
+        assert_eq!(contents, "env-ok");
         Ok(())
     }
 
