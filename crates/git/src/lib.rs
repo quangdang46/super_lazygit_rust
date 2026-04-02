@@ -664,6 +664,130 @@ fn repo_paths_parse_error(output: &str) -> GitError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomCommands {
+    repo_path: PathBuf,
+}
+
+impl CustomCommands {
+    #[must_use]
+    pub fn new(repo_path: impl Into<PathBuf>) -> Self {
+        Self {
+            repo_path: repo_path.into(),
+        }
+    }
+
+    pub fn run_with_output(&self, cmd_str: &str) -> GitResult<String> {
+        let argv = parse_custom_command_args(cmd_str)?;
+        let (program, args) = argv.split_first().expect("custom command has argv");
+        let output = Command::new(program)
+            .args(args)
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(io_error)?;
+        if !output.status.success() {
+            return Err(process_failure(program, output));
+        }
+        stdout_raw_string(output)
+    }
+
+    pub fn template_function_run_command(&self, cmd_str: &str) -> GitResult<String> {
+        let output = self.run_with_output(cmd_str)?;
+        let output = output.trim_end_matches(['\r', '\n']).to_string();
+        if output.contains("\r\n") {
+            return Err(GitError::OperationFailed {
+                message: format!("command output contains newlines: {output}"),
+            });
+        }
+        Ok(output)
+    }
+}
+
+fn parse_custom_command_args(command: &str) -> GitResult<Vec<String>> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum QuoteMode {
+        Single,
+        Double,
+    }
+
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars().peekable();
+    let mut quote_mode = None;
+    let mut token_started = false;
+
+    while let Some(ch) = chars.next() {
+        match quote_mode {
+            Some(QuoteMode::Single) => {
+                if ch == '\'' {
+                    quote_mode = None;
+                } else {
+                    current.push(ch);
+                }
+                token_started = true;
+            }
+            Some(QuoteMode::Double) => {
+                if ch == '"' {
+                    quote_mode = None;
+                } else if ch == '\\' {
+                    let escaped = chars.next().ok_or_else(|| GitError::OperationFailed {
+                        message: "unterminated escape in custom command".to_string(),
+                    })?;
+                    current.push(escaped);
+                } else {
+                    current.push(ch);
+                }
+                token_started = true;
+            }
+            None => match ch {
+                '\'' => {
+                    quote_mode = Some(QuoteMode::Single);
+                    token_started = true;
+                }
+                '"' => {
+                    quote_mode = Some(QuoteMode::Double);
+                    token_started = true;
+                }
+                '\\' => {
+                    let escaped = chars.next().ok_or_else(|| GitError::OperationFailed {
+                        message: "unterminated escape in custom command".to_string(),
+                    })?;
+                    current.push(escaped);
+                    token_started = true;
+                }
+                ch if ch.is_whitespace() => {
+                    if token_started {
+                        args.push(std::mem::take(&mut current));
+                        token_started = false;
+                    }
+                }
+                _ => {
+                    current.push(ch);
+                    token_started = true;
+                }
+            },
+        }
+    }
+
+    if quote_mode.is_some() {
+        return Err(GitError::OperationFailed {
+            message: "unterminated quote in custom command".to_string(),
+        });
+    }
+
+    if token_started {
+        args.push(current);
+    }
+
+    if args.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: "custom command is empty".to_string(),
+        });
+    }
+
+    Ok(args)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DiffReadOptions {
     presentation: DiffPresentation,
@@ -3392,11 +3516,15 @@ fn remove_submodule(repo_path: &Path, path: &Path) -> GitResult<()> {
 }
 
 fn command_failure(output: Output) -> GitError {
+    process_failure("git", output)
+}
+
+fn process_failure(command_name: &str, output: Output) -> GitError {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     GitError::OperationFailed {
         message: format!(
-            "git exited with status {}\nstdout:\n{}\nstderr:\n{}",
+            "{command_name} exited with status {}\nstdout:\n{}\nstderr:\n{}",
             output.status, stdout, stderr
         ),
     }
@@ -5709,6 +5837,77 @@ mod tests {
         rebase_in_progress_repo, staged_and_unstaged_repo, stashed_repo, submodule_repo, temp_repo,
         upstream_diverged_repo, worktree_repo, TempRepo,
     };
+
+    #[test]
+    fn parse_custom_command_args_matches_basic_argv_rules() {
+        assert_eq!(
+            parse_custom_command_args(r#"printf "" "hello world" plain\ value"#)
+                .expect("argv parsing"),
+            vec![
+                "printf".to_string(),
+                String::new(),
+                "hello world".to_string(),
+                "plain value".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_custom_command_args_rejects_unterminated_quote() {
+        let error = parse_custom_command_args(r#"printf "unterminated"#)
+            .expect_err("unterminated quote should fail");
+        assert_eq!(
+            error,
+            GitError::OperationFailed {
+                message: "unterminated quote in custom command".to_string(),
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_commands_run_with_output_captures_stdout_without_shell_expansion() {
+        let repo = temp_repo().expect("fixture repo");
+        let commands = CustomCommands::new(repo.path());
+
+        assert_eq!(
+            commands
+                .run_with_output(r#"printf "$HOME""#)
+                .expect("command output"),
+            "$HOME"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_commands_template_function_trims_trailing_crlf() {
+        let repo = temp_repo().expect("fixture repo");
+        let commands = CustomCommands::new(repo.path());
+
+        assert_eq!(
+            commands
+                .template_function_run_command(r#"sh -c 'printf "hello\r\n"'"#)
+                .expect("single line output"),
+            "hello"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_commands_template_function_rejects_crlf_multiline_output() {
+        let repo = temp_repo().expect("fixture repo");
+        let commands = CustomCommands::new(repo.path());
+
+        let error = commands
+            .template_function_run_command(r#"sh -c 'printf "hello\r\nworld\r\n"'"#)
+            .expect_err("multiline output should fail");
+        assert_eq!(
+            error,
+            GitError::OperationFailed {
+                message: "command output contains newlines: hello\r\nworld".to_string(),
+            }
+        );
+    }
 
     #[derive(Debug, Clone, Copy)]
     struct StubBackend {
