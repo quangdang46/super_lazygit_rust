@@ -151,7 +151,7 @@
 ./references/lazygit-master/pkg/commands/patch/format.go
 ./references/lazygit-master/pkg/commands/patch/hunk.go
 ./references/lazygit-master/pkg/commands/patch/parse.go
-./references/lazygit-master/pkg/commands/patch/patch.go
+[x] ./references/lazygit-master/pkg/commands/patch/patch.go
 ./references/lazygit-master/pkg/commands/patch/patch_builder.go
 ./references/lazygit-master/pkg/commands/patch/patch_line.go
 ./references/lazygit-master/pkg/commands/patch/patch_test.go
