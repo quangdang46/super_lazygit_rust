@@ -54,11 +54,11 @@
 ./references/lazygit-master/pkg/cheatsheet/generate_test.go
 ./references/lazygit-master/pkg/cheatsheet/generator.go
 ./references/lazygit-master/pkg/commands/git.go
-./references/lazygit-master/pkg/commands/git_cmd_obj_builder.go
-./references/lazygit-master/pkg/commands/git_cmd_obj_runner.go
-./references/lazygit-master/pkg/commands/git_commands/bisect.go
-./references/lazygit-master/pkg/commands/git_commands/bisect_info.go
-./references/lazygit-master/pkg/commands/git_commands/blame.go
+[x] ./references/lazygit-master/pkg/commands/git_cmd_obj_builder.go
+[x] ./references/lazygit-master/pkg/commands/git_cmd_obj_runner.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/bisect.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/bisect_info.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/blame.go
 ./references/lazygit-master/pkg/commands/git_commands/branch.go
 ./references/lazygit-master/pkg/commands/git_commands/branch_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/branch_loader_test.go
@@ -131,7 +131,7 @@
 ./references/lazygit-master/pkg/commands/models/tag.go
 ./references/lazygit-master/pkg/commands/models/working_tree_state.go
 ./references/lazygit-master/pkg/commands/models/worktree.go
-./references/lazygit-master/pkg/commands/oscommands/cmd_obj.go
+[x] ./references/lazygit-master/pkg/commands/oscommands/cmd_obj.go
 ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_builder.go
 ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_runner.go
 ./references/lazygit-master/pkg/commands/oscommands/cmd_obj_runner_default.go
