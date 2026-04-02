@@ -2359,6 +2359,15 @@ impl TuiApp {
                 }
 
                 if self.binding_matches_action(
+                    "find_base_commit_for_fixup",
+                    raw,
+                    normalized,
+                    &["ctrl+f"],
+                ) {
+                    return Some(Action::FindBaseCommitForFixup);
+                }
+
+                if self.binding_matches_action(
                     "cycle_status_filter_mode",
                     raw,
                     normalized,
@@ -8924,6 +8933,9 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Apply pending fixup and squash commits for {summary}? Git will rewrite the current branch with autosquash."
             )
         }
+        super_lazygit_core::ConfirmableOperation::FindBaseCommitForFixup { .. } => {
+            "There are ranges of only added lines in the diff; be careful to check that these belong in the found base commit.\n\nProceed?".to_string()
+        }
         super_lazygit_core::ConfirmableOperation::FixupCommit { summary, .. } => {
             format!(
                 "Create a fixup commit for {summary} from the currently staged changes and autosquash it with rebase?"
@@ -10509,7 +10521,7 @@ fn repo_status_section_lines(
     let (focus_text, empty_text) = match section {
         FileStatusSection::Unstaged => (
             if is_focused {
-                "j/k move  Space stage file  Enter open diff  a stage all  ` tree  / filter"
+                "j/k move  Space stage file  Enter open diff  a stage all  Ctrl+F fixup base  ` tree  / filter"
             } else {
                 "Move focus here to inspect working tree changes."
             },
@@ -10517,7 +10529,7 @@ fn repo_status_section_lines(
         ),
         FileStatusSection::Staged => (
             if is_focused {
-                "j/k move  Space unstage file  Enter open diff  a unstage all  ` tree  / filter"
+                "j/k move  Space unstage file  Enter open diff  a unstage all  Ctrl+F fixup base  ` tree  / filter"
             } else {
                 "Move focus here to prep staged work."
             },
@@ -10714,10 +10726,10 @@ fn repo_help_text(state: &AppState) -> String {
 
     match state.focused_pane {
         PaneId::RepoUnstaged => {
-            "Working tree pane  j/k move  ,/. page  </> top/bottom  Space stage file  Enter main diff  a stage all  Ctrl+B status filter  ` tree  -/= collapse/expand  / text filter  i ignore/exclude menu  y/Ctrl+O copy path  o open path  Ctrl+T external difftool  g reset menu  M merge menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  d/D discard file  0 main pane  l next pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Working tree pane  j/k move  ,/. page  </> top/bottom  Space stage file  Enter main diff  a stage all  Ctrl+F fixup base  Ctrl+B status filter  ` tree  -/= collapse/expand  / text filter  i ignore/exclude menu  y/Ctrl+O copy path  o open path  Ctrl+T external difftool  g reset menu  M merge menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  d/D discard file  0 main pane  l next pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoStaged => {
-            "Staged pane  j/k move  ,/. page  </> top/bottom  Space unstage file  Enter main diff  a unstage all  Ctrl+B status filter  ` tree  -/= collapse/expand  / text filter  i ignore/exclude menu  y/Ctrl+O copy path  o open path  Ctrl+T external difftool  g reset menu  M merge menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  d/D discard file  c commit  A amend HEAD  0 main pane  h/l change pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+            "Staged pane  j/k move  ,/. page  </> top/bottom  Space unstage file  Enter main diff  a unstage all  Ctrl+F fixup base  Ctrl+B status filter  ` tree  -/= collapse/expand  / text filter  i ignore/exclude menu  y/Ctrl+O copy path  o open path  Ctrl+T external difftool  g reset menu  M merge menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  s stash tracked changes  S stash options  d/D discard file  c commit  A amend HEAD  0 main pane  h/l change pane  [/] detail tabs  1-9/t/m/b detail view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
         }
         PaneId::RepoDetail => state.repo_mode.as_ref().map_or_else(
             || "Repository shell".to_string(),
@@ -19250,6 +19262,47 @@ mod tests {
                 .as_ref()
                 .map(|menu| menu.operation),
             Some(super_lazygit_core::MenuOperation::BisectOptions)
+        );
+    }
+
+    #[test]
+    fn route_repository_files_ctrl_f_finds_fixup_base() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "ctrl+f".to_string(),
+        })));
+
+        assert_eq!(
+            result.effects,
+            vec![super_lazygit_core::Effect::FindBaseCommitForFixup {
+                repo_id,
+                commit_oids: vec![
+                    "abcdef1234567890".to_string(),
+                    "1234567890abcdef".to_string(),
+                ],
+            }]
         );
     }
 

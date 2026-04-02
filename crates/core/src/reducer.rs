@@ -728,6 +728,18 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
             effects.push(Effect::ScheduleRender);
         }
+        Action::FindBaseCommitForFixup => match pending_fixup_base_lookup(state) {
+            Some((repo_id, commit_oids)) => {
+                effects.push(Effect::FindBaseCommitForFixup {
+                    repo_id,
+                    commit_oids,
+                });
+            }
+            None => {
+                push_warning(state, "Repository detail is still loading.");
+                effects.push(Effect::ScheduleRender);
+            }
+        },
         Action::OpenCommitCopyOptions => {
             match pending_history_commit_operation(state, |_, _, _| Ok(())) {
                 Ok(Some((repo_id, ()))) => {
@@ -3477,6 +3489,25 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
             });
             effects.push(Effect::ScheduleRender);
         }
+        WorkerEvent::FixupBaseCommitFound {
+            repo_id,
+            hashes,
+            has_staged_changes,
+            warn_about_added_lines,
+        } => {
+            handle_fixup_base_commit_found(
+                state,
+                effects,
+                repo_id,
+                hashes,
+                has_staged_changes,
+                warn_about_added_lines,
+            );
+        }
+        WorkerEvent::FixupBaseCommitLookupFailed { repo_id: _, error } => {
+            push_warning(state, error);
+            effects.push(Effect::ScheduleRender);
+        }
         WorkerEvent::BranchMergeCheckCompleted {
             repo_id,
             branch_name,
@@ -4063,6 +4094,77 @@ fn close_commit_box(repo_mode: &mut RepoModeState) {
     }
 }
 
+fn split_commit_message_and_description(message: &str) -> (String, String) {
+    let (summary, description) = message.split_once('\n').unwrap_or((message, ""));
+    (summary.to_string(), description.trim().to_string())
+}
+
+fn join_commit_message_and_unwrapped_description(summary: &str, description: &str) -> String {
+    if description.is_empty() {
+        summary.to_string()
+    } else {
+        format!("{summary}\n{description}")
+    }
+}
+
+#[allow(dead_code)]
+fn try_remove_hard_line_breaks(message: &str, auto_wrap_width: usize) -> String {
+    let mut result = message.to_string();
+    let mut last_hard_line_start = 0usize;
+    let chars = message.char_indices().collect::<Vec<_>>();
+
+    for (index, ch) in chars {
+        if ch == '\n' {
+            let prefix = &message[last_hard_line_start..index];
+            let suffix = message.get(index + 1..).unwrap_or_default();
+            let candidate = format!("{prefix} {suffix}");
+            let soft_breaks = auto_wrap_break_indices(&candidate, auto_wrap_width);
+            if soft_breaks.first().is_some_and(|break_index| {
+                *break_index == index.saturating_sub(last_hard_line_start) + 1
+            }) {
+                result.replace_range(index..=index, " ");
+            }
+            last_hard_line_start = index + 1;
+        }
+    }
+
+    result
+}
+
+#[allow(dead_code)]
+fn auto_wrap_break_indices(content: &str, width: usize) -> Vec<usize> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut break_indices = Vec::new();
+    let mut line_start = 0usize;
+    let mut last_space = None;
+
+    for (index, ch) in content.char_indices() {
+        if ch == '\n' {
+            line_start = index + 1;
+            last_space = None;
+            continue;
+        }
+        if ch == ' ' {
+            last_space = Some(index);
+        }
+        let line_width = content[line_start..=index].chars().count();
+        if line_width > width {
+            if let Some(space_index) = last_space {
+                break_indices.push(space_index - line_start);
+                line_start = space_index + 1;
+                last_space = None;
+            } else {
+                break_indices.push(index - line_start);
+                line_start = index;
+            }
+        }
+    }
+
+    break_indices
+}
+
 fn clear_repo_subview_filter_focus(repo_mode: &mut RepoModeState) {
     repo_mode.branches_filter.focused = false;
     repo_mode.remote_branches_filter.focused = false;
@@ -4170,21 +4272,25 @@ fn push_warning(state: &mut AppState, text: impl Into<String>) {
 }
 
 fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
-    let (repo_id, mode, message, staged_count, has_commits) =
+    let (repo_id, mode, summary, description, staged_count, has_commits) =
         state.repo_mode.as_ref().and_then(|repo_mode| {
             if !repo_mode.commit_box.focused {
                 return None;
             }
             repo_mode.detail.as_ref().map(|detail| {
+                let input = detail.commit_input.trim_end();
+                let (summary, description) = split_commit_message_and_description(input);
                 (
                     repo_mode.current_repo_id.clone(),
                     repo_mode.commit_box.mode,
-                    detail.commit_input.trim().to_string(),
+                    summary.trim().to_string(),
+                    description,
                     staged_file_count(detail),
                     !detail.commits.is_empty(),
                 )
             })
         })?;
+    let message = join_commit_message_and_unwrapped_description(&summary, &description);
 
     let command = match mode {
         CommitBoxMode::Commit => {
@@ -4215,7 +4321,7 @@ fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
                 return None;
             }
             GitCommand::AmendHead {
-                message: if message.is_empty() {
+                message: if summary.is_empty() {
                     None
                 } else {
                     Some(message)
@@ -4288,6 +4394,9 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         }
         ConfirmableOperation::ApplyFixupCommits { summary, .. } => {
             format!("Apply fixup commits for {summary}")
+        }
+        ConfirmableOperation::FindBaseCommitForFixup { .. } => {
+            "Find base commit for fixup".to_string()
         }
         ConfirmableOperation::FixupCommit { summary, .. } => {
             format!("Fixup {summary}")
@@ -4419,6 +4528,17 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Apply fixup autosquash",
         ),
+        ConfirmableOperation::FindBaseCommitForFixup {
+            pending_selection,
+            stage_all,
+        } => {
+            return begin_fixup_base_commit_selection(
+                state,
+                pending.repo_id,
+                pending_selection,
+                stage_all,
+            );
+        }
         ConfirmableOperation::FixupCommit { commit, .. } => (
             GitCommand::StartCommitRebase {
                 commit,
@@ -8036,6 +8156,249 @@ fn commit_matches_pending_selection(
     }
 }
 
+const NO_BASE_COMMITS_FOUND_MESSAGE: &str = "No base commits found";
+const MULTIPLE_BASE_COMMITS_FOUND_STAGED_MESSAGE: &str =
+    "Multiple base commits found. (Try staging fewer changes at once)";
+const MULTIPLE_BASE_COMMITS_FOUND_UNSTAGED_MESSAGE: &str =
+    "Multiple base commits found. (Try staging some of the changes)";
+const BASE_COMMIT_ALREADY_ON_MAIN_BRANCH_MESSAGE: &str =
+    "The base commit for this change is already on the main branch";
+const BASE_COMMIT_NOT_IN_CURRENT_VIEW_MESSAGE: &str = "Base commit is not in current view";
+
+fn pending_fixup_base_lookup(state: &AppState) -> Option<(crate::state::RepoId, Vec<String>)> {
+    let repo_mode = state.repo_mode.as_ref()?;
+    let detail = repo_mode.detail.as_ref()?;
+    let commit_oids = filtered_commit_indices(repo_mode)
+        .into_iter()
+        .filter_map(|index| detail.commits.get(index).map(|commit| commit.oid.clone()))
+        .collect();
+    Some((repo_mode.current_repo_id.clone(), commit_oids))
+}
+
+fn handle_fixup_base_commit_found(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    repo_id: crate::state::RepoId,
+    hashes: Vec<String>,
+    has_staged_changes: bool,
+    warn_about_added_lines: bool,
+) {
+    let Some(repo_mode) = state
+        .repo_mode
+        .as_mut()
+        .filter(|repo_mode| repo_mode.current_repo_id == repo_id)
+    else {
+        return;
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return;
+    };
+    if hashes.is_empty() {
+        push_warning(state, NO_BASE_COMMITS_FOUND_MESSAGE);
+        effects.push(Effect::ScheduleRender);
+        return;
+    }
+
+    let visible_commits = filtered_commit_indices(repo_mode)
+        .into_iter()
+        .filter_map(|index| detail.commits.get(index).map(|commit| (index, commit)))
+        .collect::<Vec<_>>();
+    let not_found_means_merged = visible_commits
+        .last()
+        .is_some_and(|(_, commit)| commit.status == crate::state::CommitStatus::Merged);
+
+    let mut not_merged_hashes = Vec::new();
+    for hash in hashes {
+        match visible_commits
+            .iter()
+            .find(|(_, commit)| commit.oid == hash)
+        {
+            Some((_, commit)) if commit.status == crate::state::CommitStatus::Merged => {}
+            Some(_) => {
+                if !not_merged_hashes.contains(&hash) {
+                    not_merged_hashes.push(hash);
+                }
+            }
+            None if not_found_means_merged => {}
+            None => {
+                push_warning(state, BASE_COMMIT_NOT_IN_CURRENT_VIEW_MESSAGE);
+                effects.push(Effect::ScheduleRender);
+                return;
+            }
+        }
+    }
+
+    if not_merged_hashes.is_empty() {
+        push_warning(state, BASE_COMMIT_ALREADY_ON_MAIN_BRANCH_MESSAGE);
+        effects.push(Effect::ScheduleRender);
+        return;
+    }
+
+    let not_merged_set = not_merged_hashes
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+    let found_commits = visible_commits
+        .into_iter()
+        .filter(|(_, commit)| not_merged_set.contains(&commit.oid))
+        .collect::<Vec<_>>();
+    let found_commits = remove_fixup_commit_candidates(found_commits);
+
+    if found_commits.len() > 1 {
+        let subjects = found_commits
+            .iter()
+            .map(|(_, commit)| format!("{} {}", commit.short_oid, commit.summary))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let message = if has_staged_changes {
+            MULTIPLE_BASE_COMMITS_FOUND_STAGED_MESSAGE
+        } else {
+            MULTIPLE_BASE_COMMITS_FOUND_UNSTAGED_MESSAGE
+        };
+        push_warning(state, format!("{message}\n\n{subjects}"));
+        effects.push(Effect::ScheduleRender);
+        return;
+    }
+
+    let Some((_, commit)) = found_commits.first() else {
+        push_warning(state, NO_BASE_COMMITS_FOUND_MESSAGE);
+        effects.push(Effect::ScheduleRender);
+        return;
+    };
+    let pending_selection = commit.oid.clone();
+    let stage_all = !has_staged_changes;
+
+    if warn_about_added_lines {
+        open_confirmation_modal(
+            state,
+            repo_id,
+            ConfirmableOperation::FindBaseCommitForFixup {
+                pending_selection,
+                stage_all,
+            },
+        );
+        effects.push(Effect::ScheduleRender);
+        return;
+    }
+
+    if let Some(job) =
+        begin_fixup_base_commit_selection(state, repo_id, pending_selection, stage_all)
+    {
+        effects.push(Effect::RunGitCommand(job));
+    }
+    effects.push(Effect::ScheduleRender);
+}
+
+fn begin_fixup_base_commit_selection(
+    state: &mut AppState,
+    repo_id: crate::state::RepoId,
+    pending_selection: String,
+    stage_all: bool,
+) -> Option<GitCommandRequest> {
+    let mut should_stage = false;
+    {
+        let repo_mode = state
+            .repo_mode
+            .as_mut()
+            .filter(|repo_mode| repo_mode.current_repo_id == repo_id)?;
+        clear_repo_subview_filter_focus(repo_mode);
+        repo_mode.active_subview = crate::state::RepoSubview::Commits;
+        repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+        repo_mode.diff_scroll = 0;
+        close_commit_box(repo_mode);
+        sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
+
+        if stage_all {
+            repo_mode.pending_commit_selection_oid = Some(pending_selection);
+            should_stage = true;
+        } else if !select_commit_view_by_pending_selection(repo_mode, &pending_selection) {
+            repo_mode.pending_commit_selection_oid = Some(pending_selection);
+        }
+    }
+    state.focused_pane = PaneId::RepoDetail;
+
+    if should_stage {
+        let job = git_job(repo_id, GitCommand::StageSelection);
+        enqueue_git_job(state, &job, "Stage all changes");
+        Some(job)
+    } else {
+        None
+    }
+}
+
+fn select_commit_view_by_pending_selection(
+    repo_mode: &mut RepoModeState,
+    pending_selection: &str,
+) -> bool {
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return false;
+    };
+    let visible_indices = filtered_commit_indices(repo_mode);
+    let Some(index) = visible_indices.into_iter().find(|index| {
+        detail
+            .commits
+            .get(*index)
+            .is_some_and(|commit| commit_matches_pending_selection(commit, pending_selection))
+    }) else {
+        return false;
+    };
+
+    repo_mode.commits_view.selected_index = Some(index);
+    sync_commit_file_selection(repo_mode);
+    true
+}
+
+fn remove_fixup_commit_candidates(
+    mut commits: Vec<(usize, &crate::state::CommitItem)>,
+) -> Vec<(usize, &crate::state::CommitItem)> {
+    if commits.len() <= 1 {
+        return commits;
+    }
+
+    let (base_subject, last_is_fixup) =
+        is_fixup_commit_subject(&commits[commits.len() - 1].1.summary);
+    if last_is_fixup {
+        return commits;
+    }
+
+    let mut index = commits.len().saturating_sub(1);
+    while index > 0 {
+        index -= 1;
+        let (subject, is_fixup) = is_fixup_commit_subject(&commits[index].1.summary);
+        if is_fixup && subject == base_subject {
+            commits.remove(index);
+        }
+    }
+
+    commits
+}
+
+fn is_fixup_commit_subject(subject: &str) -> (String, bool) {
+    const PREFIXES: [&str; 3] = ["fixup! ", "squash! ", "amend! "];
+
+    let mut trimmed = subject;
+    let mut was_trimmed = false;
+    loop {
+        let mut matched = false;
+        for prefix in PREFIXES {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                trimmed = rest;
+                matched = true;
+                was_trimmed = true;
+                break;
+            }
+        }
+        if !matched {
+            break;
+        }
+    }
+
+    if was_trimmed {
+        (trimmed.to_string(), true)
+    } else {
+        (subject.to_string(), false)
+    }
+}
+
 fn selected_commit_file_item(repo_mode: &RepoModeState) -> Option<&crate::state::CommitFileItem> {
     let commit = selected_commit_item(repo_mode)?;
     let visible_indices = filtered_commit_file_indices(repo_mode);
@@ -9623,7 +9986,10 @@ mod tests {
         WorkspaceFilterMode, WorktreeItem,
     };
 
-    use super::{merge_rebase_menu_entries, reduce};
+    use super::{
+        join_commit_message_and_unwrapped_description, merge_rebase_menu_entries, reduce,
+        split_commit_message_and_description, try_remove_hard_line_breaks,
+    };
 
     fn workspace_summary(repo_id: &str) -> RepoSummary {
         RepoSummary {
@@ -18537,6 +18903,39 @@ mod tests {
     }
 
     #[test]
+    fn split_and_join_commit_message_match_commits_helper_behavior() {
+        assert_eq!(
+            split_commit_message_and_description("subject\n\nbody line\nsecond line"),
+            ("subject".to_string(), "body line\nsecond line".to_string())
+        );
+        assert_eq!(
+            join_commit_message_and_unwrapped_description("subject", ""),
+            "subject"
+        );
+        assert_eq!(
+            join_commit_message_and_unwrapped_description("subject", "body line\nsecond line"),
+            "subject\nbody line\nsecond line"
+        );
+    }
+
+    #[test]
+    fn try_remove_hard_line_breaks_matches_upstream_cases() {
+        let scenarios = [
+            ("", 7usize, ""),
+            ("abc\ndef\n\nxyz", 7usize, "abc\ndef\n\nxyz"),
+            (
+                "123\nabc def\nghi jkl\nmno\n456\n",
+                7usize,
+                "123\nabc def ghi jkl mno\n456\n",
+            ),
+        ];
+
+        for (message, width, expected) in scenarios {
+            assert_eq!(try_remove_hard_line_breaks(message, width), expected);
+        }
+    }
+
+    #[test]
     fn submit_commit_box_queues_no_verify_commit_when_requested() {
         let repo_id = RepoId::new("repo-1");
         let mut detail = repo_detail_with_file_tree();
@@ -19228,6 +19627,232 @@ mod tests {
                 0,
                 PaneId::RepoDetail,
             ))
+        );
+    }
+
+    #[test]
+    fn find_base_commit_for_fixup_worker_event_selects_unique_commit_from_files_pane() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("src/lib.rs"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: Some(FileStatusKind::Modified),
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
+                    }],
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::FixupBaseCommitFound {
+                repo_id,
+                hashes: vec!["older".to_string()],
+                has_staged_changes: true,
+                warn_about_added_lines: false,
+            }),
+        );
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| (repo_mode.active_subview, repo_mode.commit_subview_mode)),
+            Some((
+                RepoSubview::Commits,
+                crate::state::CommitSubviewMode::History
+            ))
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commits_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn find_base_commit_for_fixup_worker_event_disregards_fixups_for_same_base_commit() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("src/lib.rs"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: Some(FileStatusKind::Modified),
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
+                    }],
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "fixup".to_string(),
+                            short_oid: "fixup1".to_string(),
+                            summary: "fixup! base commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "base".to_string(),
+                            short_oid: "base123".to_string(),
+                            summary: "base commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::FixupBaseCommitFound {
+                repo_id,
+                hashes: vec!["fixup".to_string(), "base".to_string()],
+                has_staged_changes: true,
+                warn_about_added_lines: false,
+            }),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.commits_view.selected_index),
+            Some(2)
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn find_base_commit_for_fixup_confirmation_stages_all_before_refreshing() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoUnstaged,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Status,
+                detail: Some(RepoDetail {
+                    file_tree: vec![FileStatus {
+                        path: std::path::PathBuf::from("src/lib.rs"),
+                        kind: FileStatusKind::Modified,
+                        staged_kind: None,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
+                    }],
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let warned = reduce(
+            state,
+            Event::Worker(WorkerEvent::FixupBaseCommitFound {
+                repo_id: repo_id.clone(),
+                hashes: vec!["older".to_string()],
+                has_staged_changes: false,
+                warn_about_added_lines: true,
+            }),
+        );
+
+        assert_eq!(warned.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            warned
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::FindBaseCommitForFixup {
+                pending_selection: "older".to_string(),
+                stage_all: true,
+            })
+        );
+
+        let confirmed = reduce(warned.state, Event::Action(Action::ConfirmPendingOperation));
+
+        assert_eq!(confirmed.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            confirmed
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert_eq!(
+            confirmed
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.pending_commit_selection_oid.clone()),
+            Some("older".to_string())
+        );
+        assert_eq!(
+            confirmed.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id: JobId::new("git:repo-1:stage-selection"),
+                repo_id,
+                command: GitCommand::StageSelection,
+            })]
         );
     }
 

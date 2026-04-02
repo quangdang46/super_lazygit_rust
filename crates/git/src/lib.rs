@@ -34,6 +34,9 @@ const GIT_INDEX_LOCK_RETRY_WAIT: Duration = Duration::from_millis(50);
 const DEFAULT_MAIN_BRANCH_NAMES: [&str; 2] = ["master", "main"];
 #[allow(dead_code)]
 const INVALID_COMMIT_INDEX_MESSAGE: &str = "invalid commit index";
+const NO_CHANGED_FILES_MESSAGE: &str = "No changed files";
+const NO_BASE_COMMITS_FOUND_MESSAGE: &str = "No base commits found";
+const ENTIRE_FILE_MESSAGE: &str = "Entire file";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GitCommandBuilder {
@@ -174,6 +177,11 @@ pub trait GitBackend: Send + Sync + 'static {
 
     fn read_diff(&self, request: DiffRequest) -> GitResult<DiffModel>;
 
+    fn read_fixup_base_commit_candidates(
+        &self,
+        request: FixupBaseCommitRequest,
+    ) -> GitResult<FixupBaseCommitOutcome>;
+
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome>;
 
     fn apply_patch_selection(&self, request: PatchSelectionRequest)
@@ -262,6 +270,16 @@ impl GitFacade {
     pub fn read_diff(&mut self, request: DiffRequest) -> GitResult<DiffModel> {
         let operation = GitOperationKind::ReadDiff;
         self.execute_routed(operation, |backend| backend.read_diff(request))
+    }
+
+    pub fn read_fixup_base_commit_candidates(
+        &mut self,
+        request: FixupBaseCommitRequest,
+    ) -> GitResult<FixupBaseCommitOutcome> {
+        let operation = GitOperationKind::ReadFixupBaseCommitCandidates;
+        self.execute_routed(operation, |backend| {
+            backend.read_fixup_base_commit_candidates(request)
+        })
     }
 
     pub fn run_command(&mut self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
@@ -358,6 +376,7 @@ pub enum GitOperationKind {
     ReadRepoDetail,
     ReadBranchMergeStatus,
     ReadDiff,
+    ReadFixupBaseCommitCandidates,
     WriteCommand,
 }
 
@@ -370,6 +389,7 @@ impl GitOperationKind {
             Self::ReadRepoDetail => "read_repo_detail",
             Self::ReadBranchMergeStatus => "read_branch_merge_status",
             Self::ReadDiff => "read_diff",
+            Self::ReadFixupBaseCommitCandidates => "read_fixup_base_commit_candidates",
             Self::WriteCommand => "write_command",
         }
     }
@@ -382,6 +402,7 @@ impl GitOperationKind {
             Self::ReadRepoDetail => GitBackendCapability::DetailRead,
             Self::ReadBranchMergeStatus => GitBackendCapability::DetailRead,
             Self::ReadDiff => GitBackendCapability::DiffRead,
+            Self::ReadFixupBaseCommitCandidates => GitBackendCapability::DetailRead,
             Self::WriteCommand => GitBackendCapability::Write,
         }
     }
@@ -447,6 +468,7 @@ impl GitBackendRoutingPolicy {
             GitOperationKind::ReadRepoSummary => self.summary_reads,
             GitOperationKind::ReadRepoDetail => self.detail_reads,
             GitOperationKind::ReadBranchMergeStatus => self.detail_reads,
+            GitOperationKind::ReadFixupBaseCommitCandidates => self.detail_reads,
             GitOperationKind::ReadDiff => self.diff_reads,
             GitOperationKind::WriteCommand => self.writes,
         };
@@ -504,6 +526,19 @@ pub struct DiffRequest {
     pub ignore_whitespace_in_diff: bool,
     pub diff_context_lines: u16,
     pub rename_similarity_threshold: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixupBaseCommitRequest {
+    pub repo_id: RepoId,
+    pub commit_oids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FixupBaseCommitOutcome {
+    pub hashes: Vec<String>,
+    pub has_staged_changes: bool,
+    pub warn_about_added_lines: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -854,6 +889,16 @@ impl GitBackend for NoopGitBackend {
         })
     }
 
+    fn read_fixup_base_commit_candidates(
+        &self,
+        _request: FixupBaseCommitRequest,
+    ) -> GitResult<FixupBaseCommitOutcome> {
+        Err(GitError::RouteUnavailable {
+            operation: GitOperationKind::ReadFixupBaseCommitCandidates.label(),
+            backend: self.kind().label(),
+        })
+    }
+
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
         Err(GitError::OperationFailed {
             message: format!(
@@ -1029,6 +1074,14 @@ impl GitBackend for CliGitBackend {
                 rename_similarity_threshold: request.rename_similarity_threshold,
             },
         )
+    }
+
+    fn read_fixup_base_commit_candidates(
+        &self,
+        request: FixupBaseCommitRequest,
+    ) -> GitResult<FixupBaseCommitOutcome> {
+        let repo_path = repo_path(&request.repo_id)?;
+        read_fixup_base_commit_candidates(&repo_path, &request.commit_oids)
     }
 
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
@@ -3427,6 +3480,263 @@ fn git_blame_line_range(
         return Err(command_failure(output));
     }
     stdout_raw_string(output)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FixupHunk {
+    filename: PathBuf,
+    start_line_idx: usize,
+    num_lines: usize,
+}
+
+fn read_fixup_base_commit_candidates(
+    repo_path: &Path,
+    commit_oids: &[String],
+) -> GitResult<FixupBaseCommitOutcome> {
+    let (diff, has_staged_changes) = read_fixup_diff(repo_path)?;
+    let (deleted_line_hunks, added_line_hunks) = parse_fixup_diff(&diff);
+
+    let (hashes, warn_about_added_lines) = if !deleted_line_hunks.is_empty() {
+        (
+            blame_deleted_lines(repo_path, &deleted_line_hunks)?,
+            !added_line_hunks.is_empty(),
+        )
+    } else if !added_line_hunks.is_empty() {
+        (
+            blame_added_lines(repo_path, commit_oids, &added_line_hunks)?,
+            false,
+        )
+    } else {
+        return Err(GitError::OperationFailed {
+            message: NO_CHANGED_FILES_MESSAGE.to_string(),
+        });
+    };
+
+    if hashes.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: NO_BASE_COMMITS_FOUND_MESSAGE.to_string(),
+        });
+    }
+
+    Ok(FixupBaseCommitOutcome {
+        hashes,
+        has_staged_changes,
+        warn_about_added_lines,
+    })
+}
+
+fn read_fixup_diff(repo_path: &Path) -> GitResult<(String, bool)> {
+    let args = ["-U0", "--ignore-submodules=all", "HEAD", "--"];
+    let mut has_staged_changes = true;
+    let mut diff = git_stdout_raw(
+        repo_path,
+        [
+            OsStr::new("diff"),
+            OsStr::new("--cached"),
+            OsStr::new(args[0]),
+            OsStr::new(args[1]),
+            OsStr::new(args[2]),
+            OsStr::new(args[3]),
+        ],
+    )?;
+
+    if diff.is_empty() {
+        has_staged_changes = false;
+        diff = git_stdout_raw(
+            repo_path,
+            [
+                OsStr::new("diff"),
+                OsStr::new(args[0]),
+                OsStr::new(args[1]),
+                OsStr::new(args[2]),
+                OsStr::new(args[3]),
+            ],
+        )?;
+    }
+
+    Ok((diff, has_staged_changes))
+}
+
+fn parse_fixup_diff(diff: &str) -> (Vec<FixupHunk>, Vec<FixupHunk>) {
+    let mut deleted_line_hunks = Vec::new();
+    let mut added_line_hunks = Vec::new();
+
+    let mut filename = PathBuf::new();
+    let mut current_hunk: Option<FixupHunk> = None;
+    let mut num_deleted_lines = 0usize;
+    let mut num_added_lines = 0usize;
+
+    let mut finish_hunk = |current_hunk: &mut Option<FixupHunk>,
+                           num_deleted_lines: &mut usize,
+                           num_added_lines: &mut usize| {
+        if let Some(mut hunk) = current_hunk.take() {
+            if *num_deleted_lines > 0 {
+                hunk.num_lines = *num_deleted_lines;
+                deleted_line_hunks.push(hunk);
+            } else if *num_added_lines > 0 {
+                hunk.num_lines = *num_added_lines;
+                added_line_hunks.push(hunk);
+            }
+        }
+        *num_deleted_lines = 0;
+        *num_added_lines = 0;
+    };
+
+    for line in diff.trim_end_matches('\n').lines() {
+        if line.starts_with("diff --git") {
+            finish_hunk(
+                &mut current_hunk,
+                &mut num_deleted_lines,
+                &mut num_added_lines,
+            );
+        } else if current_hunk.is_none() && line.starts_with("--- ") {
+            let raw = line
+                .strip_prefix("--- a/")
+                .or_else(|| line.strip_prefix("--- "))
+                .unwrap_or_default()
+                .trim_end_matches('\t');
+            filename = PathBuf::from(raw);
+        } else if let Some(start_idx) = line.strip_prefix("@@ -").and_then(parse_fixup_hunk_start) {
+            finish_hunk(
+                &mut current_hunk,
+                &mut num_deleted_lines,
+                &mut num_added_lines,
+            );
+            current_hunk = Some(FixupHunk {
+                filename: filename.clone(),
+                start_line_idx: start_idx,
+                num_lines: 0,
+            });
+        } else if current_hunk.is_some() && line.starts_with('-') {
+            num_deleted_lines += 1;
+        } else if current_hunk.is_some() && line.starts_with('+') {
+            num_added_lines += 1;
+        }
+    }
+
+    finish_hunk(
+        &mut current_hunk,
+        &mut num_deleted_lines,
+        &mut num_added_lines,
+    );
+
+    (deleted_line_hunks, added_line_hunks)
+}
+
+fn parse_fixup_hunk_start(header_tail: &str) -> Option<usize> {
+    let old_range = header_tail.split(" +").next()?;
+    let start = old_range.split(',').next()?;
+    start.parse().ok()
+}
+
+fn blame_deleted_lines(repo_path: &Path, hunks: &[FixupHunk]) -> GitResult<Vec<String>> {
+    let mut hashes = HashSet::new();
+    for hunk in hunks {
+        let blame_output = git_blame_line_range(
+            repo_path,
+            &hunk.filename,
+            "HEAD",
+            hunk.start_line_idx,
+            hunk.num_lines,
+        )?;
+        for line in blame_output.trim_end_matches('\n').lines() {
+            if let Some(hash) = line.split(' ').next() {
+                hashes.insert(hash.to_string());
+            }
+        }
+    }
+    Ok(hashes.into_iter().collect())
+}
+
+fn blame_added_lines(
+    repo_path: &Path,
+    commit_oids: &[String],
+    hunks: &[FixupHunk],
+) -> GitResult<Vec<String>> {
+    let commit_positions = commit_oids
+        .iter()
+        .enumerate()
+        .map(|(index, oid)| (oid.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut hashes = HashSet::new();
+
+    for hunk in hunks {
+        let mut candidates = Vec::new();
+        let mut append_blamed_line = |blame_output: String| {
+            let lines = blame_output
+                .trim_end_matches('\n')
+                .lines()
+                .collect::<Vec<_>>();
+            if lines.len() == 1 {
+                if let Some(hash) = lines[0].split(' ').next() {
+                    candidates.push(hash.to_string());
+                }
+            }
+        };
+
+        if hunk.start_line_idx > 0 {
+            let blame_output =
+                git_blame_line_range(repo_path, &hunk.filename, "HEAD", hunk.start_line_idx, 1)?;
+            append_blamed_line(blame_output);
+        }
+
+        match git_blame_line_range(
+            repo_path,
+            &hunk.filename,
+            "HEAD",
+            hunk.start_line_idx + 1,
+            1,
+        ) {
+            Ok(blame_output) => append_blamed_line(blame_output),
+            Err(error) if hunk.start_line_idx > 0 => {
+                let _ = error;
+            }
+            Err(_) => {
+                return Err(GitError::OperationFailed {
+                    message: ENTIRE_FILE_MESSAGE.to_string(),
+                });
+            }
+        }
+
+        match candidates.as_slice() {
+            [hash] => {
+                hashes.insert(hash.clone());
+            }
+            [first, second] if first == second => {
+                hashes.insert(first.clone());
+            }
+            [first, second] => match (
+                commit_positions.get(first.as_str()),
+                commit_positions.get(second.as_str()),
+            ) {
+                (Some(index1), Some(index2)) => {
+                    hashes.insert(if index1 < index2 {
+                        first.clone()
+                    } else {
+                        second.clone()
+                    });
+                }
+                (Some(_), None) => {
+                    hashes.insert(first.clone());
+                }
+                (None, Some(_)) => {
+                    hashes.insert(second.clone());
+                }
+                (None, None) => {
+                    return Err(GitError::OperationFailed {
+                        message: NO_BASE_COMMITS_FOUND_MESSAGE.to_string(),
+                    });
+                }
+            },
+            _ => {
+                return Err(GitError::OperationFailed {
+                    message: NO_BASE_COMMITS_FOUND_MESSAGE.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(hashes.into_iter().collect())
 }
 
 fn stdout_string(output: Output) -> GitResult<String> {
@@ -6512,6 +6822,13 @@ mod tests {
             })
         }
 
+        fn read_fixup_base_commit_candidates(
+            &self,
+            _request: FixupBaseCommitRequest,
+        ) -> GitResult<FixupBaseCommitOutcome> {
+            Ok(FixupBaseCommitOutcome::default())
+        }
+
         fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
             let summary = git_command_label(&request).to_string();
             Ok(GitCommandOutcome {
@@ -7382,6 +7699,178 @@ mod tests {
         assert!(blamed.contains("alpha"));
         assert!(blamed.contains("beta updated"));
         assert!(!blamed.contains("gamma"));
+    }
+
+    #[test]
+    fn parse_fixup_diff_matches_upstream_cases() {
+        let diff = "\
+diff --git a/file1.txt b/file1.txt
+index 9ce8efb33..0632e41b0 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -2 +1,0 @@ aaa
+-bbb
+@@ -4 +3 @@ ccc
+-ddd
++xxx
+@@ -6,0 +6 @@ fff
++zzz
+diff --git a/file2.txt b/file2.txt
+index 9ce8efb33..0632e41b0 100644
+--- a/file2.txt
++++ b/file2.txt
+@@ -0,3 +1,0 @@ aaa
+-aaa
+-bbb
+-ccc
+";
+
+        let (deleted_line_hunks, added_line_hunks) = parse_fixup_diff(diff);
+
+        assert_eq!(
+            deleted_line_hunks,
+            vec![
+                FixupHunk {
+                    filename: PathBuf::from("file1.txt"),
+                    start_line_idx: 2,
+                    num_lines: 1,
+                },
+                FixupHunk {
+                    filename: PathBuf::from("file1.txt"),
+                    start_line_idx: 4,
+                    num_lines: 1,
+                },
+                FixupHunk {
+                    filename: PathBuf::from("file2.txt"),
+                    start_line_idx: 0,
+                    num_lines: 3,
+                },
+            ]
+        );
+        assert_eq!(
+            added_line_hunks,
+            vec![FixupHunk {
+                filename: PathBuf::from("file1.txt"),
+                start_line_idx: 6,
+                num_lines: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn read_fixup_base_commit_candidates_warns_when_added_only_hunks_are_mixed_in() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.git(["checkout", "-b", "mybranch"])
+            .expect("create branch");
+        repo.git(["commit", "--allow-empty", "-m", "1st commit"])
+            .expect("empty commit");
+        repo.write_file("file1", "file1 content\n")
+            .expect("write file1");
+        repo.commit_all("2nd commit").expect("commit file1");
+        repo.write_file("file2", "file2 content\n")
+            .expect("write file2");
+        repo.commit_all("3rd commit").expect("commit file2");
+        repo.write_file("file1", "file1 changed content\n")
+            .expect("update file1");
+        repo.write_file("file2", "file2 content\nadded content")
+            .expect("update file2");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: repo_id.clone(),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail succeeds");
+
+        let outcome = backend
+            .read_fixup_base_commit_candidates(FixupBaseCommitRequest {
+                repo_id,
+                commit_oids: detail
+                    .commits
+                    .iter()
+                    .map(|commit| commit.oid.clone())
+                    .collect(),
+            })
+            .expect("fixup lookup succeeds");
+
+        assert!(!outcome.has_staged_changes);
+        assert!(outcome.warn_about_added_lines);
+        let target = detail
+            .commits
+            .iter()
+            .find(|commit| commit.summary == "2nd commit")
+            .expect("target commit");
+        assert_eq!(outcome.hashes, vec![target.oid.clone()]);
+    }
+
+    #[test]
+    fn read_fixup_base_commit_candidates_resolves_only_added_hunks_from_visible_history() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.git(["checkout", "-b", "mybranch"])
+            .expect("create branch");
+        repo.git(["commit", "--allow-empty", "-m", "1st commit"])
+            .expect("empty commit");
+        repo.write_file("file1", "line A\nline B\nline C\n")
+            .expect("write file1");
+        repo.commit_all("2nd commit").expect("commit file1");
+        repo.write_file("file1", "line A\nline B changed\nline C\n")
+            .expect("update file1 staged");
+        repo.commit_all("3rd commit").expect("commit update");
+        repo.write_file("file2", "line X\nline Y\nline Z\n")
+            .expect("write file2");
+        repo.commit_all("4th commit").expect("commit file2");
+        repo.write_file("file1", "line A\nline B changed\nline B'\nline C\n")
+            .expect("append to file1");
+        repo.write_file("file2", "line W\nline X\nline Y\nline Z\n")
+            .expect("prepend to file2");
+
+        let backend = CliGitBackend;
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: repo_id.clone(),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail succeeds");
+
+        let outcome = backend
+            .read_fixup_base_commit_candidates(FixupBaseCommitRequest {
+                repo_id,
+                commit_oids: detail
+                    .commits
+                    .iter()
+                    .map(|commit| commit.oid.clone())
+                    .collect(),
+            })
+            .expect("fixup lookup succeeds");
+
+        assert!(!outcome.has_staged_changes);
+        assert!(!outcome.warn_about_added_lines);
+        let expected = detail
+            .commits
+            .iter()
+            .filter(|commit| matches!(commit.summary.as_str(), "4th commit" | "3rd commit"))
+            .map(|commit| commit.oid.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let actual = outcome
+            .hashes
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(actual, expected);
     }
 
     #[test]

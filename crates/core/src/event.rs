@@ -65,6 +65,16 @@ pub enum WorkerEvent {
         repo_id: RepoId,
         error: String,
     },
+    FixupBaseCommitFound {
+        repo_id: RepoId,
+        hashes: Vec<String>,
+        has_staged_changes: bool,
+        warn_about_added_lines: bool,
+    },
+    FixupBaseCommitLookupFailed {
+        repo_id: RepoId,
+        error: String,
+    },
     BranchMergeCheckCompleted {
         repo_id: RepoId,
         branch_name: String,

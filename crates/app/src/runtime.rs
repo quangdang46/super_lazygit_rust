@@ -18,8 +18,8 @@ use super_lazygit_core::{
     Timestamp, WorkerEvent,
 };
 use super_lazygit_git::{
-    BranchMergeStatusRequest, GitCommandOutcome, GitError, GitFacade, GitResult,
-    PatchSelectionRequest, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest,
+    BranchMergeStatusRequest, FixupBaseCommitRequest, GitCommandOutcome, GitError, GitFacade,
+    GitResult, PatchSelectionRequest, RepoDetailRequest, RepoSummaryRequest, WorkspaceScanRequest,
 };
 use super_lazygit_tui::TuiApp;
 use super_lazygit_workspace::WorkspaceRegistry;
@@ -266,6 +266,39 @@ impl AppRuntime {
                                 repo_id: repo_id.clone(),
                                 error: error.to_string(),
                             }));
+                        }
+                    }
+                }
+                Effect::FindBaseCommitForFixup {
+                    repo_id,
+                    commit_oids,
+                } => {
+                    let result =
+                        self.git
+                            .read_fixup_base_commit_candidates(FixupBaseCommitRequest {
+                                repo_id: repo_id.clone(),
+                                commit_oids: commit_oids.clone(),
+                            });
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+
+                    match result {
+                        Ok(outcome) => {
+                            follow_up_events.push(Event::Worker(
+                                WorkerEvent::FixupBaseCommitFound {
+                                    repo_id: repo_id.clone(),
+                                    hashes: outcome.hashes,
+                                    has_staged_changes: outcome.has_staged_changes,
+                                    warn_about_added_lines: outcome.warn_about_added_lines,
+                                },
+                            ));
+                        }
+                        Err(error) => {
+                            follow_up_events.push(Event::Worker(
+                                WorkerEvent::FixupBaseCommitLookupFailed {
+                                    repo_id: repo_id.clone(),
+                                    error: error.to_string(),
+                                },
+                            ));
                         }
                     }
                 }
@@ -930,10 +963,11 @@ mod tests {
     use super::*;
     use super_lazygit_config::AppConfig;
     use super_lazygit_core::{
-        Action, AppMode, AppState, GitCommandRequest, PaneId, RepoSubview, ShellCommandRequest,
+        Action, AppMode, AppState, Effect, GitCommandRequest, PaneId, RepoSubview,
+        ShellCommandRequest,
     };
     use super_lazygit_test_support::{
-        history_preview_repo, staged_and_unstaged_repo, submodule_repo,
+        history_preview_repo, staged_and_unstaged_repo, submodule_repo, temp_repo,
     };
 
     #[test]
@@ -1205,6 +1239,62 @@ mod tests {
 
         let contents = std::fs::read_to_string(repo.path().join("env.txt"))?;
         assert_eq!(contents, "env-ok");
+        Ok(())
+    }
+
+    #[test]
+    fn find_base_commit_for_fixup_effect_emits_worker_event() -> io::Result<()> {
+        let repo = temp_repo()?;
+        repo.git(["checkout", "-b", "mybranch"])?;
+        repo.git(["commit", "--allow-empty", "-m", "1st commit"])?;
+        repo.write_file("file1", "file1 content\n")?;
+        repo.commit_all("2nd commit")?;
+        repo.write_file("file2", "file2 content\n")?;
+        repo.commit_all("3rd commit")?;
+        repo.write_file("file1", "file1 changed content\n")?;
+        repo.write_file("file2", "file2 content\nadded content")?;
+
+        let repo_id = RepoId::new(repo.path().display().to_string());
+        let mut runtime = AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
+            GitFacade::default(),
+        );
+
+        let detail = runtime
+            .git
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: repo_id.clone(),
+                selected_path: None,
+                diff_presentation: super_lazygit_core::DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: super_lazygit_core::CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .map_err(io::Error::other)?;
+        let events = runtime.apply_effects(&[Effect::FindBaseCommitForFixup {
+            repo_id: repo_id.clone(),
+            commit_oids: detail
+                .commits
+                .iter()
+                .map(|commit| commit.oid.clone())
+                .collect(),
+        }]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Worker(WorkerEvent::FixupBaseCommitFound {
+                repo_id: found_repo_id,
+                hashes,
+                has_staged_changes,
+                warn_about_added_lines,
+            }) if found_repo_id == &repo_id
+                && !has_staged_changes
+                && *warn_about_added_lines
+                && hashes.len() == 1
+        )));
         Ok(())
     }
 

@@ -170,6 +170,10 @@ pub enum ConfirmableOperation {
         commit: String,
         summary: String,
     },
+    FindBaseCommitForFixup {
+        pending_selection: String,
+        stage_all: bool,
+    },
     FixupCommit {
         commit: String,
         summary: String,
