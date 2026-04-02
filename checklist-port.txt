@@ -191,7 +191,7 @@
 ./references/lazygit-master/pkg/gui/context/filtered_list_view_model.go
 ./references/lazygit-master/pkg/gui/context/history_trait.go
 ./references/lazygit-master/pkg/gui/context/list_context_trait.go
-./references/lazygit-master/pkg/gui/context/list_renderer.go
+[x] ./references/lazygit-master/pkg/gui/context/list_renderer.go
 ./references/lazygit-master/pkg/gui/context/list_renderer_test.go
 ./references/lazygit-master/pkg/gui/context/list_view_model.go
 ./references/lazygit-master/pkg/gui/context/local_commits_context.go

@@ -1,3 +1,5 @@
+mod list_renderer;
+
 use std::{collections::BTreeMap, time::Instant};
 
 use ratatui::{
@@ -11130,6 +11132,10 @@ mod tests {
             ],
             stashes: vec![
                 super_lazygit_core::StashItem {
+                    index: 0,
+                    recency: "2 hours ago".to_string(),
+                    name: "WIP on main: fixture stash".to_string(),
+                    hash: "deadbeef".to_string(),
                     stash_ref: "stash@{0}".to_string(),
                     label: "stash@{0}: WIP on main: fixture stash".to_string(),
                     changed_files: vec![
@@ -11144,6 +11150,10 @@ mod tests {
                     ],
                 },
                 super_lazygit_core::StashItem {
+                    index: 1,
+                    recency: "1 day ago".to_string(),
+                    name: "On feature: prior experiment".to_string(),
+                    hash: "cafebabe".to_string(),
                     stash_ref: "stash@{1}".to_string(),
                     label: "stash@{1}: On feature: prior experiment".to_string(),
                     changed_files: vec![
