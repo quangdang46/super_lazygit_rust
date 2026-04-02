@@ -171,7 +171,7 @@
 ./references/lazygit-master/pkg/config/keynames.go
 ./references/lazygit-master/pkg/config/pager_config.go
 ./references/lazygit-master/pkg/config/user_config.go
-./references/lazygit-master/pkg/config/user_config_validation.go
+[x] ./references/lazygit-master/pkg/config/user_config_validation.go
 ./references/lazygit-master/pkg/config/user_config_validation_test.go
 ./references/lazygit-master/pkg/constants/links.go
 ./references/lazygit-master/pkg/env/env.go

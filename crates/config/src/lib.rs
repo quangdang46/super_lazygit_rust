@@ -60,15 +60,27 @@ impl AppConfig {
             path: path.clone(),
             source,
         })?;
-        let config = toml::from_str(&contents).map_err(|source| ConfigLoadError::Parse {
+        let config: Self = toml::from_str(&contents).map_err(|source| ConfigLoadError::Parse {
             path: path.clone(),
             source: Box::new(source),
         })?;
+        config
+            .validate()
+            .map_err(|source| ConfigLoadError::Validation {
+                path: path.clone(),
+                source,
+            })?;
 
         Ok(LoadedConfig {
             config,
             source: ConfigSource::File(path),
         })
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        self.editor.validate()?;
+        self.keybindings.validate()?;
+        Ok(())
     }
 }
 
@@ -218,6 +230,26 @@ pub enum ConfigLoadError {
         #[source]
         source: Box<toml::de::Error>,
     },
+    #[error("config file {path} failed validation: {source}")]
+    Validation {
+        path: PathBuf,
+        #[source]
+        source: ConfigValidationError,
+    },
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("{message}")]
+pub struct ConfigValidationError {
+    message: String,
+}
+
+impl ConfigValidationError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +550,22 @@ impl EditorConfig {
             _ => standard_terminal_editor_preset("vim"),
         }
     }
+
+    fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.edit_preset.is_empty() {
+            return Ok(());
+        }
+
+        if supported_editor_presets().contains(&self.edit_preset.as_str()) {
+            Ok(())
+        } else {
+            Err(ConfigValidationError::new(format!(
+                "Unexpected value '{}' for 'editor.edit_preset'. Supported presets: {}",
+                self.edit_preset,
+                supported_editor_presets().join(", ")
+            )))
+        }
+    }
 }
 
 fn standard_terminal_editor_preset(editor: &str) -> EditorPreset {
@@ -591,6 +639,28 @@ fn editor_name_to_preset(editor: &str) -> Option<&'static str> {
         "acme" => Some("acme"),
         _ => None,
     }
+}
+
+fn supported_editor_presets() -> &'static [&'static str] {
+    &[
+        "vi",
+        "vim",
+        "nvim",
+        "nvim-remote",
+        "lvim",
+        "emacs",
+        "micro",
+        "nano",
+        "kakoune",
+        "helix",
+        "helix (hx)",
+        "vscode",
+        "sublime",
+        "bbedit",
+        "xcode",
+        "zed",
+        "acme",
+    ]
 }
 
 fn normalize_editor_name(editor: &str) -> String {
@@ -734,6 +804,67 @@ pub struct KeybindingConfig {
 pub struct KeybindingOverride {
     pub action: String,
     pub keys: Vec<String>,
+}
+
+impl KeybindingConfig {
+    fn validate(&self) -> Result<(), ConfigValidationError> {
+        for override_entry in &self.overrides {
+            if override_entry.action.trim().is_empty() {
+                return Err(ConfigValidationError::new(
+                    "keybindings.overrides action may not be empty",
+                ));
+            }
+            if override_entry.keys.is_empty() {
+                return Err(ConfigValidationError::new(format!(
+                    "keybindings override '{}' must provide at least one key",
+                    override_entry.action
+                )));
+            }
+            for key in &override_entry.keys {
+                if !is_valid_keybinding_key(key) {
+                    return Err(ConfigValidationError::new(format!(
+                        "Unrecognized key '{}' for keybinding override '{}'",
+                        key, override_entry.action
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_valid_keybinding_key(key: &str) -> bool {
+    let normalized = key.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    matches!(
+        normalized,
+        "enter"
+            | "backspace"
+            | "left"
+            | "right"
+            | "up"
+            | "down"
+            | "home"
+            | "end"
+            | "pageup"
+            | "pagedown"
+            | "tab"
+            | "shift+tab"
+            | "delete"
+            | "insert"
+            | "esc"
+            | "space"
+            | " "
+    ) || normalized
+        .strip_prefix("ctrl+")
+        .is_some_and(|suffix| suffix.chars().count() == 1)
+        || normalized.strip_prefix('f').is_some_and(
+            |suffix| matches!(suffix.parse::<u8>(), Ok(value) if (1..=24).contains(&value)),
+        )
+        || normalized.chars().count() == 1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1200,5 +1331,61 @@ command = "nvim"
         );
         assert_eq!(subl.command, "subl -- '/tmp/repo/file.txt'");
         assert!(!subl.suspend);
+    }
+
+    #[test]
+    fn validate_rejects_unknown_editor_preset() {
+        let config = AppConfig {
+            editor: EditorConfig {
+                edit_preset: "unknown-preset".to_string(),
+                ..Default::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let error = config.validate().expect_err("invalid preset should fail");
+        assert!(error
+            .to_string()
+            .contains("Unexpected value 'unknown-preset' for 'editor.edit_preset'"));
+    }
+
+    #[test]
+    fn validate_rejects_unrecognized_keybinding_override_key() {
+        let config = AppConfig {
+            keybindings: KeybindingConfig {
+                overrides: vec![KeybindingOverride {
+                    action: "enter_repo_mode".to_string(),
+                    keys: vec!["not-a-real-key".to_string()],
+                }],
+            },
+            ..AppConfig::default()
+        };
+
+        let error = config
+            .validate()
+            .expect_err("invalid keybinding override should fail");
+        assert!(error.to_string().contains(
+            "Unrecognized key 'not-a-real-key' for keybinding override 'enter_repo_mode'"
+        ));
+    }
+
+    #[test]
+    fn load_with_discovery_surfaces_validation_errors_with_path_context() {
+        let tempdir = tempfile::tempdir().expect("config tempdir");
+        let config_path = tempdir.path().join("invalid-config.toml");
+        fs::write(&config_path, "[editor]\nedit_preset = \"unknown-preset\"\n")
+            .expect("write invalid config");
+
+        let error = AppConfig::load_with_discovery(ConfigDiscovery::new(
+            Some(config_path.clone()),
+            None,
+            None,
+        ))
+        .expect_err("invalid config should fail validation");
+
+        assert!(matches!(
+            error,
+            ConfigLoadError::Validation { ref path, .. } if path == &config_path
+        ));
     }
 }
