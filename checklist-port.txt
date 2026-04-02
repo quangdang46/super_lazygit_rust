@@ -166,7 +166,7 @@
 ./references/lazygit-master/pkg/config/config_linux.go
 ./references/lazygit-master/pkg/config/config_windows.go
 ./references/lazygit-master/pkg/config/dummies.go
-./references/lazygit-master/pkg/config/editor_presets.go
+[x] ./references/lazygit-master/pkg/config/editor_presets.go
 ./references/lazygit-master/pkg/config/editor_presets_test.go
 ./references/lazygit-master/pkg/config/keynames.go
 ./references/lazygit-master/pkg/config/pager_config.go

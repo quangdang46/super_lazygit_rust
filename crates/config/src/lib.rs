@@ -1155,4 +1155,50 @@ command = "nvim"
         assert_eq!(resolved.command, "code --add '/tmp/repo'");
         assert!(resolved.suspend);
     }
+
+    #[test]
+    fn nvim_remote_preset_matches_upstream_shell_variants() {
+        let config = EditorConfig {
+            edit_preset: "nvim-remote".to_string(),
+            ..Default::default()
+        };
+
+        let fish =
+            config.resolve_edit_command("fish", Path::new("/tmp/repo/file.txt"), String::new);
+        assert!(fish
+            .command
+            .starts_with("begin; if test -z \"$NVIM\"; nvim -- '/tmp/repo/file.txt'; else;"));
+        assert!(fish.suspend);
+
+        let nu = config.resolve_edit_command("nu", Path::new("/tmp/repo/file.txt"), String::new);
+        assert!(nu.command.starts_with(
+            "if ($env | get -i NVIM | is-empty) { nvim -- '/tmp/repo/file.txt' } else {"
+        ));
+        assert!(nu.suspend);
+
+        let sh = config.resolve_edit_command("sh", Path::new("/tmp/repo/file.txt"), String::new);
+        assert!(sh
+            .command
+            .starts_with("[ -z \"$NVIM\" ] && (nvim -- '/tmp/repo/file.txt') ||"));
+        assert!(sh.suspend);
+    }
+
+    #[test]
+    fn guessed_editor_maps_upstream_aliases_to_presets() {
+        let hx = EditorConfig::default().resolve_edit_command(
+            "sh",
+            Path::new("/tmp/repo/file.txt"),
+            || "hx".to_string(),
+        );
+        assert_eq!(hx.command, "hx -- '/tmp/repo/file.txt'");
+        assert!(hx.suspend);
+
+        let subl = EditorConfig::default().resolve_edit_command(
+            "sh",
+            Path::new("/tmp/repo/file.txt"),
+            || "subl".to_string(),
+        );
+        assert_eq!(subl.command, "subl -- '/tmp/repo/file.txt'");
+        assert!(!subl.suspend);
+    }
 }

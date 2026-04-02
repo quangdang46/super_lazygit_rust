@@ -49,7 +49,7 @@ OS command behavior:
 | --- | --- | --- | --- |
 | `command` | `String` | `""` | Legacy command surface; only used when template fields are empty |
 | `args` | `Vec<String>` | `[]` | Legacy argument list; each value is shell-quoted and `{{filename}}` or `{{dir}}` is appended automatically |
-| `edit_preset` | `String` | `""` | Optional preset name such as `vim`, `nvim`, `vscode`, `helix`, `sublime`, `zed`, or `nvim-remote` |
+| `edit_preset` | `String` | `""` | Optional preset name such as `vi`, `vim`, `nvim`, `nvim-remote`, `lvim`, `emacs`, `micro`, `nano`, `kakoune`, `helix`, `helix (hx)`, `vscode`, `sublime`, `bbedit`, `xcode`, `zed`, or `acme` |
 | `edit` | `String` | `""` | Full shell template for opening a file |
 | `edit_at_line` | `String` | `""` | Full shell template for opening a file at a line |
 | `edit_at_line_and_wait` | `String` | `""` | Full shell template for opening a file at a line and waiting for exit |
