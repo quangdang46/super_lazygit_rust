@@ -12,10 +12,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::state::GitFlowBranchType;
 use super_lazygit_core::{
-    BisectState, BranchItem, CommitDivergence, CommitFileItem, CommitHistoryMode, CommitItem,
-    CommitStatus, CommitTodoAction, ComparisonTarget, Diagnostics, DiagnosticsSnapshot, DiffHunk,
-    DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind, GitCommand,
-    GitCommandRequest, HeadKind, MergeFastForwardPreference, MergeState, MergeVariant,
+    Author, BisectState, BranchItem, CommitDivergence, CommitFileItem, CommitHistoryMode,
+    CommitItem, CommitStatus, CommitTodoAction, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
+    DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
+    GitCommand, GitCommandRequest, HeadKind, MergeFastForwardPreference, MergeState, MergeVariant,
     PatchApplicationMode, RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem,
     RemoteItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem,
     StashMode, SubmoduleItem, TagItem, Timestamp, WatcherFreshness, WorkingTreeState, WorktreeItem,
@@ -32,6 +32,8 @@ const GIT_INDEX_LOCK_MARKER: &str = ".git/index.lock";
 const GIT_INDEX_LOCK_RETRY_COUNT: usize = 5;
 const GIT_INDEX_LOCK_RETRY_WAIT: Duration = Duration::from_millis(50);
 const DEFAULT_MAIN_BRANCH_NAMES: [&str; 2] = ["master", "main"];
+#[allow(dead_code)]
+const INVALID_COMMIT_INDEX_MESSAGE: &str = "invalid commit index";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GitCommandBuilder {
@@ -2729,6 +2731,96 @@ fn is_truthy(value: &str) -> bool {
 
 fn git_flow_prefixes(repo_path: &Path) -> String {
     CachedGitConfig::new(repo_path).get_general("--local --get-regexp gitflow.prefix")
+}
+
+#[allow(dead_code)]
+fn get_commit_message(repo_path: &Path, commit_hash: &str) -> GitResult<String> {
+    git_stdout(
+        repo_path,
+        ["log", "--format=%B", "--max-count=1", commit_hash],
+    )
+    .map(|message| strings_normalize_commit_message(&message))
+}
+
+#[allow(dead_code)]
+fn get_commit_subject(repo_path: &Path, commit_hash: &str) -> GitResult<String> {
+    git_stdout(
+        repo_path,
+        ["log", "--format=%s", "--max-count=1", commit_hash],
+    )
+}
+
+#[allow(dead_code)]
+fn get_commit_diff(repo_path: &Path, commit_hash: &str) -> GitResult<String> {
+    git_stdout_raw(repo_path, ["show", "--no-color", commit_hash])
+}
+
+#[allow(dead_code)]
+fn get_commit_author(repo_path: &Path, commit_hash: &str) -> GitResult<Author> {
+    let output = git_stdout_raw(
+        repo_path,
+        [
+            "show",
+            "--no-patch",
+            "--pretty=format:%an%x00%ae",
+            commit_hash,
+        ],
+    )?;
+    let split = output.trim().splitn(2, '\0').collect::<Vec<_>>();
+    if split.len() < 2 {
+        return Err(GitError::OperationFailed {
+            message: "unexpected git output".to_string(),
+        });
+    }
+    Ok(Author {
+        name: split[0].to_string(),
+        email: split[1].to_string(),
+    })
+}
+
+#[allow(dead_code)]
+fn get_commit_messages_first_line(repo_path: &Path, hashes: &[String]) -> GitResult<String> {
+    let mut args = vec![
+        OsString::from("show"),
+        OsString::from("--no-patch"),
+        OsString::from("--pretty=format:%s"),
+    ];
+    args.extend(hashes.iter().map(OsString::from));
+    git_stdout_raw(repo_path, args)
+}
+
+#[allow(dead_code)]
+fn get_commits_oneline(repo_path: &Path, hashes: &[String]) -> GitResult<String> {
+    let mut args = vec![
+        OsString::from("show"),
+        OsString::from("--no-patch"),
+        OsString::from("--oneline"),
+    ];
+    args.extend(hashes.iter().map(OsString::from));
+    git_stdout_raw(repo_path, args)
+}
+
+#[allow(dead_code)]
+fn get_commit_message_from_history(repo_path: &Path, value: usize) -> GitResult<String> {
+    let skip = format!("--skip={value}");
+    let hash = git_stdout(repo_path, ["log", "-1", skip.as_str(), "--pretty=%H"])?;
+    let formatted_hash = hash.trim();
+    if formatted_hash.is_empty() {
+        return Err(GitError::OperationFailed {
+            message: INVALID_COMMIT_INDEX_MESSAGE.to_string(),
+        });
+    }
+    get_commit_message(repo_path, formatted_hash)
+}
+
+#[allow(dead_code)]
+fn strings_normalize_commit_message(message: &str) -> String {
+    strings_trim_lines(message).replace("\r\n", "\n")
+}
+
+#[allow(dead_code)]
+fn strings_trim_lines(value: &str) -> String {
+    value.trim().to_string()
 }
 
 fn merge_ref_args(target_ref: &str, variant: MergeVariant) -> Vec<OsString> {
@@ -9661,6 +9753,54 @@ mod tests {
         )
         .expect("body text");
         assert!(body.contains("Co-authored-by: Pair Dev <pair@example.com>"));
+    }
+
+    #[test]
+    fn commit_helpers_return_author_subject_diff_and_history_messages() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let head = repo.rev_parse("HEAD").expect("head");
+        let repo_path = repo.path();
+
+        let author = get_commit_author(repo_path, &head).expect("author");
+        assert_eq!(
+            author,
+            Author {
+                name: "Super Lazygit Tests".to_string(),
+                email: "tests@example.com".to_string(),
+            }
+        );
+        assert_eq!(author.combined(), "Super Lazygit Tests <tests@example.com>");
+
+        let subject = get_commit_subject(repo_path, &head).expect("subject");
+        assert_eq!(subject, "add lib");
+
+        let diff = get_commit_diff(repo_path, &head).expect("diff");
+        assert!(diff.contains("src/lib.rs"));
+        assert!(diff.contains("add lib"));
+
+        let first_line = get_commit_messages_first_line(repo_path, std::slice::from_ref(&head))
+            .expect("first line");
+        assert_eq!(first_line.trim(), "add lib");
+
+        let oneline = get_commits_oneline(repo_path, std::slice::from_ref(&head)).expect("oneline");
+        assert!(oneline.contains("add lib"));
+        assert!(oneline.contains(&head[..7]));
+
+        let message = get_commit_message_from_history(repo_path, 0).expect("message");
+        assert_eq!(message, "add lib");
+    }
+
+    #[test]
+    fn commit_message_from_history_rejects_invalid_index() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let error = get_commit_message_from_history(repo.path(), 99).expect_err("invalid index");
+
+        assert_eq!(
+            error,
+            GitError::OperationFailed {
+                message: INVALID_COMMIT_INDEX_MESSAGE.to_string(),
+            }
+        );
     }
 
     #[test]

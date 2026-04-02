@@ -63,7 +63,7 @@
 ./references/lazygit-master/pkg/commands/git_commands/branch_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/branch_loader_test.go
 ./references/lazygit-master/pkg/commands/git_commands/branch_test.go
-./references/lazygit-master/pkg/commands/git_commands/commit.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/commit.go
 ./references/lazygit-master/pkg/commands/git_commands/commit_file_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/commit_file_loader_test.go
 ./references/lazygit-master/pkg/commands/git_commands/commit_loader.go
@@ -118,7 +118,7 @@
 ./references/lazygit-master/pkg/commands/hosting_service/definitions.go
 [x] ./references/lazygit-master/pkg/commands/hosting_service/hosting_service.go
 ./references/lazygit-master/pkg/commands/hosting_service/hosting_service_test.go
-./references/lazygit-master/pkg/commands/models/author.go
+[x] ./references/lazygit-master/pkg/commands/models/author.go
 ./references/lazygit-master/pkg/commands/models/branch.go
 ./references/lazygit-master/pkg/commands/models/commit.go
 [x] ./references/lazygit-master/pkg/commands/models/commit_file.go

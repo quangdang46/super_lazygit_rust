@@ -1726,6 +1726,19 @@ pub struct RemoteBranchItem {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Author {
+    pub name: String,
+    pub email: String,
+}
+
+impl Author {
+    #[must_use]
+    pub fn combined(&self) -> String {
+        format!("{} <{}>", self.name, self.email)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagItem {
     pub name: String,
     pub target_oid: String,
@@ -2399,7 +2412,7 @@ pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &st
 #[cfg(test)]
 mod tests {
     use super::{
-        visible_status_entries, workspace_attention_score, BranchItem, CommitFilesMode,
+        visible_status_entries, workspace_attention_score, Author, BranchItem, CommitFilesMode,
         EffectiveWorkingTreeState, FileStatus, FileStatusKind, GitRef, ListViewState,
         OperationProgress, PaneId, RemoteBranchItem, RemoteSummary, RepoDetail, RepoId,
         RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, TagItem, Timestamp,
@@ -2501,6 +2514,16 @@ mod tests {
         assert_eq!(tag.short_ref_name(), "v1.2.3");
         assert_eq!(tag.parent_ref_name(), "v1.2.3^");
         assert_eq!(tag.description(), "release summary");
+    }
+
+    #[test]
+    fn author_combined_matches_upstream_format() {
+        let author = Author {
+            name: "Jane Dev".to_string(),
+            email: "jane@example.com".to_string(),
+        };
+
+        assert_eq!(author.combined(), "Jane Dev <jane@example.com>");
     }
 
     #[test]
