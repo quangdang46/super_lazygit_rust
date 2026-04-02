@@ -121,9 +121,9 @@
 ./references/lazygit-master/pkg/commands/models/author.go
 ./references/lazygit-master/pkg/commands/models/branch.go
 ./references/lazygit-master/pkg/commands/models/commit.go
-./references/lazygit-master/pkg/commands/models/commit_file.go
-./references/lazygit-master/pkg/commands/models/file.go
-./references/lazygit-master/pkg/commands/models/ref.go
+[x] ./references/lazygit-master/pkg/commands/models/commit_file.go
+[x] ./references/lazygit-master/pkg/commands/models/file.go
+[x] ./references/lazygit-master/pkg/commands/models/ref.go
 ./references/lazygit-master/pkg/commands/models/remote.go
 ./references/lazygit-master/pkg/commands/models/remote_branch.go
 ./references/lazygit-master/pkg/commands/models/stash_entry.go
@@ -955,10 +955,10 @@
 ./references/lazygit-master/pkg/tasks/async_handler_test.go
 ./references/lazygit-master/pkg/tasks/tasks.go
 ./references/lazygit-master/pkg/tasks/tasks_test.go
-./references/lazygit-master/pkg/theme/gocui.go
-./references/lazygit-master/pkg/theme/style.go
+[x] ./references/lazygit-master/pkg/theme/gocui.go
+[x] ./references/lazygit-master/pkg/theme/style.go
 ./references/lazygit-master/pkg/theme/style_test.go
-./references/lazygit-master/pkg/theme/theme.go
+[x] ./references/lazygit-master/pkg/theme/theme.go
 ./references/lazygit-master/pkg/updates/updates.go
 ./references/lazygit-master/pkg/utils/color.go
 ./references/lazygit-master/pkg/utils/color_test.go
