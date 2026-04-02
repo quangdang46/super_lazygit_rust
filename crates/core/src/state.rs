@@ -1225,6 +1225,7 @@ pub struct RepoDetail {
     pub reflog_items: Vec<ReflogItem>,
     pub worktrees: Vec<WorktreeItem>,
     pub submodules: Vec<SubmoduleItem>,
+    pub working_tree_state: WorkingTreeState,
     pub commit_input: String,
     pub merge_state: MergeState,
     pub merge_fast_forward_preference: MergeFastForwardPreference,
@@ -1256,6 +1257,72 @@ pub struct RebaseState {
     pub current_commit: Option<String>,
     pub current_summary: Option<String>,
     pub todo_preview: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkingTreeState {
+    pub rebasing: bool,
+    pub merging: bool,
+    pub cherry_picking: bool,
+    pub reverting: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EffectiveWorkingTreeState {
+    #[default]
+    None,
+    Rebasing,
+    Merging,
+    CherryPicking,
+    Reverting,
+}
+
+impl WorkingTreeState {
+    #[must_use]
+    pub const fn any(self) -> bool {
+        self.rebasing || self.merging || self.cherry_picking || self.reverting
+    }
+
+    #[must_use]
+    pub const fn none(self) -> bool {
+        !self.any()
+    }
+
+    #[must_use]
+    pub const fn effective(self) -> EffectiveWorkingTreeState {
+        if self.reverting {
+            EffectiveWorkingTreeState::Reverting
+        } else if self.cherry_picking {
+            EffectiveWorkingTreeState::CherryPicking
+        } else if self.merging {
+            EffectiveWorkingTreeState::Merging
+        } else if self.rebasing {
+            EffectiveWorkingTreeState::Rebasing
+        } else {
+            EffectiveWorkingTreeState::None
+        }
+    }
+
+    #[must_use]
+    pub const fn command_name(self) -> &'static str {
+        match self.effective() {
+            EffectiveWorkingTreeState::None => "",
+            EffectiveWorkingTreeState::Rebasing => "rebase",
+            EffectiveWorkingTreeState::Merging => "merge",
+            EffectiveWorkingTreeState::CherryPicking => "cherry-pick",
+            EffectiveWorkingTreeState::Reverting => "revert",
+        }
+    }
+
+    #[must_use]
+    pub const fn can_show_todos(self) -> bool {
+        self.rebasing || self.cherry_picking || self.reverting
+    }
+
+    #[must_use]
+    pub const fn can_skip(self) -> bool {
+        self.rebasing || self.cherry_picking || self.reverting
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2306,12 +2373,12 @@ pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &st
 #[cfg(test)]
 mod tests {
     use super::{
-        visible_status_entries, workspace_attention_score, BranchItem, CommitFilesMode, FileStatus,
-        FileStatusKind, GitRef, ListViewState, OperationProgress, PaneId, RemoteBranchItem,
-        RemoteSummary, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
-        StatusFilterMode, TagItem, Timestamp, VisibleStatusEntryKind, WorkspaceFilterMode,
-        WorkspaceSortMode, WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES,
-        DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        visible_status_entries, workspace_attention_score, BranchItem, CommitFilesMode,
+        EffectiveWorkingTreeState, FileStatus, FileStatusKind, GitRef, ListViewState,
+        OperationProgress, PaneId, RemoteBranchItem, RemoteSummary, RepoDetail, RepoId,
+        RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, TagItem, Timestamp,
+        VisibleStatusEntryKind, WorkingTreeState, WorkspaceFilterMode, WorkspaceSortMode,
+        WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -2408,6 +2475,73 @@ mod tests {
         assert_eq!(tag.short_ref_name(), "v1.2.3");
         assert_eq!(tag.parent_ref_name(), "v1.2.3^");
         assert_eq!(tag.description(), "release summary");
+    }
+
+    #[test]
+    fn working_tree_state_effective_matches_upstream_priority() {
+        assert_eq!(
+            WorkingTreeState::default().effective(),
+            EffectiveWorkingTreeState::None
+        );
+        assert_eq!(
+            WorkingTreeState {
+                rebasing: true,
+                merging: true,
+                cherry_picking: true,
+                reverting: true,
+            }
+            .effective(),
+            EffectiveWorkingTreeState::Reverting
+        );
+        assert_eq!(
+            WorkingTreeState {
+                rebasing: true,
+                merging: true,
+                cherry_picking: true,
+                reverting: false,
+            }
+            .effective(),
+            EffectiveWorkingTreeState::CherryPicking
+        );
+        assert_eq!(
+            WorkingTreeState {
+                rebasing: true,
+                merging: true,
+                cherry_picking: false,
+                reverting: false,
+            }
+            .effective(),
+            EffectiveWorkingTreeState::Merging
+        );
+        assert_eq!(
+            WorkingTreeState {
+                rebasing: true,
+                ..WorkingTreeState::default()
+            }
+            .effective(),
+            EffectiveWorkingTreeState::Rebasing
+        );
+    }
+
+    #[test]
+    fn working_tree_state_helpers_match_upstream_behavior() {
+        let state = WorkingTreeState {
+            rebasing: true,
+            ..WorkingTreeState::default()
+        };
+        assert!(state.any());
+        assert!(!state.none());
+        assert_eq!(state.command_name(), "rebase");
+        assert!(state.can_show_todos());
+        assert!(state.can_skip());
+
+        let merge = WorkingTreeState {
+            merging: true,
+            ..WorkingTreeState::default()
+        };
+        assert_eq!(merge.command_name(), "merge");
+        assert!(!merge.can_show_todos());
+        assert!(!merge.can_skip());
     }
 
     #[test]

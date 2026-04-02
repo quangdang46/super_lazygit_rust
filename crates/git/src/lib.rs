@@ -18,7 +18,7 @@ use super_lazygit_core::{
     GitCommandRequest, HeadKind, MergeFastForwardPreference, MergeState, MergeVariant,
     PatchApplicationMode, RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem,
     RemoteItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem,
-    StashMode, SubmoduleItem, TagItem, Timestamp, WatcherFreshness, WorktreeItem,
+    StashMode, SubmoduleItem, TagItem, Timestamp, WatcherFreshness, WorkingTreeState, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -978,6 +978,7 @@ impl GitBackend for CliGitBackend {
             read_fast_forward_merge_targets(&repo_path, &branches, &remote_branches);
         let remotes = read_remotes(&repo_path, &remote_branches);
         let submodules = read_submodules(&repo_path);
+        let working_tree_state = read_working_tree_state(&repo_path);
         Ok(RepoDetail {
             file_tree: status.file_tree,
             diff,
@@ -993,8 +994,9 @@ impl GitBackend for CliGitBackend {
             reflog_items: read_reflog(&repo_path),
             worktrees: read_worktrees(&repo_path),
             submodules,
+            working_tree_state,
             commit_input: String::new(),
-            merge_state: read_merge_state(&repo_path),
+            merge_state: read_merge_state(working_tree_state),
             merge_fast_forward_preference: read_merge_fast_forward_preference(&repo_path),
             fast_forward_merge_targets,
         })
@@ -5817,20 +5819,58 @@ fn read_bisect_state(repo_path: &Path) -> Option<BisectState> {
     })
 }
 
-fn read_merge_state(repo_path: &Path) -> MergeState {
-    if git_path_exists(repo_path, "MERGE_HEAD") {
+fn read_working_tree_state(repo_path: &Path) -> WorkingTreeState {
+    WorkingTreeState {
+        rebasing: is_rebase_in_progress(repo_path),
+        merging: is_merge_in_progress(repo_path),
+        cherry_picking: is_cherry_pick_in_progress(repo_path),
+        reverting: is_revert_in_progress(repo_path),
+    }
+}
+
+fn read_merge_state(working_tree_state: WorkingTreeState) -> MergeState {
+    if working_tree_state.merging {
         MergeState::MergeInProgress
-    } else if git_path_exists(repo_path, "rebase-merge")
-        || git_path_exists(repo_path, "rebase-apply")
-    {
+    } else if working_tree_state.rebasing {
         MergeState::RebaseInProgress
-    } else if git_path_exists(repo_path, "CHERRY_PICK_HEAD") {
+    } else if working_tree_state.cherry_picking {
         MergeState::CherryPickInProgress
-    } else if git_path_exists(repo_path, "REVERT_HEAD") {
+    } else if working_tree_state.reverting {
         MergeState::RevertInProgress
     } else {
         MergeState::None
     }
+}
+
+fn is_rebase_in_progress(repo_path: &Path) -> bool {
+    git_path_exists(repo_path, "rebase-merge") || git_path_exists(repo_path, "rebase-apply")
+}
+
+fn is_merge_in_progress(repo_path: &Path) -> bool {
+    git_path_exists(repo_path, "MERGE_HEAD")
+}
+
+fn is_cherry_pick_in_progress(repo_path: &Path) -> bool {
+    let Some(cherry_pick_head) =
+        resolve_git_path(repo_path, "CHERRY_PICK_HEAD").and_then(|path| read_trimmed_file(&path))
+    else {
+        return false;
+    };
+
+    let stopped_sha = resolve_git_path(repo_path, "rebase-merge/stopped-sha")
+        .and_then(|path| read_trimmed_file(&path));
+    if stopped_sha
+        .as_deref()
+        .is_some_and(|stopped_sha| cherry_pick_head.starts_with(stopped_sha))
+    {
+        return false;
+    }
+
+    true
+}
+
+fn is_revert_in_progress(repo_path: &Path) -> bool {
+    git_path_exists(repo_path, "REVERT_HEAD")
 }
 
 fn git_path_exists(repo_path: &Path, git_path: &str) -> bool {
@@ -5893,6 +5933,263 @@ struct ParsedPatch {
 struct ParsedHunk {
     selection: SelectedHunk,
     raw: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParsedPatchLineKind {
+    Header,
+    HunkHeader,
+    Addition,
+    Deletion,
+    Context,
+    NoNewlineMarker,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedPatchLine {
+    content: String,
+    kind: ParsedPatchLineKind,
+}
+
+#[allow(dead_code)]
+impl ParsedPatchLine {
+    fn is_change(&self) -> bool {
+        matches!(
+            self.kind,
+            ParsedPatchLineKind::Addition | ParsedPatchLineKind::Deletion
+        )
+    }
+}
+
+#[allow(dead_code)]
+impl ParsedPatch {
+    fn format_plain(&self) -> String {
+        let mut lines = self.header_lines.clone();
+        for hunk in &self.hunks {
+            lines.extend(hunk.raw.lines().map(ToString::to_string));
+        }
+        lines.join("\n")
+    }
+
+    fn format_range_plain(&self, start_idx: usize, end_idx: usize) -> String {
+        let lines = self.lines();
+        if lines.is_empty() || start_idx > end_idx {
+            return String::new();
+        }
+
+        let start = start_idx.min(lines.len().saturating_sub(1));
+        let end = end_idx.min(lines.len().saturating_sub(1));
+        lines[start..=end]
+            .iter()
+            .map(|line| line.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn lines(&self) -> Vec<ParsedPatchLine> {
+        let mut lines = Vec::new();
+        lines.extend(
+            self.header_lines
+                .iter()
+                .cloned()
+                .map(|content| ParsedPatchLine {
+                    content,
+                    kind: ParsedPatchLineKind::Header,
+                }),
+        );
+        for hunk in &self.hunks {
+            lines.extend(hunk.all_lines());
+        }
+        lines
+    }
+
+    fn hunk_old_start_for_line(&self, idx: usize) -> u32 {
+        self.hunk_containing_line(idx)
+            .map(|hunk_idx| self.hunks[hunk_idx].selection.old_start)
+            .unwrap_or(0)
+    }
+
+    fn hunk_start_idx(&self, hunk_index: usize) -> usize {
+        if self.hunks.is_empty() {
+            return 0;
+        }
+
+        let hunk_index = hunk_index.min(self.hunks.len() - 1);
+        self.header_lines.len()
+            + self
+                .hunks
+                .iter()
+                .take(hunk_index)
+                .map(ParsedHunk::line_count)
+                .sum::<usize>()
+    }
+
+    fn hunk_end_idx(&self, hunk_index: usize) -> usize {
+        if self.hunks.is_empty() {
+            return 0;
+        }
+
+        let hunk_index = hunk_index.min(self.hunks.len() - 1);
+        self.hunk_start_idx(hunk_index) + self.hunks[hunk_index].line_count() - 1
+    }
+
+    fn contains_changes(&self) -> bool {
+        self.hunks.iter().any(ParsedHunk::contains_changes)
+    }
+
+    fn line_number_of_line(&self, idx: usize) -> u32 {
+        if idx < self.header_lines.len() || self.hunks.is_empty() {
+            return 1;
+        }
+
+        let Some(hunk_idx) = self.hunk_containing_line(idx) else {
+            let last_hunk = self.hunks.last().expect("non-empty hunks");
+            return last_hunk.selection.new_start + last_hunk.selection.new_lines.saturating_sub(1);
+        };
+
+        let hunk = &self.hunks[hunk_idx];
+        let hunk_start_idx = self.hunk_start_idx(hunk_idx);
+        let idx_in_hunk = idx - hunk_start_idx;
+        if idx_in_hunk == 0 {
+            return hunk.selection.new_start;
+        }
+
+        let offset = hunk.body_lines()[..idx_in_hunk - 1]
+            .iter()
+            .filter(|line| {
+                matches!(
+                    line.kind,
+                    ParsedPatchLineKind::Addition | ParsedPatchLineKind::Context
+                )
+            })
+            .count() as u32;
+        hunk.selection.new_start + offset
+    }
+
+    fn hunk_containing_line(&self, idx: usize) -> Option<usize> {
+        self.hunks.iter().enumerate().find_map(|(hunk_idx, hunk)| {
+            let start = self.hunk_start_idx(hunk_idx);
+            let end = start + hunk.line_count();
+            (idx >= start && idx < end).then_some(hunk_idx)
+        })
+    }
+
+    fn get_next_change_idx_of_same_included_state(
+        &self,
+        idx: usize,
+        included_lines: &[usize],
+        included: bool,
+    ) -> (usize, bool) {
+        if self.line_count() == 0 {
+            return (0, false);
+        }
+
+        let idx = idx.min(self.line_count() - 1);
+        let lines = self.lines();
+        let is_match = |line_idx: usize, line: &ParsedPatchLine| {
+            let same_included_state = included_lines.contains(&line_idx) == included;
+            line.is_change() && same_included_state
+        };
+
+        for (offset, line) in lines[idx..].iter().enumerate() {
+            if is_match(idx + offset, line) {
+                return (idx + offset, true);
+            }
+        }
+
+        for line_idx in (0..lines.len()).rev() {
+            if is_match(line_idx, &lines[line_idx]) {
+                return (line_idx, true);
+            }
+        }
+
+        (0, false)
+    }
+
+    fn get_next_change_idx(&self, idx: usize) -> usize {
+        self.get_next_change_idx_of_same_included_state(idx, &[], false)
+            .0
+    }
+
+    fn line_count(&self) -> usize {
+        self.header_lines.len() + self.hunks.iter().map(ParsedHunk::line_count).sum::<usize>()
+    }
+
+    fn hunk_count(&self) -> usize {
+        self.hunks.len()
+    }
+
+    fn adjust_line_number(&self, line_number: u32) -> u32 {
+        let mut adjusted = line_number;
+        for hunk in &self.hunks {
+            if hunk.selection.old_start >= line_number {
+                break;
+            }
+            if hunk.selection.old_start + hunk.selection.old_lines > line_number {
+                return hunk.selection.new_start;
+            }
+            adjusted = adjusted + hunk.selection.new_lines - hunk.selection.old_lines;
+        }
+        adjusted
+    }
+
+    fn is_single_hunk_for_whole_file(&self) -> bool {
+        if self.hunks.len() != 1 {
+            return false;
+        }
+
+        let body_lines = self.hunks[0].body_lines();
+        !body_lines.iter().any(|line| {
+            matches!(
+                line.kind,
+                ParsedPatchLineKind::Context | ParsedPatchLineKind::Deletion
+            )
+        }) || !body_lines.iter().any(|line| {
+            matches!(
+                line.kind,
+                ParsedPatchLineKind::Context | ParsedPatchLineKind::Addition
+            )
+        })
+    }
+}
+
+#[allow(dead_code)]
+impl ParsedHunk {
+    fn body_lines(&self) -> Vec<ParsedPatchLine> {
+        self.raw
+            .lines()
+            .skip(1)
+            .map(|content| ParsedPatchLine {
+                content: content.to_string(),
+                kind: match content.chars().next() {
+                    Some('+') => ParsedPatchLineKind::Addition,
+                    Some('-') => ParsedPatchLineKind::Deletion,
+                    Some(' ') => ParsedPatchLineKind::Context,
+                    Some('\\') => ParsedPatchLineKind::NoNewlineMarker,
+                    _ => ParsedPatchLineKind::Context,
+                },
+            })
+            .collect()
+    }
+
+    fn all_lines(&self) -> Vec<ParsedPatchLine> {
+        let mut lines = vec![ParsedPatchLine {
+            content: self.raw.lines().next().unwrap_or_default().to_string(),
+            kind: ParsedPatchLineKind::HunkHeader,
+        }];
+        lines.extend(self.body_lines());
+        lines
+    }
+
+    fn line_count(&self) -> usize {
+        self.raw.lines().count()
+    }
+
+    fn contains_changes(&self) -> bool {
+        self.body_lines().iter().any(ParsedPatchLine::is_change)
+    }
 }
 
 #[cfg(test)]
@@ -8848,6 +9145,10 @@ mod tests {
             .expect("detail should load");
 
         assert_eq!(detail.merge_state, MergeState::RebaseInProgress);
+        assert!(detail.working_tree_state.rebasing);
+        assert!(!detail.working_tree_state.merging);
+        assert!(!detail.working_tree_state.cherry_picking);
+        assert!(!detail.working_tree_state.reverting);
         assert_eq!(
             detail.rebase_state.as_ref().map(|state| state.kind),
             Some(RebaseKind::Interactive)
@@ -10119,6 +10420,10 @@ mod tests {
             .expect("detail should load");
 
         assert_eq!(detail.merge_state, MergeState::CherryPickInProgress);
+        assert!(!detail.working_tree_state.rebasing);
+        assert!(!detail.working_tree_state.merging);
+        assert!(detail.working_tree_state.cherry_picking);
+        assert!(!detail.working_tree_state.reverting);
         assert!(detail
             .file_tree
             .iter()
@@ -10155,10 +10460,41 @@ mod tests {
             .expect("detail should load");
 
         assert_eq!(detail.merge_state, MergeState::RevertInProgress);
+        assert!(!detail.working_tree_state.rebasing);
+        assert!(!detail.working_tree_state.merging);
+        assert!(!detail.working_tree_state.cherry_picking);
+        assert!(detail.working_tree_state.reverting);
         assert!(detail
             .file_tree
             .iter()
             .any(|item| item.kind == FileStatusKind::Conflicted));
+    }
+
+    #[test]
+    fn read_working_tree_state_ignores_rebase_internal_cherry_pick_head() {
+        let repo = rebase_in_progress_repo().expect("fixture repo");
+        let git_dir = resolve_git_path(repo.path(), ".").expect("resolved git dir");
+        let cherry_pick_head =
+            git_stdout(repo.path(), ["rev-parse", "HEAD"]).expect("current head for overlap");
+        let stopped_sha = cherry_pick_head.chars().take(8).collect::<String>();
+        fs::write(
+            git_dir.join("rebase-merge/stopped-sha"),
+            format!("{stopped_sha}\n"),
+        )
+        .expect("write stopped sha");
+        fs::write(
+            git_dir.join("CHERRY_PICK_HEAD"),
+            format!("{cherry_pick_head}\n"),
+        )
+        .expect("write cherry-pick head");
+
+        let state = read_working_tree_state(repo.path());
+
+        assert!(state.rebasing);
+        assert!(!state.merging);
+        assert!(!state.cherry_picking);
+        assert!(!state.reverting);
+        assert_eq!(read_merge_state(state), MergeState::RebaseInProgress);
     }
 
     #[test]
@@ -12199,6 +12535,113 @@ garbage\n";
         assert!(!unstaged.contains("+two staged"));
         assert!(unstaged.contains("+three staged"));
         assert!(unstaged.contains("+four staged"));
+    }
+
+    #[test]
+    fn parsed_patch_exposes_hunk_navigation_and_line_numbers() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -2,3 +2,4 @@ heading
+ line two
+-old three
++new three
+ line four
++line five
+@@ -10,2 +11 @@
+-old ten
+-old eleven
++new ten
+",
+        )
+        .expect("patch should parse");
+
+        assert_eq!(patch.hunk_count(), 2);
+        assert_eq!(patch.line_count(), 14);
+        assert_eq!(patch.hunk_start_idx(0), 4);
+        assert_eq!(patch.hunk_end_idx(0), 9);
+        assert_eq!(patch.hunk_old_start_for_line(6), 2);
+        assert_eq!(patch.hunk_containing_line(11), Some(1));
+        assert_eq!(patch.line_number_of_line(0), 1);
+        assert_eq!(patch.line_number_of_line(4), 2);
+        assert_eq!(patch.line_number_of_line(6), 3);
+        assert_eq!(patch.line_number_of_line(12), 11);
+        assert!(patch.contains_changes());
+    }
+
+    #[test]
+    fn parsed_patch_supports_change_lookup_and_line_adjustment() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -2,3 +2,4 @@
+ line two
+-old three
++new three
+ line four
++line five
+@@ -10,2 +11 @@
+-old ten
+-old eleven
++new ten
+",
+        )
+        .expect("patch should parse");
+
+        assert_eq!(patch.get_next_change_idx(0), 6);
+        assert_eq!(
+            patch.get_next_change_idx_of_same_included_state(0, &[6, 7], true),
+            (6, true)
+        );
+        assert_eq!(
+            patch.get_next_change_idx_of_same_included_state(8, &[6, 7], true),
+            (7, true)
+        );
+        assert_eq!(patch.adjust_line_number(1), 1);
+        assert_eq!(patch.adjust_line_number(3), 2);
+        assert_eq!(patch.adjust_line_number(11), 11);
+        assert_eq!(
+            patch.format_range_plain(4, 7),
+            "@@ -2,3 +2,4 @@\n line two\n-old three\n+new three"
+        );
+    }
+
+    #[test]
+    fn parsed_patch_detects_single_whole_file_hunk() {
+        let additions = parse_patch(
+            "\
+diff --git a/new.txt b/new.txt
+new file mode 100644
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1,2 @@
++one
++two
+",
+        )
+        .expect("patch should parse");
+        let mixed = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,2 @@
+ line one
+-old two
++new two
+",
+        )
+        .expect("patch should parse");
+
+        assert!(additions.is_single_hunk_for_whole_file());
+        assert!(!mixed.is_single_hunk_for_whole_file());
+        assert!(additions.format_plain().contains("new file mode 100644"));
     }
 
     #[test]
