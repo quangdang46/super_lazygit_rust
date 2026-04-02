@@ -1,6 +1,7 @@
 use std::io::{self, IsTerminal, Read, Stdout, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -31,6 +32,8 @@ const PERIODIC_FETCH_INTERVAL: Duration = Duration::from_secs(60);
 const TOAST_EXPIRY_INTERVAL: Duration = Duration::from_millis(250);
 
 pub fn run(runtime: &mut AppRuntime) -> Result<()> {
+    #[cfg(windows)]
+    update_window_title()?;
     let mut session = TerminalSession::enter()?;
     let area = session.terminal.size()?;
     runtime.run([Event::Input(InputEvent::Resize {
@@ -574,6 +577,24 @@ fn current_timestamp() -> Timestamp {
     )
 }
 
+#[cfg(windows)]
+fn update_window_title() -> io::Result<()> {
+    use crossterm::terminal::SetTitle;
+
+    let cwd = std::env::current_dir()?;
+    execute!(io::stdout(), SetTitle(window_title_for_path(&cwd)))
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn window_title_for_path(path: &Path) -> String {
+    let base = path
+        .file_name()
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    format!("{base} - Lazygit")
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyEventState, MediaKeyCode, ModifierKeyCode};
@@ -703,5 +724,14 @@ mod tests {
             Some(InputEvent::MouseWheelDown { column: 9, row: 2 })
         );
         assert_eq!(mouse_input_from_event(1, 1, MouseEventKind::Moved), None);
+    }
+
+    #[test]
+    fn window_title_for_path_uses_leaf_directory_name() {
+        assert_eq!(
+            window_title_for_path(Path::new("/tmp/workspace/repo-a")),
+            "repo-a - Lazygit"
+        );
+        assert_eq!(window_title_for_path(Path::new("/")), "/ - Lazygit");
     }
 }

@@ -146,7 +146,7 @@
 ./references/lazygit-master/pkg/commands/oscommands/os_default_platform.go
 ./references/lazygit-master/pkg/commands/oscommands/os_default_test.go
 ./references/lazygit-master/pkg/commands/oscommands/os_test.go
-./references/lazygit-master/pkg/commands/oscommands/os_windows.go
+[x] ./references/lazygit-master/pkg/commands/oscommands/os_windows.go
 ./references/lazygit-master/pkg/commands/oscommands/os_windows_test.go
 ./references/lazygit-master/pkg/commands/patch/format.go
 ./references/lazygit-master/pkg/commands/patch/hunk.go
