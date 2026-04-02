@@ -142,7 +142,7 @@
 ./references/lazygit-master/pkg/commands/oscommands/dummies.go
 ./references/lazygit-master/pkg/commands/oscommands/fake_cmd_obj_runner.go
 ./references/lazygit-master/pkg/commands/oscommands/gui_io.go
-./references/lazygit-master/pkg/commands/oscommands/os.go
+[x] ./references/lazygit-master/pkg/commands/oscommands/os.go
 ./references/lazygit-master/pkg/commands/oscommands/os_default_platform.go
 ./references/lazygit-master/pkg/commands/oscommands/os_default_test.go
 ./references/lazygit-master/pkg/commands/oscommands/os_test.go

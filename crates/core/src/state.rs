@@ -17,11 +17,21 @@ pub struct AppState {
     pub background_jobs: BTreeMap<JobId, BackgroundJob>,
     pub settings: SettingsSnapshot,
     pub service_domains: BTreeMap<String, String>,
+    pub os: OsConfigSnapshot,
     pub config_path: Option<PathBuf>,
     pub repository_url: Option<String>,
     pub recent_repo_stack: Vec<RepoId>,
     pub workspace: WorkspaceState,
     pub repo_mode: Option<RepoModeState>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OsConfigSnapshot {
+    pub open: String,
+    pub open_link: String,
+    pub copy_to_clipboard_cmd: String,
+    pub read_from_clipboard_cmd: String,
+    pub shell_functions_file: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1657,6 +1667,83 @@ pub struct TagItem {
     pub annotated: bool,
 }
 
+pub trait GitRef {
+    fn full_ref_name(&self) -> String;
+    fn ref_name(&self) -> String;
+    fn short_ref_name(&self) -> String;
+    fn parent_ref_name(&self) -> String;
+    fn description(&self) -> String;
+}
+
+impl GitRef for BranchItem {
+    fn full_ref_name(&self) -> String {
+        if self.detached_head {
+            return self.name.clone();
+        }
+        format!("refs/heads/{}", self.name)
+    }
+
+    fn ref_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn short_ref_name(&self) -> String {
+        self.ref_name()
+    }
+
+    fn parent_ref_name(&self) -> String {
+        format!("{}^", self.ref_name())
+    }
+
+    fn description(&self) -> String {
+        self.ref_name()
+    }
+}
+
+impl GitRef for RemoteBranchItem {
+    fn full_ref_name(&self) -> String {
+        format!("refs/remotes/{}", self.name)
+    }
+
+    fn ref_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn short_ref_name(&self) -> String {
+        self.ref_name()
+    }
+
+    fn parent_ref_name(&self) -> String {
+        format!("{}^", self.ref_name())
+    }
+
+    fn description(&self) -> String {
+        self.ref_name()
+    }
+}
+
+impl GitRef for TagItem {
+    fn full_ref_name(&self) -> String {
+        format!("refs/tags/{}", self.ref_name())
+    }
+
+    fn ref_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn short_ref_name(&self) -> String {
+        self.ref_name()
+    }
+
+    fn parent_ref_name(&self) -> String {
+        format!("{}^", self.ref_name())
+    }
+
+    fn description(&self) -> String {
+        self.summary.clone()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitStatus {
     #[default]
@@ -2219,11 +2306,12 @@ pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &st
 #[cfg(test)]
 mod tests {
     use super::{
-        visible_status_entries, workspace_attention_score, CommitFilesMode, FileStatus,
-        FileStatusKind, ListViewState, OperationProgress, PaneId, RemoteSummary, RepoDetail,
-        RepoId, RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, Timestamp,
-        VisibleStatusEntryKind, WorkspaceFilterMode, WorkspaceSortMode, WorkspaceState,
-        DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        visible_status_entries, workspace_attention_score, BranchItem, CommitFilesMode, FileStatus,
+        FileStatusKind, GitRef, ListViewState, OperationProgress, PaneId, RemoteBranchItem,
+        RemoteSummary, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
+        StatusFilterMode, TagItem, Timestamp, VisibleStatusEntryKind, WorkspaceFilterMode,
+        WorkspaceSortMode, WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES,
+        DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -2272,6 +2360,54 @@ mod tests {
             }),
             ..RepoModeState::new(RepoId::new("repo-a"))
         }
+    }
+
+    #[test]
+    fn git_ref_branch_matches_upstream_semantics() {
+        let branch = BranchItem {
+            name: "main".to_string(),
+            ..BranchItem::default()
+        };
+        assert_eq!(branch.full_ref_name(), "refs/heads/main");
+        assert_eq!(branch.ref_name(), "main");
+        assert_eq!(branch.short_ref_name(), "main");
+        assert_eq!(branch.parent_ref_name(), "main^");
+        assert_eq!(branch.description(), "main");
+
+        let detached = BranchItem {
+            name: "abc1234".to_string(),
+            detached_head: true,
+            ..BranchItem::default()
+        };
+        assert_eq!(detached.full_ref_name(), "abc1234");
+    }
+
+    #[test]
+    fn git_ref_remote_branch_matches_upstream_semantics() {
+        let branch = RemoteBranchItem {
+            name: "origin/feature".to_string(),
+            remote_name: "origin".to_string(),
+            branch_name: "feature".to_string(),
+        };
+        assert_eq!(branch.full_ref_name(), "refs/remotes/origin/feature");
+        assert_eq!(branch.ref_name(), "origin/feature");
+        assert_eq!(branch.short_ref_name(), "origin/feature");
+        assert_eq!(branch.parent_ref_name(), "origin/feature^");
+        assert_eq!(branch.description(), "origin/feature");
+    }
+
+    #[test]
+    fn git_ref_tag_matches_upstream_semantics() {
+        let tag = TagItem {
+            name: "v1.2.3".to_string(),
+            summary: "release summary".to_string(),
+            ..TagItem::default()
+        };
+        assert_eq!(tag.full_ref_name(), "refs/tags/v1.2.3");
+        assert_eq!(tag.ref_name(), "v1.2.3");
+        assert_eq!(tag.short_ref_name(), "v1.2.3");
+        assert_eq!(tag.parent_ref_name(), "v1.2.3^");
+        assert_eq!(tag.description(), "release summary");
     }
 
     #[test]

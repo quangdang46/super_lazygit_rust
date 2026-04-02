@@ -27,6 +27,22 @@ Behavior details:
 | `roots` | `Vec<PathBuf>` | `[]` | Preferred workspace roots used when `--workspace` is omitted |
 | `ignores` | `Vec<String>` | `[".git", "node_modules", "target"]` | Discovery ignore list |
 
+### `os`
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `open` | `String` | `""` | Full shell template for opening a file target; supports `{{filename}}` and `{{.filename}}` |
+| `open_link` | `String` | `""` | Full shell template for opening a browser/link target; supports `{{link}}` and `{{.link}}` |
+| `copy_to_clipboard_cmd` | `String` | `""` | Full shell template for writing to the clipboard; supports `{{text}}` and `{{.text}}` |
+| `read_from_clipboard_cmd` | `String` | `""` | Shell command used when reading from the clipboard |
+| `shell_functions_file` | `String` | `""` | Optional shell startup file sourced before generated shell commands run |
+
+OS command behavior:
+
+- When `open`, `open_link`, or `copy_to_clipboard_cmd` are empty, the runtime keeps the built-in cross-platform fallbacks.
+- When `shell_functions_file` is set, generated shell commands source that file before running the main command body.
+- Clipboard copy, browser-open, and default-app-open actions all route through this layer.
+
 ### `editor`
 
 | Field | Type | Default | Notes |
@@ -122,6 +138,13 @@ Supported routed action IDs:
 [workspace]
 roots = ["/path/to/workspace"]
 ignores = [".git", "node_modules", "target"]
+
+[os]
+open = "code --reuse-window -- {{filename}}"
+open_link = "open {{link}}"
+copy_to_clipboard_cmd = "printf '%s' {{text}} | pbcopy"
+read_from_clipboard_cmd = "pbpaste"
+shell_functions_file = "~/.config/lazygit/shell-functions.sh"
 
 [editor]
 edit_preset = "vscode"

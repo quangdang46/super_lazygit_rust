@@ -14,6 +14,7 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 #[serde(default)]
 pub struct AppConfig {
     pub workspace: WorkspaceConfig,
+    pub os: OsConfig,
     pub editor: EditorConfig,
     pub theme: ThemeConfig,
     pub keybindings: KeybindingConfig,
@@ -223,6 +224,24 @@ impl Default for WorkspaceConfig {
             ignores: default_workspace_ignores(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OsConfig {
+    #[serde(alias = "open", skip_serializing_if = "String::is_empty")]
+    pub open: String,
+    #[serde(alias = "openLink", skip_serializing_if = "String::is_empty")]
+    pub open_link: String,
+    #[serde(alias = "copyToClipboardCmd", skip_serializing_if = "String::is_empty")]
+    pub copy_to_clipboard_cmd: String,
+    #[serde(
+        alias = "readFromClipboardCmd",
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub read_from_clipboard_cmd: String,
+    #[serde(alias = "shellFunctionsFile", skip_serializing_if = "String::is_empty")]
+    pub shell_functions_file: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -612,11 +631,56 @@ fn shell_quote(value: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
     pub preset: ThemePreset,
     pub colors: ThemeColors,
+    #[serde(alias = "activeBorderColor")]
+    pub active_border_color: Vec<String>,
+    #[serde(alias = "inactiveBorderColor")]
+    pub inactive_border_color: Vec<String>,
+    #[serde(alias = "searchingActiveBorderColor")]
+    pub searching_active_border_color: Vec<String>,
+    #[serde(alias = "optionsTextColor")]
+    pub options_text_color: Vec<String>,
+    #[serde(alias = "selectedLineBgColor")]
+    pub selected_line_bg_color: Vec<String>,
+    #[serde(alias = "inactiveViewSelectedLineBgColor")]
+    pub inactive_view_selected_line_bg_color: Vec<String>,
+    #[serde(alias = "cherryPickedCommitFgColor")]
+    pub cherry_picked_commit_fg_color: Vec<String>,
+    #[serde(alias = "cherryPickedCommitBgColor")]
+    pub cherry_picked_commit_bg_color: Vec<String>,
+    #[serde(alias = "markedBaseCommitFgColor")]
+    pub marked_base_commit_fg_color: Vec<String>,
+    #[serde(alias = "markedBaseCommitBgColor")]
+    pub marked_base_commit_bg_color: Vec<String>,
+    #[serde(alias = "unstagedChangesColor")]
+    pub unstaged_changes_color: Vec<String>,
+    #[serde(alias = "defaultFgColor")]
+    pub default_fg_color: Vec<String>,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            preset: ThemePreset::DefaultDark,
+            colors: ThemeColors::default(),
+            active_border_color: vec![String::from("green"), String::from("bold")],
+            inactive_border_color: vec![String::from("default")],
+            searching_active_border_color: vec![String::from("cyan"), String::from("bold")],
+            options_text_color: vec![String::from("blue")],
+            selected_line_bg_color: vec![String::from("blue")],
+            inactive_view_selected_line_bg_color: vec![String::from("bold")],
+            cherry_picked_commit_fg_color: vec![String::from("blue")],
+            cherry_picked_commit_bg_color: vec![String::from("cyan")],
+            marked_base_commit_fg_color: vec![String::from("blue")],
+            marked_base_commit_bg_color: vec![String::from("yellow")],
+            unstaged_changes_color: vec![String::from("red")],
+            default_fg_color: vec![String::from("default")],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -735,11 +799,20 @@ mod tests {
 
         assert!(config.workspace.roots.is_empty());
         assert_eq!(config.workspace.ignores, default_workspace_ignores());
+        assert_eq!(config.os.open, "");
+        assert_eq!(config.os.open_link, "");
+        assert_eq!(config.os.copy_to_clipboard_cmd, "");
+        assert_eq!(config.os.read_from_clipboard_cmd, "");
+        assert_eq!(config.os.shell_functions_file, "");
         assert_eq!(config.editor.command, "");
         assert!(config.editor.args.is_empty());
         assert_eq!(resolved.command, "vim -- '/tmp/repo/file.txt'");
         assert!(resolved.suspend);
         assert_eq!(config.theme.preset, ThemePreset::DefaultDark);
+        assert_eq!(config.theme.active_border_color, ["green", "bold"]);
+        assert_eq!(config.theme.selected_line_bg_color, ["blue"]);
+        assert_eq!(config.theme.inactive_view_selected_line_bg_color, ["bold"]);
+        assert_eq!(config.theme.default_fg_color, ["default"]);
         assert!(config.keybindings.overrides.is_empty());
         assert!(config.diagnostics.enabled);
     }
@@ -749,9 +822,36 @@ mod tests {
         let rendered = default_config_toml().expect("serialize default config");
 
         assert!(rendered.contains("[workspace]"));
+        assert!(rendered.contains("[os]"));
         assert!(rendered.contains("[editor]"));
         assert!(rendered.contains("[theme]"));
+        assert!(rendered.contains("active_border_color = ["));
+        assert!(rendered.contains("selected_line_bg_color = ["));
         assert!(rendered.contains("[diagnostics]"));
+    }
+
+    #[test]
+    fn load_with_discovery_parses_upstream_os_command_overrides() {
+        let parsed: AppConfig = toml::from_str(
+            r#"
+[os]
+open = "custom-open {{filename}}"
+openLink = "custom-link {{link}}"
+copyToClipboardCmd = "copy {{text}}"
+readFromClipboardCmd = "paste"
+shellFunctionsFile = "~/.config/lazygit/functions.sh"
+"#,
+        )
+        .expect("parse os config");
+
+        assert_eq!(parsed.os.open, "custom-open {{filename}}");
+        assert_eq!(parsed.os.open_link, "custom-link {{link}}");
+        assert_eq!(parsed.os.copy_to_clipboard_cmd, "copy {{text}}");
+        assert_eq!(parsed.os.read_from_clipboard_cmd, "paste");
+        assert_eq!(
+            parsed.os.shell_functions_file,
+            "~/.config/lazygit/functions.sh"
+        );
     }
 
     #[test]

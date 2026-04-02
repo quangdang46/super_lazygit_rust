@@ -227,6 +227,13 @@ impl TuiApp {
     pub fn new(mut state: AppState, config: AppConfig) -> Self {
         state.workspace.ensure_visible_selection();
         state.service_domains = config.services.clone();
+        state.os = super_lazygit_core::OsConfigSnapshot {
+            open: config.os.open.clone(),
+            open_link: config.os.open_link.clone(),
+            copy_to_clipboard_cmd: config.os.copy_to_clipboard_cmd.clone(),
+            read_from_clipboard_cmd: config.os.read_from_clipboard_cmd.clone(),
+            shell_functions_file: config.os.shell_functions_file.clone(),
+        };
         let keybinding_overrides = compile_keybinding_overrides(&config);
         Self {
             state,
@@ -4590,6 +4597,7 @@ impl TuiApp {
             &repo_mode.operation_progress,
             content_height,
             self.repo_scroll_state(RepoListScrollTarget::MainUnstaged),
+            theme,
         );
 
         Paragraph::new(lines)
@@ -4610,6 +4618,7 @@ impl TuiApp {
             self.state.focused_pane == PaneId::RepoStaged,
             content_height,
             self.repo_scroll_state(RepoListScrollTarget::MainStaged),
+            theme,
         );
         let title = if repo_mode.is_some_and(|repo_mode| repo_mode.commit_box.focused) {
             match repo_mode.map(|repo_mode| repo_mode.commit_box.mode) {
@@ -5098,6 +5107,7 @@ impl TuiApp {
         repo_mode: &RepoModeState,
         available_lines: usize,
     ) -> Vec<Line<'static>> {
+        let theme = Theme::from_config(&self.config);
         let pane = if repo_mode.main_focus == PaneId::RepoStaged {
             PaneId::RepoStaged
         } else {
@@ -5167,7 +5177,20 @@ impl TuiApp {
                     format!("{indent}{}", entry.label)
                 }
             };
-            lines.push(Line::from(format!("{marker} {kind} {label}")));
+            let style = status_entry_style(
+                if pane == PaneId::RepoStaged {
+                    FileStatusSection::Staged
+                } else {
+                    FileStatusSection::Unstaged
+                },
+                selected_index == Some(index),
+                true,
+                theme,
+            );
+            lines.push(Line::from(Span::styled(
+                format!("{marker} {kind} {label}"),
+                style,
+            )));
         }
         lines.truncate(available_lines);
         lines
@@ -5651,7 +5674,7 @@ impl TuiApp {
                 FooterSegmentKind::Options => {
                     Paragraph::new(options.clone())
                         .alignment(Alignment::Left)
-                        .style(Style::default().fg(theme.foreground))
+                        .style(theme.options_text_style)
                         .render(rect, buffer);
                 }
                 FooterSegmentKind::AppStatus => {
@@ -5673,11 +5696,31 @@ impl TuiApp {
 
     fn pane_style(&self, pane: PaneId, theme: Theme) -> Style {
         if self.state.focused_pane == pane {
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD)
+            if self.pane_is_searching(pane) {
+                theme.searching_active_border_style
+            } else {
+                theme.active_border_style
+            }
         } else {
-            Style::default().fg(theme.muted)
+            theme.inactive_border_style
+        }
+    }
+
+    fn pane_is_searching(&self, pane: PaneId) -> bool {
+        match pane {
+            PaneId::WorkspaceList | PaneId::WorkspacePreview => self.state.workspace.search_focused,
+            PaneId::RepoUnstaged | PaneId::RepoStaged => self
+                .state
+                .repo_mode
+                .as_ref()
+                .is_some_and(|repo_mode| repo_mode.status_filter.focused),
+            PaneId::RepoDetail => self.state.repo_mode.as_ref().is_some_and(|repo_mode| {
+                repo_mode.commits_filter.focused
+                    || repo_mode
+                        .subview_filter(repo_mode.active_subview)
+                        .is_some_and(|filter| filter.focused)
+            }),
+            _ => false,
         }
     }
 
@@ -5753,18 +5796,175 @@ struct Theme {
     success: Color,
     danger: Color,
     muted: Color,
+    active_border_style: Style,
+    inactive_border_style: Style,
+    searching_active_border_style: Style,
+    options_text_style: Style,
+    selected_line_style: Style,
+    inactive_view_selected_line_style: Style,
+    cherry_picked_commit_style: Style,
+    unstaged_changes_style: Style,
 }
 
 impl Theme {
     fn from_config(config: &AppConfig) -> Self {
+        let background = parse_hex_color(&config.theme.colors.background).unwrap_or(Color::Black);
+        let accent = parse_hex_color(&config.theme.colors.accent).unwrap_or(Color::Cyan);
+        let success = parse_hex_color(&config.theme.colors.success).unwrap_or(Color::Green);
+        let danger = parse_hex_color(&config.theme.colors.danger).unwrap_or(Color::Red);
+        let foreground = theme_color_from_tokens(&config.theme.default_fg_color)
+            .or_else(|| parse_hex_color(&config.theme.colors.foreground))
+            .unwrap_or(Color::White);
+
         Self {
-            background: parse_hex_color(&config.theme.colors.background).unwrap_or(Color::Black),
-            foreground: parse_hex_color(&config.theme.colors.foreground).unwrap_or(Color::White),
-            accent: parse_hex_color(&config.theme.colors.accent).unwrap_or(Color::Cyan),
-            success: parse_hex_color(&config.theme.colors.success).unwrap_or(Color::Green),
-            danger: parse_hex_color(&config.theme.colors.danger).unwrap_or(Color::Red),
+            background,
+            foreground,
+            accent,
+            success,
+            danger,
             muted: Color::DarkGray,
+            active_border_style: theme_style_from_tokens(
+                &config.theme.active_border_color,
+                false,
+                Some(accent),
+            ),
+            inactive_border_style: theme_style_from_tokens(
+                &config.theme.inactive_border_color,
+                false,
+                Some(Color::Reset),
+            ),
+            searching_active_border_style: theme_style_from_tokens(
+                &config.theme.searching_active_border_color,
+                false,
+                Some(accent),
+            ),
+            options_text_style: theme_style_from_tokens(
+                &config.theme.options_text_color,
+                false,
+                Some(accent),
+            ),
+            selected_line_style: theme_style_from_tokens(
+                &config.theme.selected_line_bg_color,
+                true,
+                None,
+            ),
+            inactive_view_selected_line_style: theme_style_from_tokens(
+                &config.theme.inactive_view_selected_line_bg_color,
+                true,
+                None,
+            ),
+            cherry_picked_commit_style: theme_style_from_tokens(
+                &config.theme.cherry_picked_commit_fg_color,
+                false,
+                Some(accent),
+            )
+            .patch(theme_style_from_tokens(
+                &config.theme.cherry_picked_commit_bg_color,
+                true,
+                None,
+            )),
+            unstaged_changes_style: theme_style_from_tokens(
+                &config.theme.unstaged_changes_color,
+                false,
+                Some(danger),
+            ),
         }
+    }
+}
+
+fn theme_style_from_tokens(
+    tokens: &[String],
+    background: bool,
+    fallback_color: Option<Color>,
+) -> Style {
+    let mut style = Style::default();
+    let mut applied_color = false;
+
+    for token in tokens {
+        if let Some(modifier) = theme_modifier_token(token) {
+            style = style.add_modifier(modifier);
+            continue;
+        }
+
+        if let Some(color) = theme_color_token(token) {
+            applied_color = true;
+            style = if background {
+                style.bg(color)
+            } else {
+                style.fg(color)
+            };
+        }
+    }
+
+    if !applied_color {
+        if let Some(color) = fallback_color {
+            style = if background {
+                style.bg(color)
+            } else {
+                style.fg(color)
+            };
+        }
+    }
+
+    style
+}
+
+fn theme_color_from_tokens(tokens: &[String]) -> Option<Color> {
+    tokens.iter().find_map(|token| theme_color_token(token))
+}
+
+fn theme_color_token(token: &str) -> Option<Color> {
+    let normalized = token.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "default" => Some(Color::Reset),
+        "black" => Some(Color::Black),
+        "red" => Some(Color::Red),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "blue" => Some(Color::Blue),
+        "magenta" => Some(Color::Magenta),
+        "cyan" => Some(Color::Cyan),
+        "white" => Some(Color::White),
+        _ => parse_hex_color(token),
+    }
+}
+
+fn theme_modifier_token(token: &str) -> Option<Modifier> {
+    match token.trim().to_ascii_lowercase().as_str() {
+        "bold" => Some(Modifier::BOLD),
+        "reverse" => Some(Modifier::REVERSED),
+        "underline" => Some(Modifier::UNDERLINED),
+        "strikethrough" => Some(Modifier::CROSSED_OUT),
+        _ => None,
+    }
+}
+
+fn selected_line_style(style: Style, is_focused: bool, theme: Theme) -> Style {
+    let selection = if is_focused {
+        theme.selected_line_style
+    } else {
+        theme.inactive_view_selected_line_style
+    };
+    style.patch(selection)
+}
+
+fn status_entry_style(
+    section: FileStatusSection,
+    is_selected: bool,
+    is_focused: bool,
+    theme: Theme,
+) -> Style {
+    let base = match section {
+        FileStatusSection::Unstaged => Style::default()
+            .fg(theme.foreground)
+            .patch(theme.unstaged_changes_style),
+        FileStatusSection::Staged => Style::default().fg(theme.foreground),
+    };
+
+    if is_selected {
+        selected_line_style(base, is_focused, theme)
+    } else {
+        base
     }
 }
 
@@ -6754,13 +6954,13 @@ fn repo_remote_branch_lines(
     {
         let branch = &detail.remote_branches[index];
         let style = if index == selected_index {
-            let mut style = Style::default()
-                .fg(theme.foreground)
-                .add_modifier(Modifier::BOLD);
-            if is_focused {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
-            style
+            selected_line_style(
+                Style::default()
+                    .fg(theme.foreground)
+                    .add_modifier(Modifier::BOLD),
+                is_focused,
+                theme,
+            )
         } else {
             Style::default().fg(theme.foreground)
         };
@@ -6865,13 +7065,13 @@ fn repo_remote_lines(
     {
         let remote = &detail.remotes[index];
         let style = if index == selected_index {
-            let mut style = Style::default()
-                .fg(theme.foreground)
-                .add_modifier(Modifier::BOLD);
-            if is_focused {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
-            style
+            selected_line_style(
+                Style::default()
+                    .fg(theme.foreground)
+                    .add_modifier(Modifier::BOLD),
+                is_focused,
+                theme,
+            )
         } else {
             Style::default().fg(theme.foreground)
         };
@@ -6985,13 +7185,13 @@ fn repo_tag_lines(
     {
         let tag = &detail.tags[index];
         let style = if index == selected_index {
-            let mut style = Style::default()
-                .fg(theme.foreground)
-                .add_modifier(Modifier::BOLD);
-            if is_focused {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
-            style
+            selected_line_style(
+                Style::default()
+                    .fg(theme.foreground)
+                    .add_modifier(Modifier::BOLD),
+                is_focused,
+                theme,
+            )
         } else {
             Style::default().fg(theme.foreground)
         };
@@ -7038,10 +7238,7 @@ fn branch_row_style(
     };
 
     if is_selected {
-        style = style.add_modifier(Modifier::BOLD);
-        if is_focused {
-            style = style.add_modifier(Modifier::REVERSED);
-        }
+        style = selected_line_style(style.add_modifier(Modifier::BOLD), is_focused, theme);
     }
 
     style
@@ -7257,10 +7454,7 @@ fn repo_stash_list_lines(
         let stash = &detail.stashes[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
-            style = style.add_modifier(Modifier::BOLD);
-            if is_focused {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
+            style = selected_line_style(style.add_modifier(Modifier::BOLD), is_focused, theme);
         }
         lines.push(Line::from(Span::styled(stash.label.clone(), style)));
     }
@@ -7460,10 +7654,7 @@ fn repo_reflog_lines(
         let entry = &detail.reflog_items[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
-            style = style.add_modifier(Modifier::BOLD);
-            if is_focused {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
+            style = selected_line_style(style.add_modifier(Modifier::BOLD), is_focused, theme);
         }
         lines.push(Line::from(Span::styled(entry.description.clone(), style)));
     }
@@ -7565,10 +7756,7 @@ fn repo_worktree_lines(
         let worktree = &detail.worktrees[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
-            style = style.add_modifier(Modifier::BOLD);
-            if is_focused {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
+            style = selected_line_style(style.add_modifier(Modifier::BOLD), is_focused, theme);
         }
         let branch = worktree.branch.as_deref().unwrap_or("(detached)");
         lines.push(Line::from(Span::styled(
@@ -7689,10 +7877,7 @@ fn repo_submodule_lines(
         let submodule = &detail.submodules[index];
         let mut style = Style::default().fg(theme.foreground);
         if index == selected_index {
-            style = style.add_modifier(Modifier::BOLD);
-            if is_focused {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
+            style = selected_line_style(style.add_modifier(Modifier::BOLD), is_focused, theme);
         }
         let state_label = if submodule.conflicted {
             "conflicted"
@@ -7865,7 +8050,12 @@ fn repo_commit_lines(
                 } else {
                     format!("{} {}", commit.short_oid, commit.summary)
                 };
-                Line::from(format!("{prefix} {row}"))
+                let style = if *index == selected_index {
+                    selected_line_style(Style::default().fg(theme.foreground), true, theme)
+                } else {
+                    Style::default().fg(theme.foreground)
+                };
+                Line::from(Span::styled(format!("{prefix} {row}"), style))
             }),
     );
 
@@ -8283,7 +8473,7 @@ fn copied_commit_line(repo_mode: &RepoModeState, theme: Theme) -> Option<Line<'s
                 "Copied for cherry-pick: {} {}  V paste  Ctrl+R clear",
                 commit.short_oid, commit.summary
             ),
-            Style::default().fg(theme.success),
+            theme.cherry_picked_commit_style,
         )])
     })
 }
@@ -8549,7 +8739,7 @@ fn render_diff_line(
         DiffLineKind::Context => Style::default().fg(theme.foreground),
     };
     let style = if selected_hunk_line {
-        style.add_modifier(Modifier::REVERSED)
+        selected_line_style(style, true, theme)
     } else {
         style
     };
@@ -10173,6 +10363,7 @@ fn repo_unstaged_lines(
     progress: &super_lazygit_core::OperationProgress,
     viewport_lines: usize,
     scroll_state: ListViewportState,
+    theme: Theme,
 ) -> Vec<Line<'static>> {
     let mut lines = repo_status_section_lines(
         repo_mode,
@@ -10180,6 +10371,7 @@ fn repo_unstaged_lines(
         FileStatusSection::Unstaged,
         viewport_lines,
         scroll_state,
+        theme,
     );
     lines.push(Line::from(format!(
         "Progress: {}",
@@ -10193,6 +10385,7 @@ fn repo_staged_lines(
     is_focused: bool,
     viewport_lines: usize,
     scroll_state: ListViewportState,
+    theme: Theme,
 ) -> Vec<Line<'static>> {
     repo_status_section_lines(
         repo_mode,
@@ -10200,6 +10393,7 @@ fn repo_staged_lines(
         FileStatusSection::Staged,
         viewport_lines,
         scroll_state,
+        theme,
     )
 }
 
@@ -10304,6 +10498,7 @@ fn repo_status_section_lines(
     section: FileStatusSection,
     viewport_lines: usize,
     scroll_state: ListViewportState,
+    theme: Theme,
 ) -> Vec<Line<'static>> {
     let pane = match section {
         FileStatusSection::Unstaged => PaneId::RepoUnstaged,
@@ -10404,7 +10599,10 @@ fn repo_status_section_lines(
                         format!("{indent}{}", entry.label)
                     }
                 };
-                Line::from(format!("{marker} {kind} {label}"))
+                Line::from(Span::styled(
+                    format!("{marker} {kind} {label}"),
+                    status_entry_style(section, selected_index == Some(index), is_focused, theme),
+                ))
             }),
     );
     lines
@@ -11700,7 +11898,7 @@ mod tests {
         assert!(matches!(
             open.effects.as_slice(),
             [super_lazygit_core::Effect::RunShellCommand(
-                super_lazygit_core::ShellCommandRequest { job_id, repo_id: actual_repo_id, command }
+                super_lazygit_core::ShellCommandRequest { job_id, repo_id: actual_repo_id, command, .. }
             )]
                 if job_id == &super_lazygit_core::JobId::new("shell:/tmp/repo-1:run-command")
                     && actual_repo_id == &repo_id
@@ -11725,7 +11923,7 @@ mod tests {
         assert!(matches!(
             update.effects.as_slice(),
             [super_lazygit_core::Effect::RunShellCommand(
-                super_lazygit_core::ShellCommandRequest { job_id, repo_id: actual_repo_id, command }
+                super_lazygit_core::ShellCommandRequest { job_id, repo_id: actual_repo_id, command, .. }
             )]
                 if job_id == &super_lazygit_core::JobId::new("shell:/tmp/repo-1:run-command")
                     && actual_repo_id == &repo_id
@@ -12526,6 +12724,7 @@ mod tests {
             FileStatusSection::Unstaged,
             16,
             ListViewportState::default(),
+            Theme::from_config(&AppConfig::default()),
         )
         .iter()
         .map(line_text)
@@ -19226,5 +19425,86 @@ mod tests {
         assert!(overlay_lines
             .iter()
             .any(|line| line.contains("skip pre-commit hooks")));
+    }
+
+    #[test]
+    fn theme_from_config_uses_lazygit_theme_token_defaults() {
+        let theme = Theme::from_config(&AppConfig::default());
+
+        assert_eq!(theme.active_border_style.fg, Some(Color::Green));
+        assert!(theme
+            .active_border_style
+            .add_modifier
+            .contains(Modifier::BOLD));
+        assert_eq!(theme.inactive_border_style.fg, Some(Color::Reset));
+        assert_eq!(theme.options_text_style.fg, Some(Color::Blue));
+        assert_eq!(theme.selected_line_style.bg, Some(Color::Blue));
+        assert!(theme
+            .inactive_view_selected_line_style
+            .add_modifier
+            .contains(Modifier::BOLD));
+        assert_eq!(theme.cherry_picked_commit_style.fg, Some(Color::Blue));
+        assert_eq!(theme.cherry_picked_commit_style.bg, Some(Color::Cyan));
+        assert_eq!(theme.unstaged_changes_style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn theme_from_config_parses_hex_and_modifier_tokens() {
+        let mut config = AppConfig::default();
+        config.theme.default_fg_color = vec!["#102030".to_string()];
+        config.theme.options_text_color = vec!["magenta".to_string(), "bold".to_string()];
+        config.theme.selected_line_bg_color = vec!["#203040".to_string(), "underline".to_string()];
+        config.theme.inactive_view_selected_line_bg_color = vec!["reverse".to_string()];
+
+        let theme = Theme::from_config(&config);
+
+        assert_eq!(theme.foreground, Color::Rgb(0x10, 0x20, 0x30));
+        assert_eq!(theme.options_text_style.fg, Some(Color::Magenta));
+        assert!(theme
+            .options_text_style
+            .add_modifier
+            .contains(Modifier::BOLD));
+        assert_eq!(
+            theme.selected_line_style.bg,
+            Some(Color::Rgb(0x20, 0x30, 0x40))
+        );
+        assert!(theme
+            .selected_line_style
+            .add_modifier
+            .contains(Modifier::UNDERLINED));
+        assert!(theme
+            .inactive_view_selected_line_style
+            .add_modifier
+            .contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn repo_status_section_lines_apply_selected_and_unstaged_theme_styles() {
+        let mut repo_mode = RepoModeState::new(RepoId::new("/tmp/repo-1"));
+        repo_mode.detail = Some(sample_repo_detail());
+        repo_mode.status_view.selected_index = Some(0);
+
+        let theme = Theme::from_config(&AppConfig::default());
+        let lines = repo_status_section_lines(
+            Some(&repo_mode),
+            true,
+            FileStatusSection::Unstaged,
+            16,
+            ListViewportState::default(),
+            theme,
+        );
+
+        let selected_line = lines
+            .iter()
+            .find(|line| {
+                line.spans
+                    .iter()
+                    .any(|span| span.content.as_ref().starts_with("> "))
+            })
+            .expect("selected row");
+        let span = selected_line.spans.first().expect("selected span");
+
+        assert_eq!(span.style.fg, Some(Color::Red));
+        assert_eq!(span.style.bg, Some(Color::Blue));
     }
 }

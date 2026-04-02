@@ -449,7 +449,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
                 return;
             };
-            let command = clipboard_shell_command(std::ffi::OsStr::new(&value));
+            let command = clipboard_shell_command(std::ffi::OsStr::new(&value), &state.os);
             let job = shell_job(repo_id, command);
             enqueue_shell_job(state, &job, &format!("Copy {value}"));
             effects.push(Effect::RunShellCommand(job));
@@ -472,7 +472,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
                 return;
             };
-            let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+            let command = open_in_default_app_command(
+                std::ffi::OsStr::new(&url),
+                &state.os,
+                OsCommandTemplateKind::OpenLink,
+            );
             let job = shell_job(repo_id, command);
             enqueue_shell_job(state, &job, &format!("Open {label} in browser"));
             effects.push(Effect::RunShellCommand(job));
@@ -1755,7 +1759,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         },
         Action::OpenConfigFileInDefaultApp => match selected_config_target(state) {
             Ok(Some((repo_id, _, target))) => {
-                let command = open_in_default_app_command(target.as_os_str());
+                let command = open_in_default_app_command(
+                    target.as_os_str(),
+                    &state.os,
+                    OsCommandTemplateKind::OpenFile,
+                );
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, &format!("Open config {}", target.display()));
                 effects.push(Effect::RunShellCommand(job));
@@ -1776,7 +1784,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         },
         Action::CheckForUpdates => match selected_update_check_target(state) {
             Ok(Some((repo_id, url))) => {
-                let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+                let command = open_in_default_app_command(
+                    std::ffi::OsStr::new(&url),
+                    &state.os,
+                    OsCommandTemplateKind::OpenLink,
+                );
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, "Open release page");
                 effects.push(Effect::RunShellCommand(job));
@@ -1971,14 +1983,19 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 return;
             };
 
-            let command = clipboard_shell_command(std::ffi::OsStr::new(&clipboard_value));
+            let command =
+                clipboard_shell_command(std::ffi::OsStr::new(&clipboard_value), &state.os);
             let job = shell_job(repo_id, command);
             enqueue_shell_job(state, &job, &format!("Copy {clipboard_value}"));
             effects.push(Effect::RunShellCommand(job));
         }
         Action::OpenSelectedCommitInBrowser => match selected_commit_browser_target(state) {
             Ok(Some((repo_id, target))) => {
-                let command = open_in_default_app_command(std::ffi::OsStr::new(&target));
+                let command = open_in_default_app_command(
+                    std::ffi::OsStr::new(&target),
+                    &state.os,
+                    OsCommandTemplateKind::OpenLink,
+                );
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, &format!("Open {target}"));
                 effects.push(Effect::RunShellCommand(job));
@@ -1992,7 +2009,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::CopySelectedStatusPath => match selected_repo_shell_target(state, false) {
             Ok(Some((repo_id, path, is_directory, _))) => {
                 let display_path = status_clipboard_path(&path, is_directory);
-                let command = clipboard_shell_command(display_path.as_os_str());
+                let command = clipboard_shell_command(display_path.as_os_str(), &state.os);
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, &format!("Copy {}", display_path.display()));
                 effects.push(Effect::RunShellCommand(job));
@@ -2006,7 +2023,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::OpenSelectedStatusPathInDefaultApp => {
             match selected_repo_shell_target(state, true) {
                 Ok(Some((repo_id, path, _, _))) => {
-                    let command = open_in_default_app_command(path.as_os_str());
+                    let command = open_in_default_app_command(
+                        path.as_os_str(),
+                        &state.os,
+                        OsCommandTemplateKind::OpenFile,
+                    );
                     let job = shell_job(repo_id, command);
                     enqueue_shell_job(state, &job, &format!("Open {}", path.display()));
                     effects.push(Effect::RunShellCommand(job));
@@ -2321,7 +2342,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 return;
             };
 
-            let command = clipboard_shell_command(std::ffi::OsStr::new(&branch_name));
+            let command = clipboard_shell_command(std::ffi::OsStr::new(&branch_name), &state.os);
             let job = shell_job(repo_id, command);
             enqueue_shell_job(state, &job, &format!("Copy {branch_name}"));
             effects.push(Effect::RunShellCommand(job));
@@ -2432,7 +2453,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::OpenSelectedBranchPullRequest => match selected_branch_pull_request_target(state) {
             Ok(Some((repo_id, url, label))) => {
-                let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+                let command = open_in_default_app_command(
+                    std::ffi::OsStr::new(&url),
+                    &state.os,
+                    OsCommandTemplateKind::OpenLink,
+                );
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, &format!("Open pull request for {label}"));
                 effects.push(Effect::RunShellCommand(job));
@@ -2446,7 +2471,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::CopySelectedBranchPullRequestUrl => {
             match selected_branch_pull_request_target(state) {
                 Ok(Some((repo_id, url, label))) => {
-                    let command = clipboard_shell_command(std::ffi::OsStr::new(&url));
+                    let command = clipboard_shell_command(std::ffi::OsStr::new(&url), &state.os);
                     let job = shell_job(repo_id, command);
                     enqueue_shell_job(state, &job, &format!("Copy pull request URL for {label}"));
                     effects.push(Effect::RunShellCommand(job));
@@ -2562,7 +2587,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 return;
             };
 
-            let command = clipboard_shell_command(std::ffi::OsStr::new(&branch_name));
+            let command = clipboard_shell_command(std::ffi::OsStr::new(&branch_name), &state.os);
             let job = shell_job(repo_id, command);
             enqueue_shell_job(state, &job, &format!("Copy {branch_name}"));
             effects.push(Effect::RunShellCommand(job));
@@ -2663,7 +2688,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::OpenSelectedRemoteBranchPullRequest => {
             match selected_remote_branch_pull_request_target(state) {
                 Ok(Some((repo_id, url, label))) => {
-                    let command = open_in_default_app_command(std::ffi::OsStr::new(&url));
+                    let command = open_in_default_app_command(
+                        std::ffi::OsStr::new(&url),
+                        &state.os,
+                        OsCommandTemplateKind::OpenLink,
+                    );
                     let job = shell_job(repo_id, command);
                     enqueue_shell_job(state, &job, &format!("Open pull request for {label}"));
                     effects.push(Effect::RunShellCommand(job));
@@ -2678,7 +2707,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::CopySelectedRemoteBranchPullRequestUrl => {
             match selected_remote_branch_pull_request_target(state) {
                 Ok(Some((repo_id, url, label))) => {
-                    let command = clipboard_shell_command(std::ffi::OsStr::new(&url));
+                    let command = clipboard_shell_command(std::ffi::OsStr::new(&url), &state.os);
                     let job = shell_job(repo_id, command);
                     enqueue_shell_job(state, &job, &format!("Copy pull request URL for {label}"));
                     effects.push(Effect::RunShellCommand(job));
@@ -2747,7 +2776,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 selected_tag_item(repo_mode)
                     .map(|tag| (repo_mode.current_repo_id.clone(), tag.name.clone()))
             }) {
-                let command = clipboard_shell_command(std::ffi::OsStr::new(&tag_name));
+                let command = clipboard_shell_command(std::ffi::OsStr::new(&tag_name), &state.os);
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, &format!("Copy tag {tag_name}"));
                 effects.push(Effect::RunShellCommand(job));
@@ -2958,7 +2987,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 selected_submodule_item(repo_mode)
                     .map(|item| (repo_mode.current_repo_id.clone(), item.name.clone()))
             }) {
-                let command = clipboard_shell_command(std::ffi::OsStr::new(&name));
+                let command = clipboard_shell_command(std::ffi::OsStr::new(&name), &state.os);
                 let job = shell_job(repo_id, command);
                 enqueue_shell_job(state, &job, &format!("Copy submodule {name}"));
                 effects.push(Effect::RunShellCommand(job));
@@ -5773,7 +5802,7 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
             }
             match selected_commit_clipboard_target(state, target) {
                 Ok(Some((repo_id, value, summary))) => {
-                    let command = clipboard_shell_command(std::ffi::OsStr::new(&value));
+                    let command = clipboard_shell_command(std::ffi::OsStr::new(&value), &state.os);
                     let job = shell_job(repo_id, command);
                     enqueue_shell_job(state, &job, &summary);
                     effects.push(Effect::RunShellCommand(job));
@@ -7231,18 +7260,77 @@ fn status_clipboard_path(path: &std::path::Path, is_directory: bool) -> std::pat
     display_path
 }
 
-fn clipboard_shell_command(value: &std::ffi::OsStr) -> String {
-    let quoted = shell_quote(value);
-    format!(
-        "printf '%s' {quoted} | if command -v wl-copy >/dev/null 2>&1; then wl-copy; elif command -v xclip >/dev/null 2>&1; then xclip -selection clipboard; elif command -v pbcopy >/dev/null 2>&1; then pbcopy; else exit 1; fi"
-    )
+fn clipboard_shell_command(value: &std::ffi::OsStr, os: &crate::state::OsConfigSnapshot) -> String {
+    let command = if os.copy_to_clipboard_cmd.is_empty() {
+        let quoted = shell_quote(value);
+        format!(
+            "printf '%s' {quoted} | if command -v wl-copy >/dev/null 2>&1; then wl-copy; elif command -v xclip >/dev/null 2>&1; then xclip -selection clipboard; elif command -v pbcopy >/dev/null 2>&1; then pbcopy; else exit 1; fi"
+        )
+    } else {
+        resolve_os_command_template(&os.copy_to_clipboard_cmd, "text", value)
+    };
+
+    shell_command_with_functions_file(command, os)
 }
 
-fn open_in_default_app_command(target: &std::ffi::OsStr) -> String {
-    let quoted = shell_quote(target);
-    format!(
-        "if command -v xdg-open >/dev/null 2>&1; then xdg-open {quoted}; elif command -v open >/dev/null 2>&1; then open {quoted}; else exit 1; fi >/dev/null 2>&1"
-    )
+#[derive(Clone, Copy)]
+enum OsCommandTemplateKind {
+    OpenFile,
+    OpenLink,
+}
+
+fn open_in_default_app_command(
+    target: &std::ffi::OsStr,
+    os: &crate::state::OsConfigSnapshot,
+    kind: OsCommandTemplateKind,
+) -> String {
+    let command = match kind {
+        OsCommandTemplateKind::OpenFile if !os.open.is_empty() => {
+            resolve_os_command_template(&os.open, "filename", target)
+        }
+        OsCommandTemplateKind::OpenLink if !os.open_link.is_empty() => {
+            resolve_os_command_template(&os.open_link, "link", target)
+        }
+        _ => {
+            let quoted = shell_quote(target);
+            format!(
+                "if command -v xdg-open >/dev/null 2>&1; then xdg-open {quoted}; elif command -v open >/dev/null 2>&1; then open {quoted}; else exit 1; fi >/dev/null 2>&1"
+            )
+        }
+    };
+
+    shell_command_with_functions_file(command, os)
+}
+
+fn resolve_os_command_template(
+    template: &str,
+    placeholder: &str,
+    value: &std::ffi::OsStr,
+) -> String {
+    let quoted = shell_quote(value);
+    template
+        .replace(&format!("{{{{{placeholder}}}}}"), &quoted)
+        .replace(&format!("{{{{.{placeholder}}}}}"), &quoted)
+}
+
+fn shell_command_with_functions_file(
+    command: String,
+    os: &crate::state::OsConfigSnapshot,
+) -> String {
+    if os.shell_functions_file.is_empty() {
+        return command;
+    }
+
+    #[cfg(windows)]
+    {
+        command
+    }
+
+    #[cfg(not(windows))]
+    {
+        let shell_file = shell_quote(std::ffi::OsStr::new(&os.shell_functions_file));
+        format!(". {shell_file}\n{command}")
+    }
 }
 
 fn selected_config_target(
@@ -9194,11 +9282,7 @@ fn git_job(repo_id: crate::state::RepoId, command: GitCommand) -> GitCommandRequ
 
 fn shell_job(repo_id: crate::state::RepoId, command: String) -> ShellCommandRequest {
     let job_id = JobId::new(format!("shell:{}:run-command", repo_id.0));
-    ShellCommandRequest {
-        job_id,
-        repo_id,
-        command,
-    }
+    ShellCommandRequest::new(job_id, repo_id, command)
 }
 
 fn patch_job(
@@ -9891,11 +9975,14 @@ mod tests {
 
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest {
-                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+            vec![Effect::RunShellCommand(ShellCommandRequest::new(
+                JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::clipboard_shell_command(repo_root.join(selected_path).as_os_str()),
-            })]
+                super::clipboard_shell_command(
+                    repo_root.join(selected_path).as_os_str(),
+                    &crate::state::OsConfigSnapshot::default(),
+                ),
+            ))]
         );
     }
 
@@ -9929,11 +10016,14 @@ mod tests {
 
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest {
-                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+            vec![Effect::RunShellCommand(ShellCommandRequest::new(
+                JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::clipboard_shell_command(std::ffi::OsStr::new("abcdef1")),
-            })]
+                super::clipboard_shell_command(
+                    std::ffi::OsStr::new("abcdef1"),
+                    &crate::state::OsConfigSnapshot::default(),
+                ),
+            ))]
         );
     }
 
@@ -10119,13 +10209,15 @@ mod tests {
 
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest {
-                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+            vec![Effect::RunShellCommand(ShellCommandRequest::new(
+                JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::open_in_default_app_command(
+                super::open_in_default_app_command(
                     repo_root.join(selected_path).as_os_str(),
+                    &crate::state::OsConfigSnapshot::default(),
+                    super::OsCommandTemplateKind::OpenFile,
                 ),
-            })]
+            ))]
         );
     }
 
@@ -10173,14 +10265,55 @@ mod tests {
 
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest {
-                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+            vec![Effect::RunShellCommand(ShellCommandRequest::new(
+                JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::open_in_default_app_command(std::ffi::OsStr::new(
-                    "https://github.com/example/repo/commit/abcdef1234567890"
-                )),
-            })]
+                super::open_in_default_app_command(
+                    std::ffi::OsStr::new("https://github.com/example/repo/commit/abcdef1234567890"),
+                    &crate::state::OsConfigSnapshot::default(),
+                    super::OsCommandTemplateKind::OpenLink,
+                ),
+            ))]
         );
+    }
+
+    #[test]
+    fn clipboard_shell_command_uses_override_and_shell_functions_file() {
+        let os = crate::state::OsConfigSnapshot {
+            copy_to_clipboard_cmd: "custom-copy {{text}}".to_string(),
+            shell_functions_file: "/tmp/lazygit-shell-functions.sh".to_string(),
+            ..crate::state::OsConfigSnapshot::default()
+        };
+
+        let command = super::clipboard_shell_command(std::ffi::OsStr::new("hello world"), &os);
+
+        assert_eq!(
+            command,
+            ". '/tmp/lazygit-shell-functions.sh'\ncustom-copy 'hello world'"
+        );
+    }
+
+    #[test]
+    fn open_in_default_app_command_uses_matching_override_template() {
+        let os = crate::state::OsConfigSnapshot {
+            open: "custom-open {{filename}}".to_string(),
+            open_link: "custom-link {{link}}".to_string(),
+            ..crate::state::OsConfigSnapshot::default()
+        };
+
+        let file_command = super::open_in_default_app_command(
+            std::ffi::OsStr::new("/tmp/file with spaces.txt"),
+            &os,
+            super::OsCommandTemplateKind::OpenFile,
+        );
+        let link_command = super::open_in_default_app_command(
+            std::ffi::OsStr::new("https://example.com/repo"),
+            &os,
+            super::OsCommandTemplateKind::OpenLink,
+        );
+
+        assert_eq!(file_command, "custom-open '/tmp/file with spaces.txt'");
+        assert_eq!(link_command, "custom-link 'https://example.com/repo'");
     }
 
     #[test]
@@ -10345,11 +10478,11 @@ mod tests {
 
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest {
-                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+            vec![Effect::RunShellCommand(ShellCommandRequest::new(
+                JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::external_difftool_command(&selected_path, PaneId::RepoDetail),
-            })]
+                super::external_difftool_command(&selected_path, PaneId::RepoDetail),
+            ))]
         );
     }
 
@@ -11147,11 +11280,14 @@ mod tests {
 
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest {
-                job_id: JobId::new("shell:/tmp/repo-1:run-command"),
+            vec![Effect::RunShellCommand(ShellCommandRequest::new(
+                JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
-                command: super::clipboard_shell_command(std::ffi::OsStr::new("feature")),
-            })]
+                super::clipboard_shell_command(
+                    std::ffi::OsStr::new("feature"),
+                    &crate::state::OsConfigSnapshot::default(),
+                ),
+            ))]
         );
     }
 
@@ -15991,11 +16127,11 @@ mod tests {
         );
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest {
+            vec![Effect::RunShellCommand(ShellCommandRequest::new(
                 job_id,
                 repo_id,
-                command: "git status --short".to_string(),
-            })]
+                "git status --short",
+            ))]
         );
     }
 
