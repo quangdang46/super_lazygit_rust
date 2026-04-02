@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -4379,53 +4380,122 @@ fn parse_branch_configs(output: &str) -> BTreeMap<String, BranchConfig> {
     configs
 }
 
+fn read_remote_urls_by_name(repo_path: &Path) -> BTreeMap<String, Vec<String>> {
+    let output = git_stdout_allow_failure(
+        repo_path,
+        ["config", "--local", "--get-regexp", r"^remote\.[^.]+\.url$"],
+    )
+    .unwrap_or_default();
+    parse_remote_urls_by_name(&output)
+}
+
+fn parse_remote_urls_by_name(output: &str) -> BTreeMap<String, Vec<String>> {
+    let mut remotes = BTreeMap::<String, Vec<String>>::new();
+
+    for line in output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let Some((key, url)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let url = url.trim();
+        if url.is_empty() {
+            continue;
+        }
+        let Some(name) = key
+            .strip_prefix("remote.")
+            .and_then(|value| value.strip_suffix(".url"))
+        else {
+            continue;
+        };
+        remotes
+            .entry(name.to_string())
+            .or_default()
+            .push(url.to_string());
+    }
+
+    remotes
+}
+
 fn read_remotes(repo_path: &Path, remote_branches: &[RemoteBranchItem]) -> Vec<RemoteItem> {
-    git_stdout(repo_path, ["remote", "-v"])
-        .map(|output| {
-            let mut remotes = BTreeMap::<String, RemoteItem>::new();
-            for line in output.lines() {
-                let mut parts = line.split_whitespace();
-                let Some(name) = parts.next() else {
-                    continue;
-                };
-                let Some(url) = parts.next() else {
-                    continue;
-                };
-                let Some(direction) = parts.next() else {
-                    continue;
-                };
-
-                let remote = remotes
-                    .entry(name.to_string())
-                    .or_insert_with(|| RemoteItem {
-                        name: name.to_string(),
-                        fetch_url: String::new(),
-                        push_url: String::new(),
-                        branch_count: 0,
-                    });
-                match direction.trim_matches(|ch| ch == '(' || ch == ')') {
-                    "fetch" => remote.fetch_url = url.to_string(),
-                    "push" => remote.push_url = url.to_string(),
-                    _ => {}
-                }
-            }
-
-            for remote in remotes.values_mut() {
-                if remote.fetch_url.is_empty() {
-                    remote.fetch_url = remote.push_url.clone();
-                }
-                if remote.push_url.is_empty() {
-                    remote.push_url = remote.fetch_url.clone();
-                }
-                remote.branch_count = remote_branches
-                    .iter()
-                    .filter(|branch| branch.remote_name == remote.name)
-                    .count();
-            }
-
-            remotes.into_values().collect()
+    let mut remotes = read_remote_urls_by_name(repo_path)
+        .into_iter()
+        .map(|(name, urls)| {
+            let primary_url = urls.first().cloned().unwrap_or_default();
+            (
+                name.clone(),
+                RemoteItem {
+                    name,
+                    fetch_url: primary_url.clone(),
+                    push_url: primary_url,
+                    branch_count: 0,
+                },
+            )
         })
-        .unwrap_or_default()
+        .collect::<BTreeMap<_, _>>();
+
+    if let Ok(output) = git_stdout(repo_path, ["remote", "-v"]) {
+        for line in output.lines() {
+            let mut parts = line.split_whitespace();
+            let Some(name) = parts.next() else {
+                continue;
+            };
+            let Some(url) = parts.next() else {
+                continue;
+            };
+            let Some(direction) = parts.next() else {
+                continue;
+            };
+
+            let remote = remotes
+                .entry(name.to_string())
+                .or_insert_with(|| RemoteItem {
+                    name: name.to_string(),
+                    fetch_url: String::new(),
+                    push_url: String::new(),
+                    branch_count: 0,
+                });
+            match direction.trim_matches(|ch| ch == '(' || ch == ')') {
+                "fetch" => remote.fetch_url = url.to_string(),
+                "push" => remote.push_url = url.to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    let mut remotes = remotes.into_values().collect::<Vec<_>>();
+    for remote in &mut remotes {
+        if remote.fetch_url.is_empty() {
+            remote.fetch_url = remote.push_url.clone();
+        }
+        if remote.push_url.is_empty() {
+            remote.push_url = remote.fetch_url.clone();
+        }
+        remote.branch_count = remote_branches
+            .iter()
+            .filter(|branch| branch.remote_name == remote.name)
+            .count();
+    }
+    remotes.sort_by(compare_remote_items);
+
+    remotes
+}
+
+fn compare_remote_items(left: &RemoteItem, right: &RemoteItem) -> Ordering {
+    match (left.name == "origin", right.name == "origin") {
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        _ => {
+            let lower_cmp = left.name.to_lowercase().cmp(&right.name.to_lowercase());
+            if lower_cmp == Ordering::Equal {
+                left.name.cmp(&right.name)
+            } else {
+                lower_cmp
+            }
+        }
+    }
 }
 
 fn read_remote_branches(repo_path: &Path) -> Vec<RemoteBranchItem> {
@@ -11201,6 +11271,7 @@ mod tests {
     #[test]
     fn cli_backend_reads_remotes_with_metadata_and_branch_counts() {
         let origin = TempRepo::bare().expect("origin fixture");
+        let alpha = TempRepo::bare().expect("alpha fixture");
         let mirror = TempRepo::bare().expect("mirror fixture");
         let seed = TempRepo::new().expect("seed fixture");
         seed.write_file("tracked.txt", "base\n")
@@ -11217,6 +11288,8 @@ mod tests {
         seed.push("origin", "HEAD:feature").expect("push feature");
 
         let repo = TempRepo::clone_from(origin.path()).expect("clone fixture");
+        repo.add_remote("Alpha", alpha.path())
+            .expect("attach alpha");
         repo.add_remote("mirror", mirror.path())
             .expect("attach mirror");
         let backend = CliGitBackend;
@@ -11233,6 +11306,15 @@ mod tests {
                 rename_similarity_threshold: 50,
             })
             .expect("detail succeeds");
+
+        assert_eq!(
+            detail
+                .remotes
+                .iter()
+                .map(|remote| remote.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["origin", "Alpha", "mirror"]
+        );
 
         let origin_remote = detail
             .remotes
@@ -11257,6 +11339,21 @@ mod tests {
             .expect("origin push output")
         );
 
+        let alpha_remote = detail
+            .remotes
+            .iter()
+            .find(|remote| remote.name == "Alpha")
+            .expect("alpha remote present");
+        assert_eq!(alpha_remote.branch_count, 0);
+        assert_eq!(
+            alpha_remote.fetch_url,
+            stdout_string(
+                repo.git_capture(["remote", "get-url", "Alpha"])
+                    .expect("alpha fetch url")
+            )
+            .expect("alpha fetch output")
+        );
+
         let mirror_remote = detail
             .remotes
             .iter()
@@ -11270,6 +11367,32 @@ mod tests {
                     .expect("mirror fetch url")
             )
             .expect("mirror fetch output")
+        );
+    }
+
+    #[test]
+    fn parse_remote_urls_by_name_groups_config_entries() {
+        let output = "\
+remote.origin.url https://example.com/origin.git\n\
+remote.origin.url git@example.com:origin.git\n\
+remote.Alpha.url https://example.com/alpha.git\n\
+garbage\n";
+
+        assert_eq!(
+            parse_remote_urls_by_name(output),
+            BTreeMap::from([
+                (
+                    "Alpha".to_string(),
+                    vec!["https://example.com/alpha.git".to_string()]
+                ),
+                (
+                    "origin".to_string(),
+                    vec![
+                        "https://example.com/origin.git".to_string(),
+                        "git@example.com:origin.git".to_string(),
+                    ]
+                ),
+            ])
         );
     }
 
