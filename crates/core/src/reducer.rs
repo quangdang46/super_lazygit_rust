@@ -12414,21 +12414,25 @@ mod tests {
                                 stash_ref: "s0".to_string(),
                                 label: "alpha".to_string(),
                                 changed_files: Vec::new(),
+                                ..crate::state::StashItem::default()
                             },
                             crate::state::StashItem {
                                 stash_ref: "s1".to_string(),
                                 label: "hidden".to_string(),
                                 changed_files: Vec::new(),
+                                ..crate::state::StashItem::default()
                             },
                             crate::state::StashItem {
                                 stash_ref: "s2".to_string(),
                                 label: "beta".to_string(),
                                 changed_files: Vec::new(),
+                                ..crate::state::StashItem::default()
                             },
                             crate::state::StashItem {
                                 stash_ref: "s3".to_string(),
                                 label: "gamma".to_string(),
                                 changed_files: Vec::new(),
+                                ..crate::state::StashItem::default()
                             },
                         ],
                         ..RepoDetail::default()
@@ -12827,6 +12831,7 @@ mod tests {
                                 path: std::path::PathBuf::from("stash.txt"),
                                 kind: FileStatusKind::Modified,
                             }],
+                            ..StashItem::default()
                         },
                         StashItem {
                             stash_ref: "stash@{1}".to_string(),
@@ -12835,6 +12840,7 @@ mod tests {
                                 path: std::path::PathBuf::from("stash-old.txt"),
                                 kind: FileStatusKind::Added,
                             }],
+                            ..StashItem::default()
                         },
                     ],
                     ..RepoDetail::default()
@@ -12883,6 +12889,7 @@ mod tests {
                                 kind: FileStatusKind::Added,
                             },
                         ],
+                        ..StashItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -12942,6 +12949,7 @@ mod tests {
                             path: std::path::PathBuf::from("stash.txt"),
                             kind: FileStatusKind::Modified,
                         }],
+                        ..StashItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -12985,6 +12993,7 @@ mod tests {
                                 kind: FileStatusKind::Added,
                             },
                         ],
+                        ..StashItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -13589,6 +13598,7 @@ mod tests {
                             path: std::path::PathBuf::from("stash.txt"),
                             kind: FileStatusKind::Modified,
                         }],
+                        ..StashItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -13639,6 +13649,7 @@ mod tests {
                             path: std::path::PathBuf::from("stash.txt"),
                             kind: FileStatusKind::Modified,
                         }],
+                        ..StashItem::default()
                     }],
                     ..RepoDetail::default()
                 }),
@@ -13693,6 +13704,7 @@ mod tests {
                             path: std::path::PathBuf::from("stash.txt"),
                             kind: FileStatusKind::Modified,
                         }],
+                        ..StashItem::default()
                     }],
                     ..RepoDetail::default()
                 }),

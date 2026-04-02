@@ -1811,6 +1811,28 @@ impl GitRef for TagItem {
     }
 }
 
+impl GitRef for StashItem {
+    fn full_ref_name(&self) -> String {
+        format!("refs/{}", self.ref_name())
+    }
+
+    fn ref_name(&self) -> String {
+        format!("stash@{{{}}}", self.index)
+    }
+
+    fn short_ref_name(&self) -> String {
+        self.ref_name()
+    }
+
+    fn parent_ref_name(&self) -> String {
+        format!("{}^", self.ref_name())
+    }
+
+    fn description(&self) -> String {
+        format!("{}: {}", self.ref_name(), self.name)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitStatus {
     #[default]
@@ -1886,6 +1908,10 @@ pub struct CommitFileItem {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StashItem {
+    pub index: usize,
+    pub recency: String,
+    pub name: String,
+    pub hash: String,
     pub stash_ref: String,
     pub label: String,
     pub changed_files: Vec<CommitFileItem>,
@@ -2475,6 +2501,21 @@ mod tests {
         assert_eq!(tag.short_ref_name(), "v1.2.3");
         assert_eq!(tag.parent_ref_name(), "v1.2.3^");
         assert_eq!(tag.description(), "release summary");
+    }
+
+    #[test]
+    fn git_ref_stash_matches_upstream_semantics() {
+        let stash = crate::state::StashItem {
+            index: 2,
+            name: "WIP on main: example stash".to_string(),
+            ..crate::state::StashItem::default()
+        };
+
+        assert_eq!(stash.full_ref_name(), "refs/stash@{2}");
+        assert_eq!(stash.ref_name(), "stash@{2}");
+        assert_eq!(stash.short_ref_name(), "stash@{2}");
+        assert_eq!(stash.parent_ref_name(), "stash@{2}^");
+        assert_eq!(stash.description(), "stash@{2}: WIP on main: example stash");
     }
 
     #[test]

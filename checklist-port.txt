@@ -126,7 +126,7 @@
 [x] ./references/lazygit-master/pkg/commands/models/ref.go
 ./references/lazygit-master/pkg/commands/models/remote.go
 ./references/lazygit-master/pkg/commands/models/remote_branch.go
-./references/lazygit-master/pkg/commands/models/stash_entry.go
+[x] ./references/lazygit-master/pkg/commands/models/stash_entry.go
 ./references/lazygit-master/pkg/commands/models/submodule_config.go
 ./references/lazygit-master/pkg/commands/models/tag.go
 ./references/lazygit-master/pkg/commands/models/working_tree_state.go

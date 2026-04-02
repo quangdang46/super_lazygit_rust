@@ -5026,25 +5026,22 @@ fn read_stashes(repo_path: &Path, filter_path: Option<&Path>) -> Vec<StashItem> 
 }
 
 fn read_unfiltered_stashes(repo_path: &Path) -> Vec<StashItem> {
-    git_stdout(repo_path, ["stash", "list", "--format=%gd%x00%s"])
-        .map(|output| {
-            output
-                .lines()
-                .map(|line| {
-                    let (stash_ref, label) = line.split_once('\0').map_or_else(
-                        || (line.to_string(), line.to_string()),
-                        |(name, summary)| (name.to_string(), format!("{name}: {summary}")),
-                    );
-                    let changed_files = read_stash_files(repo_path, &stash_ref);
-                    StashItem {
-                        stash_ref,
-                        label,
-                        changed_files,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    git_stdout(
+        repo_path,
+        ["stash", "list", "--format=%gd%x00%cr%x00%H%x00%s"],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .filter_map(parse_unfiltered_stash_line)
+            .map(|mut stash| {
+                let changed_files = read_stash_files(repo_path, &stash.stash_ref);
+                stash.changed_files = changed_files;
+                stash
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn read_filtered_stashes(repo_path: &Path, filter_path: &Path) -> Option<Vec<StashItem>> {
@@ -5055,7 +5052,7 @@ fn read_filtered_stashes(repo_path: &Path, filter_path: &Path) -> Option<Vec<Sta
 
     let output = git_stdout(
         repo_path,
-        ["stash", "list", "--name-only", "--pretty=%gd:%H|%ct|%gs"],
+        ["stash", "list", "--name-only", "--pretty=%gd:%H|%cr|%gs"],
     )
     .ok()?;
     parse_filtered_stashes_output(repo_path, &output, &filter_path)
@@ -5094,14 +5091,35 @@ fn parse_filtered_stashes_output(
 
 fn parse_filtered_stash_line(line: &str) -> Option<StashItem> {
     let (stash_ref, metadata) = line.split_once(':')?;
-    parse_stash_ref_index(stash_ref)?;
-    let summary = metadata
-        .split_once('|')
-        .and_then(|(_, rest)| rest.split_once('|').map(|(_, message)| message))
-        .unwrap_or(metadata);
+    let index = parse_stash_ref_index(stash_ref)?;
+    let (hash, rest) = metadata.split_once('|')?;
+    let (recency, name) = rest.split_once('|').unwrap_or(("", rest));
     Some(StashItem {
+        index,
+        recency: recency.to_string(),
+        name: name.to_string(),
+        hash: hash.to_string(),
         stash_ref: stash_ref.to_string(),
-        label: format!("{stash_ref}: {summary}"),
+        label: format!("{stash_ref}: {name}"),
+        changed_files: Vec::new(),
+    })
+}
+
+fn parse_unfiltered_stash_line(line: &str) -> Option<StashItem> {
+    let mut parts = line.split('\0');
+    let stash_ref = parts.next()?;
+    let recency = parts.next().unwrap_or_default();
+    let hash = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    let index = parse_stash_ref_index(stash_ref)?;
+
+    Some(StashItem {
+        index,
+        recency: recency.to_string(),
+        name: name.to_string(),
+        hash: hash.to_string(),
+        stash_ref: stash_ref.to_string(),
+        label: format!("{stash_ref}: {name}"),
         changed_files: Vec::new(),
     })
 }
@@ -7559,6 +7577,10 @@ mod tests {
         assert!(!detail.branches.is_empty());
         assert!(!detail.commits.is_empty());
         assert!(!detail.stashes.is_empty());
+        assert_eq!(detail.stashes[0].index, 0);
+        assert!(!detail.stashes[0].recency.is_empty());
+        assert!(!detail.stashes[0].name.is_empty());
+        assert!(!detail.stashes[0].hash.is_empty());
         assert!(!detail.stashes[0].changed_files.is_empty());
         assert!(detail.stashes[0]
             .changed_files
@@ -7623,6 +7645,7 @@ mod tests {
             })
             .expect("detail should load for src filter");
         assert_eq!(src_detail.stashes.len(), 1);
+        assert_eq!(src_detail.stashes[0].index, 1);
         assert_eq!(src_detail.stashes[0].stash_ref, "stash@{1}");
         assert!(src_detail.stashes[0].label.ends_with("first path"));
         assert!(src_detail.stashes[0]
@@ -7643,6 +7666,7 @@ mod tests {
             })
             .expect("detail should load for docs filter");
         assert_eq!(docs_detail.stashes.len(), 1);
+        assert_eq!(docs_detail.stashes[0].index, 0);
         assert_eq!(docs_detail.stashes[0].stash_ref, "stash@{0}");
         assert!(docs_detail.stashes[0].label.ends_with("second path"));
         assert!(docs_detail.stashes[0]
@@ -7654,6 +7678,18 @@ mod tests {
     #[test]
     fn parse_filtered_stash_line_rejects_invalid_stash_refs() {
         assert!(parse_filtered_stash_line("stash@{bad}:deadbeef|123|message").is_none());
+    }
+
+    #[test]
+    fn parse_filtered_stash_line_populates_upstream_fields() {
+        let stash = parse_filtered_stash_line("stash@{3}:deadbeef|2 hours ago|WIP on main: test")
+            .expect("stash line should parse");
+
+        assert_eq!(stash.index, 3);
+        assert_eq!(stash.hash, "deadbeef");
+        assert_eq!(stash.recency, "2 hours ago");
+        assert_eq!(stash.name, "WIP on main: test");
+        assert_eq!(stash.label, "stash@{3}: WIP on main: test");
     }
 
     #[test]
