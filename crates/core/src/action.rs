@@ -108,6 +108,7 @@ pub enum Action {
     OpenReflogResetOptions,
     SelectNextWorktree,
     SelectPreviousWorktree,
+    DetachSelectedWorktree,
     SelectNextSubmodule,
     SelectPreviousSubmodule,
     CopySelectedSubmoduleName,

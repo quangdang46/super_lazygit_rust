@@ -438,28 +438,41 @@ mod tests {
             .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("valid issue json"))
             .filter(|issue| {
                 matches!(issue["status"].as_str(), Some("open" | "in_progress"))
+                    && issue["id"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with("slg-"))
+                    && issue["external_ref"]
+                        .as_str()
+                        .is_some_and(|path| path.starts_with("./references/lazygit-master/"))
                     && issue["labels"].as_array().is_some_and(|labels| {
-                        labels.iter().any(|label| label == "clone-1-1")
-                            && labels.iter().any(|label| label == "lazygit")
+                        labels.iter().any(|label| label == "parity")
+                            && labels.iter().any(|label| label == "upstream-lazygit")
                     })
             })
             .filter_map(|issue| issue["id"].as_str().map(str::to_string))
             .collect::<Vec<_>>();
 
+        assert!(
+            matrix.contains("Behavior parity complete ="),
+            "parity matrix must define behavior parity completion"
+        );
+        assert!(
+            matrix.contains("Source/test parity complete ="),
+            "parity matrix must define source/test parity completion"
+        );
+
         if open_parity_ids.is_empty() {
             assert!(
-                matrix.contains("Current open clone-parity beads: none."),
-                "parity matrix must explicitly say when no open clone-parity beads remain"
+                matrix.contains("Current source/test parity status: complete."),
+                "parity matrix must explicitly say when source/test parity is complete"
             );
             return;
         }
 
-        for bead_id in open_parity_ids {
-            assert!(
-                matrix.contains(&format!("`{bead_id}`")) || matrix.contains(&bead_id),
-                "parity matrix must mention open clone-parity bead {bead_id}"
-            );
-        }
+        assert!(
+            matrix.contains("Current source/test parity status: incomplete;"),
+            "parity matrix must explicitly say when source/test parity is incomplete"
+        );
     }
 
     #[test]

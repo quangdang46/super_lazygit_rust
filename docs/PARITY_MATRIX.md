@@ -4,7 +4,11 @@ This file is the canonical repo-mode clone-parity tracker for `super_lazygit_rus
 It exists so reviewers can answer "what is still missing?" without doing a fresh
 manual audit of upstream lazygit.
 
-Current open clone-parity beads: none.
+Current behavior parity status: tracked row-by-row in the matrix below.
+Current source/test parity status: incomplete; open `slg-*` parity beads remain in `.beads/issues.jsonl`.
+
+Behavior parity complete = a matrix row is marked `Shipped` and its listed regressions prove the user-visible surface.
+Source/test parity complete = no `open` or `in_progress` `slg-*` parity beads remain for `./references/lazygit-master/**`.
 
 Source material for this matrix:
 
@@ -12,7 +16,6 @@ Source material for this matrix:
 - `references/lazygit-master/docs/keybindings/Keybindings_en.md`
 - `PLAN.md` sections `39. Lazygit Feature Parity Target Matrix` and `46. Test Topology Matrix`
 - `.beads/issues.jsonl`
-
 ## Regression Path
 
 Run the canonical parity harness from the repo root:
