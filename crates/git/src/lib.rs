@@ -6831,6 +6831,55 @@ impl ParsedPatch {
 
 #[allow(dead_code)]
 impl ParsedHunk {
+    fn old_length(&self) -> u32 {
+        self.body_lines()
+            .iter()
+            .filter(|line| {
+                matches!(
+                    line.kind,
+                    ParsedPatchLineKind::Context | ParsedPatchLineKind::Deletion
+                )
+            })
+            .count() as u32
+    }
+
+    fn new_length(&self) -> u32 {
+        self.body_lines()
+            .iter()
+            .filter(|line| {
+                matches!(
+                    line.kind,
+                    ParsedPatchLineKind::Context | ParsedPatchLineKind::Addition
+                )
+            })
+            .count() as u32
+    }
+
+    fn format_header_start(&self) -> String {
+        let new_length = self.new_length();
+        let new_length_display = if new_length == 1 {
+            String::new()
+        } else {
+            format!(",{new_length}")
+        };
+
+        format!(
+            "@@ -{},{} +{}{} @@",
+            self.selection.old_start,
+            self.old_length(),
+            self.selection.new_start,
+            new_length_display
+        )
+    }
+
+    fn header_context(&self) -> &str {
+        hunk_header_suffix(self.raw.lines().next().unwrap_or_default())
+    }
+
+    fn format_header_line(&self) -> String {
+        format!("{}{}", self.format_header_start(), self.header_context())
+    }
+
     fn body_lines(&self) -> Vec<ParsedPatchLine> {
         self.raw
             .lines()
@@ -6850,7 +6899,7 @@ impl ParsedHunk {
 
     fn all_lines(&self) -> Vec<ParsedPatchLine> {
         let mut lines = vec![ParsedPatchLine {
-            content: self.raw.lines().next().unwrap_or_default().to_string(),
+            content: self.format_header_line(),
             kind: ParsedPatchLineKind::HunkHeader,
         }];
         lines.extend(self.body_lines());
@@ -13822,6 +13871,39 @@ diff --git a/file.txt b/file.txt
         assert!(additions.is_single_hunk_for_whole_file());
         assert!(!mixed.is_single_hunk_for_whole_file());
         assert!(additions.format_plain().contains("new file mode 100644"));
+    }
+
+    #[test]
+    fn parsed_hunk_exposes_upstream_length_and_header_helpers() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -16,2 +14,3 @@ func (f *CommitFile) Description() string {
+ return f.Name
+-}
++
++// test
+",
+        )
+        .expect("patch should parse");
+        let hunk = &patch.hunks[0];
+
+        assert_eq!(hunk.old_length(), 2);
+        assert_eq!(hunk.new_length(), 3);
+        assert_eq!(hunk.format_header_start(), "@@ -16,2 +14,3 @@");
+        assert_eq!(
+            hunk.format_header_line(),
+            "@@ -16,2 +14,3 @@ func (f *CommitFile) Description() string {"
+        );
+        assert_eq!(
+            hunk.header_context(),
+            " func (f *CommitFile) Description() string {"
+        );
+        assert_eq!(hunk.line_count(), 5);
+        assert!(hunk.contains_changes());
     }
 
     #[test]
