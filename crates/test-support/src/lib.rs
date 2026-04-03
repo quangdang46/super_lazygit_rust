@@ -107,6 +107,18 @@ pub fn detached_head_repo() -> io::Result<TempRepo> {
     Ok(repo)
 }
 
+pub fn commands_testdata_a_file_repo() -> io::Result<TempRepo> {
+    let repo = TempRepo::new()?;
+    repo.write_file("a_file", "")?;
+    Ok(repo)
+}
+
+pub fn commands_testdata_a_dir_file_repo() -> io::Result<TempRepo> {
+    let repo = TempRepo::new()?;
+    repo.write_file("a_dir/file", "")?;
+    Ok(repo)
+}
+
 pub fn history_preview_repo() -> io::Result<TempRepo> {
     let repo = TempRepo::new()?;
 
@@ -518,6 +530,26 @@ mod tests {
         let status = stdout_string(repo.git_capture(["submodule", "status"])?)?;
         assert!(status.contains("vendor/child-module"));
         assert!(repo.path().join("vendor/child-module/.git").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn creates_exact_empty_top_level_a_file_fixture() -> io::Result<()> {
+        let repo = commands_testdata_a_file_repo()?;
+        let path = repo.path().join("a_file");
+
+        assert!(path.is_file());
+        assert_eq!(fs::read_to_string(path)?, "");
+        Ok(())
+    }
+
+    #[test]
+    fn creates_exact_empty_nested_a_dir_file_fixture() -> io::Result<()> {
+        let repo = commands_testdata_a_dir_file_repo()?;
+        let path = repo.path().join("a_dir").join("file");
+
+        assert!(path.is_file());
+        assert_eq!(fs::read_to_string(path)?, "");
         Ok(())
     }
 }
