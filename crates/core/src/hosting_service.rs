@@ -554,6 +554,65 @@ mod tests {
                 expected_error: None,
                 expected_logged_errors: &[],
             },
+            PullRequestScenario {
+                test_name: "github extra slash remote",
+                from: "feature/sum-operation",
+                to: "feature/operations",
+                remote_url: "git@github.com:/peter/calculator.git",
+                config_service_domains: BTreeMap::new(),
+                expected_url: Some("https://github.com/peter/calculator/compare/feature%2Foperations...feature%2Fsum-operation?expand=1"),
+                expected_error: None,
+                expected_logged_errors: &[],
+            },
+            PullRequestScenario {
+                test_name: "gitlab ssh alias remote with custom service domain",
+                from: "feature/sum-operation",
+                to: "feature/operations",
+                remote_url: "gitlab:peter/calculator.git",
+                config_service_domains: BTreeMap::from([(
+                    "gitlab".to_string(),
+                    "gitlab:gitlab.com".to_string(),
+                )]),
+                expected_url: Some("https://gitlab.com/peter/calculator/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fsum-operation&merge_request%5Btarget_branch%5D=feature%2Foperations"),
+                expected_error: None,
+                expected_logged_errors: &[],
+            },
+            PullRequestScenario {
+                test_name: "azure devops legacy ssh alias remote",
+                from: "feature/new",
+                to: "",
+                remote_url: "git@vs-ssh.visualstudio.com:v3/myorg/myproject/myrepo",
+                config_service_domains: BTreeMap::from([(
+                    "vs-ssh.visualstudio.com".to_string(),
+                    "azuredevops:dev.azure.com".to_string(),
+                )]),
+                expected_url: Some("https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequestcreate?sourceRef=feature%2Fnew"),
+                expected_error: None,
+                expected_logged_errors: &[],
+            },
+            PullRequestScenario {
+                test_name: "custom service domain with port",
+                from: "feature/new",
+                to: "",
+                remote_url: "https://my.domain.test/johndoe/social_network.git",
+                config_service_domains: BTreeMap::from([(
+                    "my.domain.test".to_string(),
+                    "gitlab:my.domain.test:1111".to_string(),
+                )]),
+                expected_url: Some("https://my.domain.test:1111/johndoe/social_network/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew"),
+                expected_error: None,
+                expected_logged_errors: &[],
+            },
+            PullRequestScenario {
+                test_name: "encodes reserved characters in target branch",
+                from: "feature/new",
+                to: "archive/never-ending-feature#666",
+                remote_url: "git@gitlab.com:me/public/repo-with-issues.git",
+                config_service_domains: BTreeMap::new(),
+                expected_url: Some("https://gitlab.com/me/public/repo-with-issues/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew&merge_request%5Btarget_branch%5D=archive%2Fnever-ending-feature%23666"),
+                expected_error: None,
+                expected_logged_errors: &[],
+            },
         ];
 
         for scenario in scenarios {
@@ -620,6 +679,15 @@ mod tests {
                 "https://dev.azure.com/myorg/myproject/_git/myrepo/commit/abcdef1234",
             ),
             (
+                "azuredevops legacy ssh alias",
+                "git@vs-ssh.visualstudio.com:v3/myorg/myproject/myrepo",
+                BTreeMap::from([(
+                    "vs-ssh.visualstudio.com".to_string(),
+                    "azuredevops:dev.azure.com".to_string(),
+                )]),
+                "https://dev.azure.com/myorg/myproject/_git/myrepo/commit/abcdef1234",
+            ),
+            (
                 "bitbucketServer",
                 "https://mycompany.bitbucket.com/scm/myproject/myrepo.git",
                 BTreeMap::from([(
@@ -642,6 +710,12 @@ mod tests {
                 "git@codeberg.org:johndoe/myrepo.git",
                 BTreeMap::new(),
                 "https://codeberg.org/johndoe/myrepo/commit/abcdef1234",
+            ),
+            (
+                "github extra slash remote",
+                "git@github.com:/peter/calculator.git",
+                BTreeMap::new(),
+                "https://github.com/peter/calculator/commit/abcdef1234",
             ),
         ];
 
