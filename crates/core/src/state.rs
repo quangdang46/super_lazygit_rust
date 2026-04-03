@@ -16,6 +16,7 @@ pub struct AppState {
     pub notifications: VecDeque<Notification>,
     pub background_jobs: BTreeMap<JobId, BackgroundJob>,
     pub settings: SettingsSnapshot,
+    pub background: BackgroundSettingsSnapshot,
     pub service_domains: BTreeMap<String, String>,
     pub os: OsConfigSnapshot,
     pub config_path: Option<PathBuf>,
@@ -23,6 +24,23 @@ pub struct AppState {
     pub recent_repo_stack: Vec<RepoId>,
     pub workspace: WorkspaceState,
     pub repo_mode: Option<RepoModeState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundSettingsSnapshot {
+    pub auto_fetch: bool,
+    pub auto_refresh: bool,
+    pub show_bottom_line: bool,
+}
+
+impl Default for BackgroundSettingsSnapshot {
+    fn default() -> Self {
+        Self {
+            auto_fetch: true,
+            auto_refresh: true,
+            show_bottom_line: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

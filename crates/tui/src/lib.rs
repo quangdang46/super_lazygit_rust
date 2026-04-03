@@ -246,6 +246,11 @@ impl TuiApp {
     #[must_use]
     pub fn new(mut state: AppState, config: AppConfig) -> Self {
         state.workspace.ensure_visible_selection();
+        state.background = super_lazygit_core::BackgroundSettingsSnapshot {
+            auto_fetch: config.git.auto_fetch,
+            auto_refresh: config.git.auto_refresh,
+            show_bottom_line: config.gui.show_bottom_line,
+        };
         state.service_domains = config.services.clone();
         state.os = super_lazygit_core::OsConfigSnapshot {
             open: config.os.open.clone(),

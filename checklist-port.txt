@@ -176,7 +176,7 @@
 ./references/lazygit-master/pkg/constants/links.go
 ./references/lazygit-master/pkg/env/env.go
 ./references/lazygit-master/pkg/fakes/log.go
-./references/lazygit-master/pkg/gui/background.go
+[x] ./references/lazygit-master/pkg/gui/background.go
 ./references/lazygit-master/pkg/gui/command_log_panel.go
 ./references/lazygit-master/pkg/gui/context.go
 ./references/lazygit-master/pkg/gui/context/base_context.go

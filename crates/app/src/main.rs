@@ -195,7 +195,7 @@ mod tests {
         PaneId, RepoId, RepoSubview, RepoSummary, ScanStatus, ScreenMode, TimerEvent, Timestamp,
         WatcherEventKind, WatcherHealth, WorkerEvent, WorkspaceState,
     };
-    use super_lazygit_test_support::{clean_repo, TempRepo};
+    use super_lazygit_test_support::{clean_repo, upstream_diverged_repo, TempRepo};
 
     fn normalized_path(path: &Path) -> PathBuf {
         path.canonicalize()
@@ -696,6 +696,68 @@ mod tests {
             summary.watcher_freshness,
             super_lazygit_core::WatcherFreshness::Fresh
         );
+    }
+
+    #[test]
+    fn runtime_periodic_refresh_tick_respects_auto_refresh_setting() {
+        let repo = clean_repo().expect("fixture repo");
+        let repo_id = normalized_repo_id(repo.path());
+        let handle = ScriptedWatcherHandle::new();
+        handle.set_configure_error("watch backend unavailable");
+
+        let mut config = AppConfig::default();
+        config.git.auto_refresh = false;
+        let state = AppState::default();
+        let app = TuiApp::new(state, config);
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime =
+            AppRuntime::with_watcher(app, workspace, git, ScriptedWatcherBackend::new(handle));
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![repo_id.clone()],
+            scanned_at: Timestamp(7),
+        })]);
+
+        std::fs::write(repo.path().join("fallback-disabled.txt"), "leave me").expect("write file");
+        runtime.run([Event::Timer(TimerEvent::PeriodicRefreshTick)]);
+
+        let summary = runtime
+            .app()
+            .state()
+            .workspace
+            .repo_summaries
+            .get(&repo_id)
+            .expect("summary after disabled refresh tick");
+        assert!(!summary.dirty);
+    }
+
+    #[test]
+    fn runtime_periodic_fetch_tick_runs_background_fetch_for_active_repo() {
+        let repo = upstream_diverged_repo().expect("fixture repo");
+        let repo_id = normalized_repo_id(repo.path());
+
+        let state = AppState::default();
+        let app = TuiApp::new(state, AppConfig::default());
+        let workspace = WorkspaceRegistry::new(Some(repo.path().to_path_buf()));
+        let git = GitFacade::default();
+        let mut runtime = AppRuntime::new(app, workspace, git);
+
+        runtime.run([Event::Worker(WorkerEvent::RepoScanCompleted {
+            root: Some(repo.path().to_path_buf()),
+            repo_ids: vec![repo_id.clone()],
+            scanned_at: Timestamp(7),
+        })]);
+        runtime.run([Event::Action(Action::EnterRepoMode {
+            repo_id: repo_id.clone(),
+        })]);
+        runtime.run([Event::Timer(TimerEvent::PeriodicFetchTick)]);
+
+        assert!(runtime.app().state().background_jobs.values().any(|job| {
+            job.target_repo.as_ref() == Some(&repo_id)
+                && matches!(job.state, BackgroundJobState::Succeeded)
+        }));
     }
 
     #[test]

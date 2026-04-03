@@ -3748,6 +3748,9 @@ fn reduce_watcher_event(state: &mut AppState, event: WatcherEvent, effects: &mut
 fn reduce_timer_event(state: &mut AppState, event: TimerEvent, effects: &mut Vec<Effect>) {
     match event {
         TimerEvent::PeriodicRefreshTick => {
+            if !state.background.auto_refresh {
+                return;
+            }
             if matches!(
                 state.workspace.scan_status,
                 ScanStatus::Idle | ScanStatus::Complete { .. }
@@ -3777,7 +3780,29 @@ fn reduce_timer_event(state: &mut AppState, event: TimerEvent, effects: &mut Vec
                 effects.push(Effect::ScheduleRender);
             }
         }
-        TimerEvent::PeriodicFetchTick => {}
+        TimerEvent::PeriodicFetchTick => {
+            if !state.background.auto_fetch {
+                return;
+            }
+
+            let Some(repo_id) = state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.current_repo_id.clone())
+            else {
+                return;
+            };
+
+            let summary = if state.background.show_bottom_line {
+                "Fetching remote updates"
+            } else {
+                "Fetch remote updates"
+            }
+            .to_string();
+            let job = git_job(repo_id, GitCommand::FetchSelectedRepo);
+            enqueue_git_job(state, &job, &summary);
+            effects.push(Effect::RunGitCommand(job));
+        }
         TimerEvent::WatcherDebounceFlush => {
             let pending_repo_ids = state
                 .workspace
@@ -22892,6 +22917,67 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn periodic_fetch_tick_enqueues_background_fetch_for_active_repo_when_enabled() {
+        let repo_id = RepoId::new("repo-1");
+        let state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+
+        let result = reduce(state, Event::Timer(TimerEvent::PeriodicFetchTick));
+
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RunGitCommand(GitCommandRequest {
+                command: GitCommand::FetchSelectedRepo,
+                repo_id: effect_repo_id,
+                ..
+            }) if effect_repo_id == &repo_id
+        )));
+        assert!(result.state.background_jobs.values().any(|job| {
+            job.target_repo.as_ref() == Some(&repo_id)
+                && matches!(job.kind, BackgroundJobKind::GitCommand)
+                && matches!(job.state, BackgroundJobState::Queued)
+        }));
+    }
+
+    #[test]
+    fn periodic_fetch_tick_does_nothing_when_auto_fetch_disabled() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = reduce(
+            AppState::default(),
+            Event::Action(Action::EnterRepoMode {
+                repo_id: repo_id.clone(),
+            }),
+        )
+        .state;
+        state.background.auto_fetch = false;
+
+        let result = reduce(state, Event::Timer(TimerEvent::PeriodicFetchTick));
+
+        assert!(result.effects.is_empty());
+        assert!(result.state.background_jobs.is_empty());
+    }
+
+    #[test]
+    fn periodic_refresh_tick_does_nothing_when_auto_refresh_disabled() {
+        let mut state = AppState::default();
+        state.background.auto_refresh = false;
+        state.workspace.scan_status = ScanStatus::Complete { scanned_repos: 1 };
+        state.workspace.watcher_health = WatcherHealth::Degraded {
+            message: "watch backend unavailable".to_string(),
+        };
+        state.workspace.discovered_repo_ids = vec![RepoId::new("repo-1")];
+
+        let result = reduce(state, Event::Timer(TimerEvent::PeriodicRefreshTick));
+
+        assert!(result.effects.is_empty());
     }
 
     #[test]
