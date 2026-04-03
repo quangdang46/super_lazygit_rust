@@ -15,18 +15,56 @@ const CONFIG_DIR_NAME: &str = "super-lazygit";
 const LEGACY_CONFIG_DIR_NAME: &str = "lazygit";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub workspace: WorkspaceConfig,
     pub git: GitConfig,
+    pub update: UpdateConfig,
+    pub refresher: RefresherConfig,
+    #[serde(alias = "confirmOnQuit")]
+    pub confirm_on_quit: bool,
+    #[serde(alias = "quitOnTopLevelReturn")]
+    pub quit_on_top_level_return: bool,
     pub os: OsConfig,
+    #[serde(alias = "disableStartupPopups")]
+    pub disable_startup_popups: bool,
+    #[serde(alias = "customCommands")]
+    pub custom_commands: Vec<CustomCommand>,
     pub editor: EditorConfig,
     pub gui: GuiConfig,
     pub theme: ThemeConfig,
+    #[serde(alias = "notARepository")]
+    pub not_a_repository: String,
+    #[serde(alias = "promptToReturnFromSubprocess")]
+    pub prompt_to_return_from_subprocess: bool,
     pub keybindings: KeybindingConfig,
     pub diagnostics: DiagnosticsConfig,
     pub services: BTreeMap<String, String>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            workspace: WorkspaceConfig::default(),
+            git: GitConfig::default(),
+            update: UpdateConfig::default(),
+            refresher: RefresherConfig::default(),
+            confirm_on_quit: false,
+            quit_on_top_level_return: false,
+            os: OsConfig::default(),
+            disable_startup_popups: false,
+            custom_commands: Vec::new(),
+            editor: EditorConfig::default(),
+            gui: GuiConfig::default(),
+            theme: ThemeConfig::default(),
+            not_a_repository: String::from("prompt"),
+            prompt_to_return_from_subprocess: true,
+            keybindings: KeybindingConfig::default(),
+            diagnostics: DiagnosticsConfig::default(),
+            services: BTreeMap::new(),
+        }
+    }
 }
 
 impl AppConfig {
@@ -263,11 +301,102 @@ impl ConfigValidationError {
 #[serde(default)]
 pub struct GitConfig {
     pub pagers: Vec<PagingConfig>,
+    #[serde(alias = "mainBranches")]
+    pub main_branches: Vec<String>,
+    #[serde(alias = "skipHookPrefix")]
+    pub skip_hook_prefix: String,
+    #[serde(alias = "autoFetch")]
+    pub auto_fetch: bool,
+    #[serde(alias = "autoRefresh")]
+    pub auto_refresh: bool,
+    #[serde(alias = "autoForwardBranches")]
+    pub auto_forward_branches: String,
+    #[serde(alias = "fetchAll")]
+    pub fetch_all: bool,
+    #[serde(alias = "branchLogCmd")]
+    pub branch_log_cmd: String,
+    #[serde(alias = "allBranchesLogCmds")]
+    pub all_branches_log_cmds: Vec<String>,
+    #[serde(alias = "ignoreWhitespaceInDiffView")]
+    pub ignore_whitespace_in_diff_view: bool,
+    #[serde(alias = "diffContextSize")]
+    pub diff_context_size: u64,
+    #[serde(alias = "renameSimilarityThreshold")]
+    pub rename_similarity_threshold: u8,
+    #[serde(alias = "disableForcePushing")]
+    pub disable_force_pushing: bool,
+    #[serde(alias = "truncateCopiedCommitHashesTo")]
+    pub truncate_copied_commit_hashes_to: usize,
 }
 
 impl Default for GitConfig {
     fn default() -> Self {
-        Self { pagers: Vec::new() }
+        Self {
+            pagers: Vec::new(),
+            main_branches: vec![String::from("master"), String::from("main")],
+            skip_hook_prefix: String::from("WIP"),
+            auto_fetch: true,
+            auto_refresh: true,
+            auto_forward_branches: String::from("onlyMainBranches"),
+            fetch_all: true,
+            branch_log_cmd: String::from(
+                "git log --graph --color=always --abbrev-commit --decorate --date=relative --pretty=medium {{branchName}} --",
+            ),
+            all_branches_log_cmds: vec![String::from(
+                "git log --graph --all --color=always --abbrev-commit --decorate --date=relative  --pretty=medium",
+            )],
+            ignore_whitespace_in_diff_view: false,
+            diff_context_size: 3,
+            rename_similarity_threshold: 50,
+            disable_force_pushing: false,
+            truncate_copied_commit_hashes_to: 12,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    pub method: String,
+    pub days: i64,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            method: String::from("prompt"),
+            days: 14,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RefresherConfig {
+    #[serde(alias = "refreshInterval")]
+    pub refresh_interval: i32,
+    #[serde(alias = "fetchInterval")]
+    pub fetch_interval: i32,
+}
+
+impl Default for RefresherConfig {
+    fn default() -> Self {
+        Self {
+            refresh_interval: 10,
+            fetch_interval: 60,
+        }
+    }
+}
+
+impl RefresherConfig {
+    #[must_use]
+    pub fn refresh_interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.refresh_interval.max(0) as u64)
+    }
+
+    #[must_use]
+    pub fn fetch_interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.fetch_interval.max(0) as u64)
     }
 }
 
@@ -514,6 +643,30 @@ pub struct GuiConfig {
     pub scroll_off_margin: usize,
     #[serde(alias = "scrollOffBehavior")]
     pub scroll_off_behavior: ScrollOffBehavior,
+    #[serde(alias = "showListFooter")]
+    pub show_list_footer: bool,
+    #[serde(alias = "showCommandLog")]
+    pub show_command_log: bool,
+    #[serde(alias = "showBottomLine")]
+    pub show_bottom_line: bool,
+    #[serde(alias = "showPanelJumps")]
+    pub show_panel_jumps: bool,
+    #[serde(alias = "showFileTree")]
+    pub show_file_tree: bool,
+    #[serde(alias = "showRootItemInFileTree")]
+    pub show_root_item_in_file_tree: bool,
+    #[serde(alias = "showNumstatInFilesView")]
+    pub show_numstat_in_files_view: bool,
+    #[serde(alias = "showRandomTip")]
+    pub show_random_tip: bool,
+    #[serde(alias = "statusPanelView")]
+    pub status_panel_view: String,
+    #[serde(alias = "switchToFilesAfterStashPop")]
+    pub switch_to_files_after_stash_pop: bool,
+    #[serde(alias = "switchToFilesAfterStashApply")]
+    pub switch_to_files_after_stash_apply: bool,
+    #[serde(alias = "switchTabsWithPanelJumpKeys")]
+    pub switch_tabs_with_panel_jump_keys: bool,
 }
 
 impl Default for GuiConfig {
@@ -521,8 +674,116 @@ impl Default for GuiConfig {
         Self {
             scroll_off_margin: 2,
             scroll_off_behavior: ScrollOffBehavior::Margin,
+            show_list_footer: true,
+            show_command_log: true,
+            show_bottom_line: true,
+            show_panel_jumps: true,
+            show_file_tree: true,
+            show_root_item_in_file_tree: true,
+            show_numstat_in_files_view: false,
+            show_random_tip: true,
+            status_panel_view: String::from("dashboard"),
+            switch_to_files_after_stash_pop: true,
+            switch_to_files_after_stash_apply: true,
+            switch_tabs_with_panel_jump_keys: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomCommandAfterHook {
+    #[serde(alias = "checkForConflicts")]
+    pub check_for_conflicts: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomCommand {
+    pub key: String,
+    #[serde(alias = "commandMenu")]
+    pub command_menu: Vec<CustomCommand>,
+    pub context: String,
+    pub command: String,
+    pub prompts: Vec<CustomCommandPrompt>,
+    #[serde(alias = "loadingText")]
+    pub loading_text: String,
+    pub description: String,
+    pub output: String,
+    #[serde(alias = "outputTitle")]
+    pub output_title: String,
+    pub after: Option<CustomCommandAfterHook>,
+}
+
+impl Default for CustomCommand {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            command_menu: Vec::new(),
+            context: String::new(),
+            command: String::new(),
+            prompts: Vec::new(),
+            loading_text: String::new(),
+            description: String::new(),
+            output: String::new(),
+            output_title: String::new(),
+            after: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomCommandPrompt {
+    #[serde(alias = "type")]
+    pub kind: String,
+    pub key: String,
+    pub title: String,
+    #[serde(alias = "initialValue")]
+    pub initial_value: String,
+    pub suggestions: CustomCommandSuggestions,
+    pub body: String,
+    pub options: Vec<CustomCommandMenuOption>,
+    pub command: String,
+    pub filter: String,
+    #[serde(alias = "valueFormat")]
+    pub value_format: String,
+    #[serde(alias = "labelFormat")]
+    pub label_format: String,
+}
+
+impl Default for CustomCommandPrompt {
+    fn default() -> Self {
+        Self {
+            kind: String::new(),
+            key: String::new(),
+            title: String::new(),
+            initial_value: String::new(),
+            suggestions: CustomCommandSuggestions::default(),
+            body: String::new(),
+            options: Vec::new(),
+            command: String::new(),
+            filter: String::new(),
+            value_format: String::new(),
+            label_format: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomCommandSuggestions {
+    pub preset: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomCommandMenuOption {
+    pub name: String,
+    pub description: String,
+    pub value: String,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1235,6 +1496,33 @@ mod tests {
         assert!(config.editor.args.is_empty());
         assert_eq!(config.gui.scroll_off_margin, 2);
         assert_eq!(config.gui.scroll_off_behavior, ScrollOffBehavior::Margin);
+        assert!(config.git.auto_fetch);
+        assert!(config.git.auto_refresh);
+        assert_eq!(config.git.main_branches, ["master", "main"]);
+        assert_eq!(config.git.diff_context_size, 3);
+        assert_eq!(config.git.rename_similarity_threshold, 50);
+        assert_eq!(config.refresher.refresh_interval, 10);
+        assert_eq!(config.refresher.fetch_interval, 60);
+        assert_eq!(config.update.method, "prompt");
+        assert_eq!(config.update.days, 14);
+        assert!(!config.confirm_on_quit);
+        assert!(!config.quit_on_top_level_return);
+        assert!(!config.disable_startup_popups);
+        assert_eq!(config.not_a_repository, "prompt");
+        assert!(config.prompt_to_return_from_subprocess);
+        assert!(config.custom_commands.is_empty());
+        assert!(config.gui.show_list_footer);
+        assert!(config.gui.show_command_log);
+        assert!(config.gui.show_bottom_line);
+        assert!(config.gui.show_panel_jumps);
+        assert!(config.gui.show_file_tree);
+        assert!(config.gui.show_root_item_in_file_tree);
+        assert!(!config.gui.show_numstat_in_files_view);
+        assert!(config.gui.show_random_tip);
+        assert_eq!(config.gui.status_panel_view, "dashboard");
+        assert!(config.gui.switch_to_files_after_stash_pop);
+        assert!(config.gui.switch_to_files_after_stash_apply);
+        assert!(!config.gui.switch_tabs_with_panel_jump_keys);
         assert_eq!(resolved.command, "vim -- '/tmp/repo/file.txt'");
         assert!(resolved.suspend);
         assert_eq!(config.theme.preset, ThemePreset::DefaultDark);
@@ -1262,15 +1550,165 @@ mod tests {
         let rendered = default_config_toml().expect("serialize default config");
 
         assert!(rendered.contains("[workspace]"));
+        assert!(rendered.contains("[git]"));
+        assert!(rendered.contains("[update]"));
+        assert!(rendered.contains("[refresher]"));
         assert!(rendered.contains("[os]"));
         assert!(rendered.contains("[editor]"));
         assert!(rendered.contains("[gui]"));
         assert!(rendered.contains("scroll_off_margin = 2"));
+        assert!(rendered.contains("confirm_on_quit = false"));
+        assert!(rendered.contains("not_a_repository = \"prompt\""));
         assert!(rendered.contains("scroll_off_behavior = \"margin\""));
         assert!(rendered.contains("[theme]"));
         assert!(rendered.contains("active_border_color = ["));
         assert!(rendered.contains("selected_line_bg_color = ["));
         assert!(rendered.contains("[diagnostics]"));
+    }
+
+    #[test]
+    fn load_with_discovery_parses_upstream_top_level_user_config_fields() {
+        let parsed: AppConfig = toml::from_str(
+            r#"
+confirmOnQuit = true
+quitOnTopLevelReturn = true
+disableStartupPopups = true
+notARepository = "quit"
+promptToReturnFromSubprocess = false
+
+[update]
+method = "never"
+days = 30
+
+[refresher]
+refreshInterval = 15
+fetchInterval = 90
+
+[git]
+mainBranches = ["main", "develop"]
+skipHookPrefix = "DRAFT"
+autoFetch = false
+autoRefresh = false
+autoForwardBranches = "allBranches"
+fetchAll = false
+branchLogCmd = "git log --oneline {{branchName}} --"
+allBranchesLogCmds = ["git log --all --oneline"]
+ignoreWhitespaceInDiffView = true
+diffContextSize = 7
+renameSimilarityThreshold = 80
+disableForcePushing = true
+truncateCopiedCommitHashesTo = 40
+
+[gui]
+showListFooter = false
+showCommandLog = false
+showBottomLine = false
+showPanelJumps = false
+showFileTree = false
+showRootItemInFileTree = false
+showNumstatInFilesView = true
+showRandomTip = false
+statusPanelView = "allBranchesLog"
+switchToFilesAfterStashPop = false
+switchToFilesAfterStashApply = false
+switchTabsWithPanelJumpKeys = true
+
+[[customCommands]]
+key = "x"
+context = "files"
+command = "echo hi"
+loadingText = "Working"
+description = "Say hi"
+output = "popup"
+outputTitle = "Greeting"
+
+  [customCommands.after]
+  checkForConflicts = true
+
+  [[customCommands.prompts]]
+  type = "input"
+  key = "Branch"
+  title = "Target branch"
+  initialValue = "main"
+
+    [customCommands.prompts.suggestions]
+    preset = "branches"
+"#,
+        )
+        .expect("parse upstream-style top-level config");
+
+        assert!(parsed.confirm_on_quit);
+        assert!(parsed.quit_on_top_level_return);
+        assert!(parsed.disable_startup_popups);
+        assert_eq!(parsed.not_a_repository, "quit");
+        assert!(!parsed.prompt_to_return_from_subprocess);
+        assert_eq!(parsed.update.method, "never");
+        assert_eq!(parsed.update.days, 30);
+        assert_eq!(parsed.refresher.refresh_interval, 15);
+        assert_eq!(parsed.refresher.fetch_interval, 90);
+        assert_eq!(parsed.git.main_branches, ["main", "develop"]);
+        assert_eq!(parsed.git.skip_hook_prefix, "DRAFT");
+        assert!(!parsed.git.auto_fetch);
+        assert!(!parsed.git.auto_refresh);
+        assert_eq!(parsed.git.auto_forward_branches, "allBranches");
+        assert!(!parsed.git.fetch_all);
+        assert_eq!(
+            parsed.git.branch_log_cmd,
+            "git log --oneline {{branchName}} --"
+        );
+        assert_eq!(
+            parsed.git.all_branches_log_cmds,
+            ["git log --all --oneline"]
+        );
+        assert!(parsed.git.ignore_whitespace_in_diff_view);
+        assert_eq!(parsed.git.diff_context_size, 7);
+        assert_eq!(parsed.git.rename_similarity_threshold, 80);
+        assert!(parsed.git.disable_force_pushing);
+        assert_eq!(parsed.git.truncate_copied_commit_hashes_to, 40);
+        assert!(!parsed.gui.show_list_footer);
+        assert!(!parsed.gui.show_command_log);
+        assert!(!parsed.gui.show_bottom_line);
+        assert!(!parsed.gui.show_panel_jumps);
+        assert!(!parsed.gui.show_file_tree);
+        assert!(!parsed.gui.show_root_item_in_file_tree);
+        assert!(parsed.gui.show_numstat_in_files_view);
+        assert!(!parsed.gui.show_random_tip);
+        assert_eq!(parsed.gui.status_panel_view, "allBranchesLog");
+        assert!(!parsed.gui.switch_to_files_after_stash_pop);
+        assert!(!parsed.gui.switch_to_files_after_stash_apply);
+        assert!(parsed.gui.switch_tabs_with_panel_jump_keys);
+        assert_eq!(parsed.custom_commands.len(), 1);
+        assert_eq!(parsed.custom_commands[0].key, "x");
+        assert_eq!(parsed.custom_commands[0].output_title, "Greeting");
+        assert_eq!(parsed.custom_commands[0].prompts.len(), 1);
+        assert_eq!(parsed.custom_commands[0].prompts[0].kind, "input");
+        assert_eq!(
+            parsed.custom_commands[0].prompts[0].suggestions.preset,
+            "branches"
+        );
+        assert_eq!(
+            parsed.custom_commands[0].after,
+            Some(CustomCommandAfterHook {
+                check_for_conflicts: true,
+            })
+        );
+    }
+
+    #[test]
+    fn refresher_interval_helpers_match_upstream_duration_semantics() {
+        let config = RefresherConfig {
+            refresh_interval: 10,
+            fetch_interval: 60,
+        };
+
+        assert_eq!(
+            config.refresh_interval_duration(),
+            std::time::Duration::from_secs(10)
+        );
+        assert_eq!(
+            config.fetch_interval_duration(),
+            std::time::Duration::from_secs(60)
+        );
     }
 
     #[test]
@@ -1806,6 +2244,7 @@ command = "nvim"
                     use_external_diff_git_config: true,
                 },
             ],
+            ..GitConfig::default()
         };
         let mut pager = PagerConfig::new(&git);
 
@@ -1831,6 +2270,7 @@ command = "nvim"
                 pager: "less -R".to_string(),
                 ..PagingConfig::default()
             }],
+            ..GitConfig::default()
         };
         let mut pager = PagerConfig {
             git: &git,
