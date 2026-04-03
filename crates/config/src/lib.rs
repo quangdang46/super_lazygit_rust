@@ -89,6 +89,11 @@ pub fn default_config_toml() -> Result<String, toml::ser::Error> {
     toml::to_string_pretty(&AppConfig::default())
 }
 
+#[must_use]
+pub fn new_dummy_app_config() -> AppConfig {
+    AppConfig::default()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedConfig {
     pub config: AppConfig,
@@ -1006,6 +1011,17 @@ mod tests {
         assert_eq!(config.theme.inactive_view_selected_line_bg_color, ["bold"]);
         assert_eq!(config.theme.default_fg_color, ["default"]);
         assert!(config.keybindings.overrides.is_empty());
+        assert!(config.diagnostics.enabled);
+    }
+
+    #[test]
+    fn new_dummy_app_config_matches_default_test_config_semantics() {
+        let config = new_dummy_app_config();
+
+        assert_eq!(config, AppConfig::default());
+        assert!(config.workspace.roots.is_empty());
+        assert_eq!(config.os.copy_to_clipboard_cmd, "");
+        assert_eq!(config.gui.scroll_off_margin, 2);
         assert!(config.diagnostics.enabled);
     }
 
