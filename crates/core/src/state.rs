@@ -3030,6 +3030,33 @@ mod tests {
     }
 
     #[test]
+    fn detached_head_branch_helpers_match_upstream_semantics() {
+        let branch = BranchItem {
+            name: "6f71c57a".to_string(),
+            display_name: Some("(HEAD detached at 6f71c57a)".to_string()),
+            detached_head: true,
+            ahead_for_pull: "?".to_string(),
+            behind_for_pull: "?".to_string(),
+            ..BranchItem::default()
+        };
+
+        assert_eq!(branch.full_ref_name(), "6f71c57a");
+        assert_eq!(branch.ref_name(), "6f71c57a");
+        assert_eq!(branch.short_ref_name(), "6f71c57a");
+        assert_eq!(branch.parent_ref_name(), "6f71c57a^");
+        assert_eq!(branch.urn(), "branch-6f71c57a");
+        assert_eq!(branch.description(), "6f71c57a");
+        assert!(!branch.is_tracking_remote());
+        assert!(!branch.remote_branch_stored_locally());
+        assert!(!branch.remote_branch_not_stored_locally());
+        assert!(!branch.matches_upstream());
+        assert!(!branch.is_ahead_for_pull());
+        assert!(!branch.is_behind_for_pull());
+        assert!(!branch.is_behind_for_push());
+        assert!(branch.is_real_branch());
+    }
+
+    #[test]
     fn git_ref_remote_branch_matches_upstream_semantics() {
         let branch = RemoteBranchItem {
             name: "origin/feature".to_string(),
