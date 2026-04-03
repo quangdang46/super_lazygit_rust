@@ -450,10 +450,12 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
                 return;
             };
-            let command = clipboard_shell_command(std::ffi::OsStr::new(&value), &state.os);
-            let job = shell_job(repo_id, command);
-            enqueue_shell_job(state, &job, &format!("Copy {value}"));
-            effects.push(Effect::RunShellCommand(job));
+            let request = GuiIoShellRequest::new(
+                repo_id,
+                clipboard_shell_command(std::ffi::OsStr::new(&value), &state.os),
+                format!("Copy {value}"),
+            );
+            enqueue_gui_io_shell_job(state, request, effects);
         }
         Action::OpenSelectedReflogInBrowser => {
             let Some((repo_id, url, label)) = state.repo_mode.as_ref().and_then(|repo_mode| {
@@ -473,14 +475,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
                 return;
             };
-            let command = open_in_default_app_command(
-                std::ffi::OsStr::new(&url),
-                &state.os,
-                OsCommandTemplateKind::OpenLink,
+            let request = GuiIoShellRequest::new(
+                repo_id,
+                open_in_default_app_command(
+                    std::ffi::OsStr::new(&url),
+                    &state.os,
+                    OsCommandTemplateKind::OpenLink,
+                ),
+                format!("Open {label} in browser"),
             );
-            let job = shell_job(repo_id, command);
-            enqueue_shell_job(state, &job, &format!("Open {label} in browser"));
-            effects.push(Effect::RunShellCommand(job));
+            enqueue_gui_io_shell_job(state, request, effects);
         }
         Action::OpenReflogResetOptions => {
             let Some(repo_id) = state.repo_mode.as_ref().and_then(|repo_mode| {
@@ -1793,14 +1797,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         },
         Action::OpenConfigFileInDefaultApp => match selected_config_target(state) {
             Ok(Some((repo_id, _, target))) => {
-                let command = open_in_default_app_command(
-                    target.as_os_str(),
-                    &state.os,
-                    OsCommandTemplateKind::OpenFile,
+                let request = GuiIoShellRequest::new(
+                    repo_id,
+                    open_in_default_app_command(
+                        target.as_os_str(),
+                        &state.os,
+                        OsCommandTemplateKind::OpenFile,
+                    ),
+                    format!("Open config {}", target.display()),
                 );
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(state, &job, &format!("Open config {}", target.display()));
-                effects.push(Effect::RunShellCommand(job));
+                enqueue_gui_io_shell_job(state, request, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -1818,14 +1824,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         },
         Action::CheckForUpdates => match selected_update_check_target(state) {
             Ok(Some((repo_id, url))) => {
-                let command = open_in_default_app_command(
-                    std::ffi::OsStr::new(&url),
-                    &state.os,
-                    OsCommandTemplateKind::OpenLink,
+                let request = GuiIoShellRequest::new(
+                    repo_id,
+                    open_in_default_app_command(
+                        std::ffi::OsStr::new(&url),
+                        &state.os,
+                        OsCommandTemplateKind::OpenLink,
+                    ),
+                    "Open release page",
                 );
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(state, &job, "Open release page");
-                effects.push(Effect::RunShellCommand(job));
+                enqueue_gui_io_shell_job(state, request, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -1979,9 +1987,8 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::IgnoreSelectedStatusPath => match selected_status_ignore_target(state, false) {
             Ok(Some((repo_id, _path, command, summary))) => {
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(state, &job, &summary);
-                effects.push(Effect::RunShellCommand(job));
+                let request = GuiIoShellRequest::new(repo_id, command, summary);
+                enqueue_gui_io_shell_job(state, request, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -1991,9 +1998,8 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         },
         Action::ExcludeSelectedStatusPath => match selected_status_ignore_target(state, true) {
             Ok(Some((repo_id, _path, command, summary))) => {
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(state, &job, &summary);
-                effects.push(Effect::RunShellCommand(job));
+                let request = GuiIoShellRequest::new(repo_id, command, summary);
+                enqueue_gui_io_shell_job(state, request, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -2017,22 +2023,25 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 return;
             };
 
-            let command =
-                clipboard_shell_command(std::ffi::OsStr::new(&clipboard_value), &state.os);
-            let job = shell_job(repo_id, command);
-            enqueue_shell_job(state, &job, &format!("Copy {clipboard_value}"));
-            effects.push(Effect::RunShellCommand(job));
+            let request = GuiIoShellRequest::new(
+                repo_id,
+                clipboard_shell_command(std::ffi::OsStr::new(&clipboard_value), &state.os),
+                format!("Copy {clipboard_value}"),
+            );
+            enqueue_gui_io_shell_job(state, request, effects);
         }
         Action::OpenSelectedCommitInBrowser => match selected_commit_browser_target(state) {
             Ok(Some((repo_id, target))) => {
-                let command = open_in_default_app_command(
-                    std::ffi::OsStr::new(&target),
-                    &state.os,
-                    OsCommandTemplateKind::OpenLink,
+                let request = GuiIoShellRequest::new(
+                    repo_id,
+                    open_in_default_app_command(
+                        std::ffi::OsStr::new(&target),
+                        &state.os,
+                        OsCommandTemplateKind::OpenLink,
+                    ),
+                    format!("Open {target}"),
                 );
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(state, &job, &format!("Open {target}"));
-                effects.push(Effect::RunShellCommand(job));
+                enqueue_gui_io_shell_job(state, request, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -2043,10 +2052,12 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::CopySelectedStatusPath => match selected_repo_shell_target(state, false) {
             Ok(Some((repo_id, path, is_directory, _))) => {
                 let display_path = status_clipboard_path(&path, is_directory);
-                let command = clipboard_shell_command(display_path.as_os_str(), &state.os);
-                let job = shell_job(repo_id, command);
-                enqueue_shell_job(state, &job, &format!("Copy {}", display_path.display()));
-                effects.push(Effect::RunShellCommand(job));
+                let request = GuiIoShellRequest::new(
+                    repo_id,
+                    clipboard_shell_command(display_path.as_os_str(), &state.os),
+                    format!("Copy {}", display_path.display()),
+                );
+                enqueue_gui_io_shell_job(state, request, effects);
             }
             Ok(None) => {}
             Err(message) => {
@@ -2057,14 +2068,16 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::OpenSelectedStatusPathInDefaultApp => {
             match selected_repo_shell_target(state, true) {
                 Ok(Some((repo_id, path, _, _))) => {
-                    let command = open_in_default_app_command(
-                        path.as_os_str(),
-                        &state.os,
-                        OsCommandTemplateKind::OpenFile,
+                    let request = GuiIoShellRequest::new(
+                        repo_id,
+                        open_in_default_app_command(
+                            path.as_os_str(),
+                            &state.os,
+                            OsCommandTemplateKind::OpenFile,
+                        ),
+                        format!("Open {}", path.display()),
                     );
-                    let job = shell_job(repo_id, command);
-                    enqueue_shell_job(state, &job, &format!("Open {}", path.display()));
-                    effects.push(Effect::RunShellCommand(job));
+                    enqueue_gui_io_shell_job(state, request, effects);
                 }
                 Ok(None) => {}
                 Err(message) => {
@@ -2081,13 +2094,12 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                         effects.push(Effect::ScheduleRender);
                     } else {
                         let command = external_difftool_command(&relative_path, state.focused_pane);
-                        let job = shell_job(repo_id, command);
-                        enqueue_shell_job(
-                            state,
-                            &job,
-                            &format!("Open difftool for {}", relative_path.display()),
+                        let request = GuiIoShellRequest::new(
+                            repo_id,
+                            command,
+                            format!("Open difftool for {}", relative_path.display()),
                         );
-                        effects.push(Effect::RunShellCommand(job));
+                        enqueue_gui_io_shell_job(state, request, effects);
                     }
                 }
                 Ok(None) => {}
@@ -10040,6 +10052,56 @@ fn shell_job(repo_id: crate::state::RepoId, command: String) -> ShellCommandRequ
     ShellCommandRequest::new(job_id, repo_id, command)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone)]
+struct GuiIoShellRequest {
+    job: ShellCommandRequest,
+    summary: String,
+}
+
+impl GuiIoShellRequest {
+    fn new(repo_id: crate::state::RepoId, command: String, summary: impl Into<String>) -> Self {
+        Self {
+            job: shell_job(repo_id, command),
+            summary: summary.into(),
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn stream_output(mut self) -> Self {
+        self.job = self.job.stream_output();
+        self
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn suppress_output_unless_error(mut self) -> Self {
+        self.job = self.job.suppress_output_unless_error();
+        self
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn prompt_for_credential(mut self, task: impl Into<String>) -> Self {
+        self.job = self.job.prompt_on_credential_request(task);
+        self
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn fail_on_credential_request(mut self) -> Self {
+        self.job = self.job.fail_on_credential_request();
+        self
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn enqueue_gui_io_shell_job(
+    state: &mut AppState,
+    request: GuiIoShellRequest,
+    effects: &mut Vec<Effect>,
+) {
+    enqueue_shell_job(state, &request.job, &request.summary);
+    effects.push(Effect::RunShellCommand(request.job));
+}
+
 fn patch_job(
     repo_id: crate::state::RepoId,
     path: std::path::PathBuf,
@@ -13399,6 +13461,83 @@ mod tests {
                 Some(0),
                 "select first should honor filtered {label} indices",
             );
+        }
+    }
+
+    #[test]
+    fn gui_io_shell_request_bundles_summary_and_shell_policies() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let request = crate::reducer::GuiIoShellRequest::new(
+            repo_id.clone(),
+            "printf credentials".to_string(),
+            "Run shell command",
+        )
+        .stream_output()
+        .suppress_output_unless_error()
+        .prompt_for_credential("credential-task");
+
+        assert_eq!(request.summary, "Run shell command");
+        assert_eq!(request.job.repo_id, repo_id);
+        assert!(request.job.should_stream_output());
+        assert!(request.job.should_suppress_output_unless_error());
+        assert_eq!(
+            request.job.credential_strategy(),
+            crate::effect::CredentialStrategy::Prompt
+        );
+        assert_eq!(request.job.task.as_deref(), Some("credential-task"));
+    }
+
+    #[test]
+    fn gui_io_shell_request_supports_fail_fast_credential_mode() {
+        let request = crate::reducer::GuiIoShellRequest::new(
+            RepoId::new("/tmp/repo-1"),
+            "printf credentials".to_string(),
+            "Run shell command",
+        )
+        .fail_on_credential_request();
+
+        assert_eq!(
+            request.job.credential_strategy(),
+            crate::effect::CredentialStrategy::Fail
+        );
+        assert!(request.job.should_use_pty());
+    }
+
+    #[test]
+    fn enqueue_gui_io_shell_job_logs_command_and_schedules_effect() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+        let request = crate::reducer::GuiIoShellRequest::new(
+            repo_id.clone(),
+            "printf hi".to_string(),
+            "Run shell command: printf hi",
+        );
+        let mut effects = Vec::new();
+
+        crate::reducer::enqueue_gui_io_shell_job(&mut state, request, &mut effects);
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id && command == "printf hi"
+        ));
+        let repo_mode = state.repo_mode.as_ref().expect("repo mode");
+        assert!(matches!(
+            repo_mode.operation_progress,
+            OperationProgress::Running { .. }
+        ));
+        assert_eq!(state.background_jobs.len(), 1);
+        assert_eq!(state.status_messages.len(), 0);
+        match &repo_mode.operation_progress {
+            OperationProgress::Running { summary, .. } => {
+                assert_eq!(summary, "Run shell command: printf hi");
+            }
+            _ => panic!("expected running operation progress"),
         }
     }
 
