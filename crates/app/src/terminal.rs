@@ -597,9 +597,172 @@ fn window_title_for_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use crossterm::event::{KeyEventState, MediaKeyCode, ModifierKeyCode};
+    use super_lazygit_core::{JobId, RepoId, ShellCommandRequest};
 
     use super::*;
+
+    #[derive(Clone)]
+    struct ShellCommandMatcher {
+        description: String,
+        test: Arc<dyn Fn(&ShellCommandRequest) -> bool + Send + Sync>,
+        output: String,
+        err: Option<String>,
+    }
+
+    #[derive(Clone, Default)]
+    struct FakeShellCommandRunner {
+        state: Arc<Mutex<FakeShellCommandRunnerState>>,
+    }
+
+    #[derive(Default)]
+    struct FakeShellCommandRunnerState {
+        expected: Vec<ShellCommandMatcher>,
+        invoked_indexes: Vec<usize>,
+    }
+
+    impl FakeShellCommandRunner {
+        fn expect_func<F>(
+            &self,
+            description: impl Into<String>,
+            matcher: F,
+            output: impl Into<String>,
+            err: Option<&str>,
+        ) -> &Self
+        where
+            F: Fn(&ShellCommandRequest) -> bool + Send + Sync + 'static,
+        {
+            let mut state = self.state.lock().expect("fake shell runner state");
+            state.expected.push(ShellCommandMatcher {
+                description: description.into(),
+                test: Arc::new(matcher),
+                output: output.into(),
+                err: err.map(str::to_string),
+            });
+            self
+        }
+
+        fn expect_args(
+            &self,
+            expected_args: &[&str],
+            output: impl Into<String>,
+            err: Option<&str>,
+        ) -> &Self {
+            let expected = expected_args
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect::<Vec<_>>();
+            let description = format!("matches args {}", expected.join(" "));
+            self.expect_func(
+                description,
+                move |request| request.args() == expected.as_slice(),
+                output,
+                err,
+            )
+        }
+
+        fn expect_shell_args(
+            &self,
+            expected_shell_body: &str,
+            output: impl Into<String>,
+            err: Option<&str>,
+        ) -> &Self {
+            let expected = expected_shell_body.to_string();
+            self.expect_func(
+                format!("matches shell body {expected}"),
+                move |request| request.command == expected,
+                output,
+                err,
+            )
+        }
+
+        fn remaining_expected_descriptions(&self) -> Vec<String> {
+            let state = self.state.lock().expect("fake shell runner state");
+            state
+                .expected
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !state.invoked_indexes.contains(index))
+                .map(|(_, matcher)| matcher.description.clone())
+                .collect()
+        }
+
+        fn run_with_output(&self, request: &ShellCommandRequest) -> io::Result<String> {
+            let mut state = self.state.lock().expect("fake shell runner state");
+            let matched_index = state
+                .expected
+                .iter()
+                .enumerate()
+                .find_map(|(index, matcher)| {
+                    if state.invoked_indexes.contains(&index) {
+                        return None;
+                    }
+                    if (matcher.test)(request) {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(index) = matched_index {
+                let matcher = state.expected[index].clone();
+                state.invoked_indexes.push(index);
+                return match matcher.err {
+                    Some(message) => Err(io::Error::other(message)),
+                    None => Ok(matcher.output),
+                };
+            }
+
+            Err(io::Error::other(format!(
+                "unexpected command: {}",
+                request.command
+            )))
+        }
+
+        fn run(&self, request: &ShellCommandRequest) -> io::Result<()> {
+            self.run_with_output(request).map(|_| ())
+        }
+
+        fn run_and_process_lines<F>(
+            &self,
+            request: &ShellCommandRequest,
+            mut on_line: F,
+        ) -> io::Result<()>
+        where
+            F: FnMut(&str) -> io::Result<bool>,
+        {
+            let output = self.run_with_output(request)?;
+            for line in output.lines() {
+                if on_line(line)? {
+                    break;
+                }
+            }
+            Ok(())
+        }
+
+        fn check_for_missing_calls(&self) -> io::Result<()> {
+            let remaining = self.remaining_expected_descriptions();
+            if remaining.is_empty() {
+                Ok(())
+            } else {
+                Err(io::Error::other(format!(
+                    "expected {} more command(s) to be run. Remaining commands:\n{}",
+                    remaining.len(),
+                    remaining.join("\n")
+                )))
+            }
+        }
+    }
+
+    fn dummy_shell_request(command: &str) -> ShellCommandRequest {
+        ShellCommandRequest::new(
+            JobId::new("shell:/tmp/repo:fake-runner"),
+            RepoId::new("/tmp/repo"),
+            command,
+        )
+    }
 
     #[test]
     fn translates_core_navigation_keys_into_existing_router_strings() {
@@ -733,5 +896,104 @@ mod tests {
             "repo-a - Lazygit"
         );
         assert_eq!(window_title_for_path(Path::new("/")), "/ - Lazygit");
+    }
+
+    #[test]
+    fn fake_shell_runner_matches_unordered_expectations_and_returns_output() {
+        let runner = FakeShellCommandRunner::default();
+        runner
+            .expect_args(&["sh", "-lc", "printf second"], "second\n", None)
+            .expect_args(&["sh", "-lc", "printf first"], "first\n", None);
+
+        let second = ShellCommandRequest::from_args(
+            JobId::new("shell:/tmp/repo:second"),
+            RepoId::new("/tmp/repo"),
+            "sh",
+            ["-lc", "printf second"],
+        );
+        let first = ShellCommandRequest::from_args(
+            JobId::new("shell:/tmp/repo:first"),
+            RepoId::new("/tmp/repo"),
+            "sh",
+            ["-lc", "printf first"],
+        );
+
+        assert_eq!(
+            runner.run_with_output(&second).expect("second output"),
+            "second\n"
+        );
+        assert_eq!(
+            runner.run_with_output(&first).expect("first output"),
+            "first\n"
+        );
+        runner
+            .check_for_missing_calls()
+            .expect("all calls consumed");
+    }
+
+    #[test]
+    fn fake_shell_runner_replays_lines_and_stops_when_callback_requests() {
+        let runner = FakeShellCommandRunner::default();
+        runner.expect_shell_args(
+            "printf line1\\nline2\\nline3",
+            "line1\nline2\nline3\n",
+            None,
+        );
+        let request = dummy_shell_request("printf line1\\nline2\\nline3");
+        let mut seen = Vec::new();
+
+        runner
+            .run_and_process_lines(&request, |line| {
+                seen.push(line.to_string());
+                Ok(line == "line2")
+            })
+            .expect("line processing");
+
+        assert_eq!(seen, vec!["line1".to_string(), "line2".to_string()]);
+        runner
+            .check_for_missing_calls()
+            .expect("all calls consumed");
+    }
+
+    #[test]
+    fn fake_shell_runner_reports_errors_and_missing_calls() {
+        let runner = FakeShellCommandRunner::default();
+        runner
+            .expect_args(&["git", "status"], "", Some("status failed"))
+            .expect_shell_args("printf later", "later\n", None);
+
+        let failing = ShellCommandRequest::from_args(
+            JobId::new("shell:/tmp/repo:status"),
+            RepoId::new("/tmp/repo"),
+            "git",
+            ["status"],
+        )
+        .fail_on_credential_request();
+
+        let error = runner
+            .run_with_output(&failing)
+            .expect_err("configured failure");
+        assert_eq!(error.to_string(), "status failed");
+
+        let missing = runner
+            .check_for_missing_calls()
+            .expect_err("missing call should fail");
+        assert!(missing.to_string().contains("expected 1 more command(s)"));
+        assert!(missing
+            .to_string()
+            .contains("matches shell body printf later"));
+    }
+
+    #[test]
+    fn fake_shell_runner_run_uses_registered_expectation_without_output() {
+        let runner = FakeShellCommandRunner::default();
+        runner.expect_shell_args("printf ok", "ok\n", None);
+
+        runner
+            .run(&dummy_shell_request("printf ok"))
+            .expect("runner should accept matching command");
+        runner
+            .check_for_missing_calls()
+            .expect("all calls consumed");
     }
 }
