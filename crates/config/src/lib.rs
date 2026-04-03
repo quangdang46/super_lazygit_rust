@@ -274,7 +274,7 @@ impl Default for WorkspaceConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OsConfig {
     #[serde(alias = "open", skip_serializing_if = "String::is_empty")]
@@ -290,6 +290,48 @@ pub struct OsConfig {
     pub read_from_clipboard_cmd: String,
     #[serde(alias = "shellFunctionsFile", skip_serializing_if = "String::is_empty")]
     pub shell_functions_file: String,
+}
+
+impl Default for OsConfig {
+    fn default() -> Self {
+        Self {
+            open: default_open_command(),
+            open_link: default_open_link_command(),
+            copy_to_clipboard_cmd: String::new(),
+            read_from_clipboard_cmd: String::new(),
+            shell_functions_file: String::new(),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn default_open_command() -> String {
+    r#"start "" {{filename}}"#.to_string()
+}
+
+#[cfg(windows)]
+fn default_open_link_command() -> String {
+    r#"start "" {{link}}"#.to_string()
+}
+
+#[cfg(all(not(windows), target_os = "linux"))]
+fn default_open_command() -> String {
+    r#"xdg-open {{filename}} >/dev/null"#.to_string()
+}
+
+#[cfg(all(not(windows), target_os = "linux"))]
+fn default_open_link_command() -> String {
+    r#"xdg-open {{link}} >/dev/null"#.to_string()
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
+fn default_open_command() -> String {
+    r#"open -- {{filename}}"#.to_string()
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
+fn default_open_link_command() -> String {
+    r#"open {{link}}"#.to_string()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -994,8 +1036,24 @@ mod tests {
 
         assert!(config.workspace.roots.is_empty());
         assert_eq!(config.workspace.ignores, default_workspace_ignores());
-        assert_eq!(config.os.open, "");
-        assert_eq!(config.os.open_link, "");
+        #[cfg(windows)]
+        {
+            assert_eq!(config.os.open, r#"start "" {{filename}}"#);
+            assert_eq!(config.os.open_link, r#"start "" {{link}}"#);
+        }
+
+        #[cfg(all(not(windows), target_os = "linux"))]
+        {
+            assert_eq!(config.os.open, "xdg-open {{filename}} >/dev/null");
+            assert_eq!(config.os.open_link, "xdg-open {{link}} >/dev/null");
+        }
+
+        #[cfg(all(not(windows), not(target_os = "linux")))]
+        {
+            assert_eq!(config.os.open, "open -- {{filename}}");
+            assert_eq!(config.os.open_link, "open {{link}}");
+        }
+
         assert_eq!(config.os.copy_to_clipboard_cmd, "");
         assert_eq!(config.os.read_from_clipboard_cmd, "");
         assert_eq!(config.os.shell_functions_file, "");
@@ -1078,6 +1136,29 @@ shellFunctionsFile = "~/.config/lazygit/functions.sh"
             parsed.os.shell_functions_file,
             "~/.config/lazygit/functions.sh"
         );
+    }
+
+    #[test]
+    fn os_config_default_matches_platform_default_open_commands() {
+        let config = OsConfig::default();
+
+        #[cfg(windows)]
+        {
+            assert_eq!(config.open, r#"start "" {{filename}}"#);
+            assert_eq!(config.open_link, r#"start "" {{link}}"#);
+        }
+
+        #[cfg(all(not(windows), target_os = "linux"))]
+        {
+            assert_eq!(config.open, "xdg-open {{filename}} >/dev/null");
+            assert_eq!(config.open_link, "xdg-open {{link}} >/dev/null");
+        }
+
+        #[cfg(all(not(windows), not(target_os = "linux")))]
+        {
+            assert_eq!(config.open, "open -- {{filename}}");
+            assert_eq!(config.open_link, "open {{link}}");
+        }
     }
 
     #[test]
