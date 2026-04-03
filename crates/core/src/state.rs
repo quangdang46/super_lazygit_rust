@@ -2129,11 +2129,11 @@ impl GitRef for BranchItem {
 
 impl GitRef for RemoteBranchItem {
     fn full_ref_name(&self) -> String {
-        format!("refs/remotes/{}", self.name)
+        format!("refs/remotes/{}", self.full_name())
     }
 
     fn ref_name(&self) -> String {
-        self.name.clone()
+        self.full_name()
     }
 
     fn short_ref_name(&self) -> String {
