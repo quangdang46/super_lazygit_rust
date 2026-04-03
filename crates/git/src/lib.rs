@@ -2321,7 +2321,15 @@ fn apply_patch_selection(repo_path: &Path, request: &PatchSelectionRequest) -> G
         });
     }
 
-    let selected_patch = build_selected_patch(&diff, &request.hunks)?;
+    let selected_patch = build_selected_patch_with_opts(
+        &diff,
+        &request.hunks,
+        PatchTransformOpts {
+            reverse: matches!(request.mode, PatchApplicationMode::Unstage),
+            file_name_override: None,
+            turn_added_files_into_diff_against_empty_file: true,
+        },
+    )?;
     let mut args = vec![
         OsStr::new("apply"),
         OsStr::new("--cached"),
@@ -2335,6 +2343,7 @@ fn apply_patch_selection(repo_path: &Path, request: &PatchSelectionRequest) -> G
     git_with_stdin(repo_path, args, selected_patch.as_bytes())
 }
 
+#[allow(dead_code)]
 fn build_selected_patch(diff: &str, selections: &[SelectedHunk]) -> GitResult<String> {
     let parsed = parse_patch(diff)?;
     let mut selected_hunks = Vec::new();
@@ -2378,6 +2387,18 @@ fn build_selected_patch(diff: &str, selections: &[SelectedHunk]) -> GitResult<St
     Ok(patch)
 }
 
+fn build_selected_patch_with_opts(
+    diff: &str,
+    selections: &[SelectedHunk],
+    opts: PatchTransformOpts,
+) -> GitResult<String> {
+    let parsed = parse_patch(diff)?;
+    parsed.ensure_hunk_selections_exist(selections)?;
+    parsed
+        .transform(selections, opts)
+        .format_with_trailing_newline()
+}
+
 fn selection_within_hunk(selection: SelectedHunk, hunk: SelectedHunk) -> bool {
     let selection_old_end = selection.old_start.saturating_add(selection.old_lines);
     let selection_new_end = selection.new_start.saturating_add(selection.new_lines);
@@ -2390,6 +2411,14 @@ fn selection_within_hunk(selection: SelectedHunk, hunk: SelectedHunk) -> bool {
         && selection_new_end <= hunk_new_end
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PatchTransformOpts {
+    reverse: bool,
+    file_name_override: Option<String>,
+    turn_added_files_into_diff_against_empty_file: bool,
+}
+
+#[allow(dead_code)]
 fn build_partial_hunk(hunk: &ParsedHunk, selection: SelectedHunk) -> GitResult<String> {
     let mut raw_lines = hunk.raw.lines();
     let header_line = raw_lines.next().ok_or_else(|| GitError::OperationFailed {
@@ -6577,6 +6606,12 @@ struct ParsedHunk {
     raw: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TransformedHunk {
+    hunk: ParsedHunk,
+    next_start_offset: i64,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ParsedPatchLineKind {
@@ -6622,6 +6657,129 @@ fn n_lines_with_kind(lines: &[ParsedPatchLine], kinds: &[ParsedPatchLineKind]) -
 
 #[allow(dead_code)]
 impl ParsedPatch {
+    fn ensure_hunk_selections_exist(&self, selections: &[SelectedHunk]) -> GitResult<()> {
+        for selection in selections {
+            if selection.old_lines == 0 && selection.new_lines == 0 {
+                return Err(GitError::OperationFailed {
+                    message: format!(
+                        "requested hunk -{},{} +{},{} did not match any lines in patch",
+                        selection.old_start,
+                        selection.old_lines,
+                        selection.new_start,
+                        selection.new_lines
+                    ),
+                });
+            }
+
+            if self.hunks.iter().any(|hunk| {
+                hunk.selection == *selection || selection_within_hunk(*selection, hunk.selection)
+            }) {
+                continue;
+            }
+
+            return Err(GitError::OperationFailed {
+                message: format!(
+                    "requested hunk -{},{} +{},{} was not found in patch",
+                    selection.old_start,
+                    selection.old_lines,
+                    selection.new_start,
+                    selection.new_lines
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn transform(&self, selections: &[SelectedHunk], opts: PatchTransformOpts) -> Self {
+        let included_line_indices = self.included_line_indices(selections);
+        let mut transformed_hunks = Vec::with_capacity(self.hunks.len());
+        let mut start_offset: i64 = 0;
+
+        for (hunk_index, hunk) in self.hunks.iter().enumerate() {
+            let first_line_idx = self.hunk_start_idx(hunk_index);
+            let transformed = hunk.transform(
+                &included_line_indices,
+                first_line_idx,
+                start_offset,
+                opts.reverse,
+            );
+            start_offset = transformed.next_start_offset;
+            if transformed.hunk.contains_changes() {
+                transformed_hunks.push(transformed.hunk);
+            }
+        }
+
+        Self {
+            header_lines: transform_patch_header(&self.header_lines, &opts),
+            hunks: transformed_hunks,
+        }
+    }
+
+    fn format_with_trailing_newline(&self) -> GitResult<String> {
+        let mut patch = String::new();
+        for line in &self.header_lines {
+            patch.push_str(line);
+            patch.push('\n');
+        }
+        for hunk in &self.hunks {
+            patch.push_str(&hunk.format_raw());
+        }
+        Ok(patch)
+    }
+
+    fn included_line_indices(&self, selections: &[SelectedHunk]) -> HashSet<usize> {
+        let mut included = HashSet::new();
+
+        for selection in selections {
+            let Some(hunk) = self.hunks.iter().find(|hunk| {
+                hunk.selection == *selection || selection_within_hunk(*selection, hunk.selection)
+            }) else {
+                continue;
+            };
+
+            let first_line_idx = self.hunk_start_idx(
+                self.hunks
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, hunk))
+                    .expect("matched hunk should belong to patch"),
+            );
+            let mut old_cursor = hunk.selection.old_start;
+            let mut new_cursor = hunk.selection.new_start;
+            let old_end = selection.old_start.saturating_add(selection.old_lines);
+            let new_end = selection.new_start.saturating_add(selection.new_lines);
+            let mut previous_change_selected = false;
+
+            for (line_offset, line) in hunk.body_lines().iter().enumerate() {
+                let line_idx = first_line_idx + line_offset + 1;
+                let include = match line.kind {
+                    ParsedPatchLineKind::Deletion => {
+                        let include = old_cursor >= selection.old_start && old_cursor < old_end;
+                        old_cursor = old_cursor.saturating_add(1);
+                        include
+                    }
+                    ParsedPatchLineKind::Addition => {
+                        let include = new_cursor >= selection.new_start && new_cursor < new_end;
+                        new_cursor = new_cursor.saturating_add(1);
+                        include
+                    }
+                    ParsedPatchLineKind::NoNewlineMarker => previous_change_selected,
+                    _ => false,
+                };
+
+                if include {
+                    included.insert(line_idx);
+                }
+                previous_change_selected = matches!(
+                    line.kind,
+                    ParsedPatchLineKind::Addition | ParsedPatchLineKind::Deletion
+                ) && include;
+            }
+        }
+
+        included
+    }
+
     fn format_plain(&self) -> String {
         let mut lines = self.header_lines.clone();
         for hunk in &self.hunks {
@@ -6846,6 +7004,147 @@ impl ParsedPatch {
 
 #[allow(dead_code)]
 impl ParsedHunk {
+    fn transform(
+        &self,
+        included_line_indices: &HashSet<usize>,
+        first_line_idx: usize,
+        start_offset: i64,
+        reverse: bool,
+    ) -> TransformedHunk {
+        let new_body_lines =
+            self.transform_body_lines(included_line_indices, first_line_idx, reverse);
+        let old_length = n_lines_with_kind(
+            &new_body_lines,
+            &[ParsedPatchLineKind::Context, ParsedPatchLineKind::Deletion],
+        ) as u32;
+        let new_length = n_lines_with_kind(
+            &new_body_lines,
+            &[ParsedPatchLineKind::Context, ParsedPatchLineKind::Addition],
+        ) as u32;
+
+        let header_start_offset = if old_length == 0 {
+            1
+        } else if new_length == 0 {
+            -1
+        } else {
+            0
+        };
+
+        let new_start =
+            ((self.selection.old_start as i64) + start_offset + header_start_offset).max(0) as u32;
+        let next_start_offset = start_offset + i64::from(new_length) - i64::from(old_length);
+
+        let transformed_selection = SelectedHunk {
+            old_start: self.selection.old_start,
+            old_lines: old_length,
+            new_start,
+            new_lines: new_length,
+        };
+
+        TransformedHunk {
+            hunk: ParsedHunk {
+                selection: transformed_selection,
+                raw: ParsedHunk::raw_from_parts(
+                    transformed_selection,
+                    self.header_context(),
+                    &new_body_lines,
+                ),
+            },
+            next_start_offset,
+        }
+    }
+
+    fn transform_body_lines(
+        &self,
+        included_line_indices: &HashSet<usize>,
+        first_line_idx: usize,
+        reverse: bool,
+    ) -> Vec<ParsedPatchLine> {
+        let mut newline_marker_to_skip = None;
+        let mut new_lines = Vec::new();
+        let mut pending_context = Vec::new();
+        let mut saw_unselected_new_file_line = false;
+
+        let flush_pending_context =
+            |new_lines: &mut Vec<ParsedPatchLine>, pending_context: &mut Vec<ParsedPatchLine>| {
+                new_lines.append(pending_context);
+            };
+
+        for (line_offset, line) in self.body_lines().into_iter().enumerate() {
+            let line_idx = first_line_idx + line_offset + 1;
+            let is_selected = included_line_indices.contains(&line_idx);
+
+            match line.kind {
+                ParsedPatchLineKind::Context => {
+                    flush_pending_context(&mut new_lines, &mut pending_context);
+                    saw_unselected_new_file_line = false;
+                    new_lines.push(line);
+                }
+                ParsedPatchLineKind::NoNewlineMarker => {
+                    if newline_marker_to_skip != Some(line_idx) {
+                        flush_pending_context(&mut new_lines, &mut pending_context);
+                        new_lines.push(line);
+                    }
+                }
+                ParsedPatchLineKind::Addition | ParsedPatchLineKind::Deletion => {
+                    let is_old_file_line = (line.kind == ParsedPatchLineKind::Deletion && !reverse)
+                        || (line.kind == ParsedPatchLineKind::Addition && reverse);
+
+                    if is_selected {
+                        if is_old_file_line || saw_unselected_new_file_line {
+                            flush_pending_context(&mut new_lines, &mut pending_context);
+                        }
+                        new_lines.push(line);
+                        continue;
+                    }
+
+                    if is_old_file_line {
+                        let mut content = line.content.clone();
+                        if !content.is_empty() {
+                            content.replace_range(..1, " ");
+                        }
+                        pending_context.push(ParsedPatchLine {
+                            content,
+                            kind: ParsedPatchLineKind::Context,
+                        });
+                    } else {
+                        saw_unselected_new_file_line = true;
+                        if line.kind == ParsedPatchLineKind::Addition {
+                            newline_marker_to_skip = Some(line_idx + 1);
+                        }
+                    }
+                }
+                ParsedPatchLineKind::Header | ParsedPatchLineKind::HunkHeader => {}
+            }
+        }
+
+        flush_pending_context(&mut new_lines, &mut pending_context);
+        new_lines
+    }
+
+    fn raw_from_parts(
+        selection: SelectedHunk,
+        header_context: &str,
+        body_lines: &[ParsedPatchLine],
+    ) -> String {
+        let mut raw = format!(
+            "@@ -{} +{} @@{}",
+            format_patch_range(selection.old_start, selection.old_lines),
+            format_patch_range(selection.new_start, selection.new_lines),
+            header_context
+        );
+        raw.push('\n');
+        for line in body_lines {
+            raw.push_str(&line.content);
+            raw.push('\n');
+        }
+        raw
+    }
+
+    fn format_raw(&self) -> String {
+        Self::raw_from_parts(self.selection, self.header_context(), &self.body_lines())
+    }
+
     fn old_length(&self) -> u32 {
         n_lines_with_kind(
             &self.body_lines(),
@@ -6918,6 +7217,39 @@ impl ParsedHunk {
     fn contains_changes(&self) -> bool {
         self.body_lines().iter().any(ParsedPatchLine::is_change)
     }
+}
+
+fn transform_patch_header(header_lines: &[String], opts: &PatchTransformOpts) -> Vec<String> {
+    if let Some(file_name_override) = &opts.file_name_override {
+        return vec![
+            format!("--- a/{file_name_override}"),
+            format!("+++ b/{file_name_override}"),
+        ];
+    }
+
+    if !opts.turn_added_files_into_diff_against_empty_file {
+        return header_lines.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(header_lines.len());
+    for (index, line) in header_lines.iter().enumerate() {
+        if line.starts_with("new file mode") {
+            continue;
+        }
+
+        if line == "--- /dev/null"
+            && header_lines
+                .get(index + 1)
+                .is_some_and(|next| next.starts_with("+++ b/"))
+        {
+            result.push(format!("--- a/{}", &header_lines[index + 1][6..]));
+            continue;
+        }
+
+        result.push(line.clone());
+    }
+
+    result
 }
 
 fn patch_line_style(kind: ParsedPatchLineKind) -> &'static str {
@@ -14196,6 +14528,349 @@ diff --git a/file.txt b/file.txt
         assert!(patch.contains("@@ -3 +3 @@ heading\n-old three\n+new three\n"));
         assert!(!patch.contains("old two"));
         assert!(!patch.contains("new two"));
+    }
+
+    #[test]
+    fn build_selected_patch_transforms_unselected_lines_into_context_like_upstream() {
+        let diff = "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -2,3 +2,3 @@ heading
+-old two
++new two
+-old three
++new three
+";
+
+        let patch = build_selected_patch_with_opts(
+            diff,
+            &[SelectedHunk {
+                old_start: 3,
+                old_lines: 1,
+                new_start: 3,
+                new_lines: 1,
+            }],
+            PatchTransformOpts {
+                reverse: false,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: false,
+            },
+        )
+        .expect("transform should succeed");
+
+        assert!(
+            patch.starts_with("diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n")
+        );
+        assert!(patch.contains("@@ -2,2 +2,2 @@ heading\n old two\n-old three\n+new three\n"));
+        assert!(!patch.contains("+new two\n"));
+    }
+
+    #[test]
+    fn build_selected_patch_reverse_transform_matches_unstage_behavior() {
+        let diff = "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -2,3 +2,3 @@ heading
+-old two
++new two
+-old three
++new three
+";
+
+        let patch = build_selected_patch_with_opts(
+            diff,
+            &[SelectedHunk {
+                old_start: 3,
+                old_lines: 1,
+                new_start: 3,
+                new_lines: 1,
+            }],
+            PatchTransformOpts {
+                reverse: true,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: false,
+            },
+        )
+        .expect("reverse transform should succeed");
+
+        assert!(patch.contains("@@ -2,2 +2,2 @@ heading\n new two\n-old three\n+new three\n"));
+        assert!(!patch.contains("-old two\n"));
+    }
+
+    #[test]
+    fn build_selected_patch_preserves_newline_marker_only_for_selected_change_block() {
+        let diff = "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,2 @@
+-old one
++new one
+\\ No newline at end of file
+-old two
++new two
+";
+
+        let patch = build_selected_patch_with_opts(
+            diff,
+            &[SelectedHunk {
+                old_start: 2,
+                old_lines: 1,
+                new_start: 2,
+                new_lines: 1,
+            }],
+            PatchTransformOpts {
+                reverse: false,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: false,
+            },
+        )
+        .expect("transform should succeed");
+
+        assert!(!patch.contains("\\ No newline at end of file\n"));
+
+        let omitted_marker = build_selected_patch_with_opts(
+            diff,
+            &[SelectedHunk {
+                old_start: 1,
+                old_lines: 1,
+                new_start: 1,
+                new_lines: 0,
+            }],
+            PatchTransformOpts {
+                reverse: false,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: false,
+            },
+        )
+        .expect("transform should succeed without newline marker");
+
+        assert!(!omitted_marker.contains("\\ No newline at end of file\n"));
+    }
+
+    #[test]
+    fn build_selected_patch_rewrites_header_for_override_and_added_file_normalization() {
+        let diff = "\
+diff --git a/new.txt b/new.txt
+new file mode 100644
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1 @@
++new line
+";
+
+        let normalized = build_selected_patch_with_opts(
+            diff,
+            &[SelectedHunk {
+                old_start: 0,
+                old_lines: 0,
+                new_start: 1,
+                new_lines: 1,
+            }],
+            PatchTransformOpts {
+                reverse: false,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: true,
+            },
+        )
+        .expect("normalization should succeed");
+
+        assert!(normalized.contains("--- a/new.txt\n+++ b/new.txt\n"));
+        assert!(!normalized.contains("new file mode"));
+        assert!(!normalized.contains("--- /dev/null"));
+
+        let overridden = build_selected_patch_with_opts(
+            diff,
+            &[SelectedHunk {
+                old_start: 0,
+                old_lines: 0,
+                new_start: 1,
+                new_lines: 1,
+            }],
+            PatchTransformOpts {
+                reverse: false,
+                file_name_override: Some("override.txt".to_string()),
+                turn_added_files_into_diff_against_empty_file: true,
+            },
+        )
+        .expect("override should succeed");
+
+        assert!(overridden.starts_with("--- a/override.txt\n+++ b/override.txt\n"));
+    }
+
+    #[test]
+    fn build_selected_patch_recalculates_following_hunk_offsets_after_transform() {
+        let diff = "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -2,3 +2,3 @@ first
+-old two
++new two
+-old three
++new three
+@@ -8 +8 @@ second
+-old eight
++new eight
+";
+
+        let patch = build_selected_patch_with_opts(
+            diff,
+            &[
+                SelectedHunk {
+                    old_start: 3,
+                    old_lines: 1,
+                    new_start: 3,
+                    new_lines: 1,
+                },
+                SelectedHunk {
+                    old_start: 8,
+                    old_lines: 1,
+                    new_start: 8,
+                    new_lines: 1,
+                },
+            ],
+            PatchTransformOpts {
+                reverse: false,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: false,
+            },
+        )
+        .expect("transform should succeed");
+
+        assert!(patch.contains("@@ -2,2 +2,2 @@ first\n old two\n-old three\n+new three\n"));
+        assert!(patch.contains("@@ -8 +8 @@ second\n-old eight\n+new eight\n"));
+    }
+
+    #[test]
+    fn cli_patch_transform_keeps_selected_partial_stage_changes_applyable() {
+        let repo = multi_line_partial_repo().expect("fixture repo");
+        let diff = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("unstaged diff should load");
+
+        let patch = build_selected_patch_with_opts(
+            &diff,
+            &[SelectedHunk {
+                old_start: 3,
+                old_lines: 1,
+                new_start: 3,
+                new_lines: 1,
+            }],
+            PatchTransformOpts {
+                reverse: false,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: true,
+            },
+        )
+        .expect("stage transform should build");
+
+        git_with_stdin(
+            repo.path(),
+            [
+                OsStr::new("apply"),
+                OsStr::new("--cached"),
+                OsStr::new("--unidiff-zero"),
+                OsStr::new("--whitespace=nowarn"),
+            ],
+            patch.as_bytes(),
+        )
+        .expect("transformed stage patch should apply");
+
+        let staged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+
+        assert!(staged.contains("+three staged"));
+        assert!(!staged.contains("+two staged"));
+        assert!(!staged.contains("+four staged"));
+    }
+
+    #[test]
+    fn cli_patch_transform_keeps_selected_partial_unstage_changes_applyable() {
+        let repo = multi_line_partial_repo().expect("fixture repo");
+        repo.stage("multi.txt").expect("stage file");
+        let diff = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+
+        let patch = build_selected_patch_with_opts(
+            &diff,
+            &[SelectedHunk {
+                old_start: 3,
+                old_lines: 2,
+                new_start: 3,
+                new_lines: 2,
+            }],
+            PatchTransformOpts {
+                reverse: true,
+                file_name_override: None,
+                turn_added_files_into_diff_against_empty_file: true,
+            },
+        )
+        .expect("unstage transform should build");
+
+        git_with_stdin(
+            repo.path(),
+            [
+                OsStr::new("apply"),
+                OsStr::new("--cached"),
+                OsStr::new("--unidiff-zero"),
+                OsStr::new("--whitespace=nowarn"),
+                OsStr::new("--reverse"),
+            ],
+            patch.as_bytes(),
+        )
+        .expect("transformed unstage patch should apply");
+
+        let staged = git_stdout_raw(
+            repo.path(),
+            [
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--binary",
+                "--unified=0",
+                "--",
+                "multi.txt",
+            ],
+        )
+        .expect("cached diff should load");
+
+        assert!(staged.contains("+two staged"));
+        assert!(!staged.contains("+three staged"));
+        assert!(!staged.contains("+four staged"));
     }
 
     #[test]

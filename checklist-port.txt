@@ -155,7 +155,7 @@
 ./references/lazygit-master/pkg/commands/patch/patch_builder.go
 ./references/lazygit-master/pkg/commands/patch/patch_line.go
 ./references/lazygit-master/pkg/commands/patch/patch_test.go
-./references/lazygit-master/pkg/commands/patch/transform.go
+[x] ./references/lazygit-master/pkg/commands/patch/transform.go
 ./references/lazygit-master/pkg/commands/testdata/a_dir/file
 ./references/lazygit-master/pkg/commands/testdata/a_file
 ./references/lazygit-master/pkg/common/common.go
