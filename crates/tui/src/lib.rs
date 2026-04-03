@@ -9310,7 +9310,7 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         }
         super_lazygit_core::InputPromptOperation::RewordCommit { summary, .. } => {
             format!(
-                "Enter a replacement subject line for {summary}. This rewrites the selected commit message via rebase."
+                "Edit the full commit message for {summary}. This rewrites the selected commit message via rebase."
             )
         }
     }
@@ -13295,18 +13295,17 @@ mod tests {
             key: "r".to_string(),
         })));
 
-        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(
-            result
-                .state
-                .pending_input_prompt
-                .as_ref()
-                .map(|prompt| prompt.operation.clone()),
-            Some(super_lazygit_core::InputPromptOperation::RewordCommit {
-                commit: "1234567890abcdef".to_string(),
-                summary: "1234567 second".to_string(),
-                initial_message: "second".to_string(),
-            })
+            result.effects,
+            vec![
+                super_lazygit_core::Effect::LoadCommitMessageForReword {
+                    repo_id: repo_id.clone(),
+                    commit: "1234567890abcdef".to_string(),
+                    summary: "1234567 second".to_string(),
+                },
+                super_lazygit_core::Effect::ScheduleRender,
+            ]
         );
     }
 

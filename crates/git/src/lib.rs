@@ -182,6 +182,8 @@ pub trait GitBackend: Send + Sync + 'static {
         request: FixupBaseCommitRequest,
     ) -> GitResult<FixupBaseCommitOutcome>;
 
+    fn read_commit_message(&self, repo_id: &RepoId, commit: &str) -> GitResult<String>;
+
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome>;
 
     fn apply_patch_selection(&self, request: PatchSelectionRequest)
@@ -279,6 +281,15 @@ impl GitFacade {
         let operation = GitOperationKind::ReadFixupBaseCommitCandidates;
         self.execute_routed(operation, |backend| {
             backend.read_fixup_base_commit_candidates(request)
+        })
+    }
+
+    pub fn read_commit_message(&mut self, repo_id: &RepoId, commit: &str) -> GitResult<String> {
+        let operation = GitOperationKind::ReadRepoDetail;
+        let repo_id = repo_id.clone();
+        let commit = commit.to_string();
+        self.execute_routed(operation, |backend| {
+            backend.read_commit_message(&repo_id, &commit)
         })
     }
 
@@ -899,6 +910,13 @@ impl GitBackend for NoopGitBackend {
         })
     }
 
+    fn read_commit_message(&self, _repo_id: &RepoId, _commit: &str) -> GitResult<String> {
+        Err(GitError::RouteUnavailable {
+            operation: GitOperationKind::ReadRepoDetail.label(),
+            backend: self.kind().label(),
+        })
+    }
+
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
         Err(GitError::OperationFailed {
             message: format!(
@@ -1082,6 +1100,11 @@ impl GitBackend for CliGitBackend {
     ) -> GitResult<FixupBaseCommitOutcome> {
         let repo_path = repo_path(&request.repo_id)?;
         read_fixup_base_commit_candidates(&repo_path, &request.commit_oids)
+    }
+
+    fn read_commit_message(&self, repo_id: &RepoId, commit: &str) -> GitResult<String> {
+        let repo_path = repo_path(repo_id)?;
+        git_stdout(&repo_path, ["show", "-s", "--format=%B", commit])
     }
 
     fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
@@ -1536,20 +1559,53 @@ impl GitBackend for CliGitBackend {
                 git(&repo_path, ["stash", "drop", stash_ref.as_str()])?;
                 format!("Dropped {stash_ref}")
             }
-            GitCommand::CreateWorktree { path, branch_ref } => {
+            GitCommand::CreateWorktree {
+                path,
+                base_ref,
+                branch,
+                detach,
+            } => {
                 git_builder(
                     &repo_path,
                     GitCommandBuilder::new("worktree")
                         .arg(["add"])
-                        .arg([path.as_os_str(), OsStr::new(branch_ref)]),
+                        .arg_if(*detach, ["--detach"])
+                        .arg_if(
+                            branch.is_some(),
+                            ["-b", branch.as_deref().unwrap_or_default()],
+                        )
+                        .arg([path.as_os_str(), OsStr::new(base_ref)]),
                 )?;
-                format!("Created worktree {} from {branch_ref}", path.display())
+                if *detach {
+                    format!(
+                        "Created detached worktree {} from {base_ref}",
+                        path.display()
+                    )
+                } else if let Some(branch) = branch.as_deref() {
+                    format!(
+                        "Created worktree {} from {base_ref} as {branch}",
+                        path.display()
+                    )
+                } else {
+                    format!("Created worktree {} from {base_ref}", path.display())
+                }
             }
-            GitCommand::RemoveWorktree { path } => {
+            GitCommand::DetachWorktree { path } => {
+                let worktree_repo_paths = RepoPaths::resolve(path)?;
+                git_builder(
+                    &repo_path,
+                    GitCommandBuilder::new("checkout")
+                        .arg(["--detach"])
+                        .git_dir(worktree_repo_paths.worktree_git_dir_path()),
+                )?;
+                format!("Detached worktree {}", path.display())
+            }
+            GitCommand::RemoveWorktree { path, force } => {
                 git_builder(
                     &repo_path,
                     GitCommandBuilder::new("worktree")
                         .arg(["remove"])
+                        .arg_if(*force, ["-f"])
                         .arg([path.as_os_str()]),
                 )?;
                 format!("Removed worktree {}", path.display())
@@ -1844,6 +1900,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::PopStash { .. } => "pop_stash",
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
+        GitCommand::DetachWorktree { .. } => "detach_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",
         GitCommand::AddSubmodule { .. } => "add_submodule",
         GitCommand::EditSubmoduleUrl { .. } => "edit_submodule_url",
@@ -2128,7 +2185,14 @@ fn current_branch_name(repo_path: &Path) -> GitResult<String> {
     Ok(branch)
 }
 
-fn current_branch_list_entry(repo_path: &Path) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BranchListEntry {
+    name: String,
+    display_name: Option<String>,
+    detached_head: bool,
+}
+
+fn current_branch_list_entry(repo_path: &Path) -> Option<BranchListEntry> {
     let symbolic_ref =
         git_stdout_allow_failure(repo_path, ["symbolic-ref", "--short", "HEAD"]).ok()?;
     let detached = git_stdout_allow_failure(
@@ -2147,19 +2211,27 @@ fn current_branch_list_entry(repo_path: &Path) -> Option<String> {
     ))
 }
 
-fn parse_current_branch_list_entry(symbolic_ref: &str, detached_output: &str) -> String {
+fn parse_current_branch_list_entry(symbolic_ref: &str, detached_output: &str) -> BranchListEntry {
     if !symbolic_ref.is_empty() && symbolic_ref != "HEAD" {
-        return symbolic_ref.to_string();
+        return BranchListEntry {
+            name: symbolic_ref.to_string(),
+            display_name: None,
+            detached_head: false,
+        };
     }
 
     if let Some(entry) = parse_detached_head_entry(detached_output) {
         return entry;
     }
 
-    "HEAD".to_string()
+    BranchListEntry {
+        name: "HEAD".to_string(),
+        display_name: Some("HEAD".to_string()),
+        detached_head: true,
+    }
 }
 
-fn parse_detached_head_entry(detached_output: &str) -> Option<String> {
+fn parse_detached_head_entry(detached_output: &str) -> Option<BranchListEntry> {
     for line in detached_output.lines() {
         let parts: Vec<_> = line.trim_end_matches(['\r', '\n']).split('\0').collect();
         if parts.len() != 3 || parts[0].trim() != "*" {
@@ -2168,12 +2240,24 @@ fn parse_detached_head_entry(detached_output: &str) -> Option<String> {
 
         let short_oid = parts[1].trim();
         let display_name = parts[2].trim();
-        if !display_name.is_empty() {
-            return Some(display_name.to_string());
-        }
-        if !short_oid.is_empty() {
-            return Some(format!("(HEAD detached at {short_oid})"));
-        }
+
+        let display_name = if !display_name.is_empty() {
+            display_name.to_string()
+        } else if !short_oid.is_empty() {
+            format!("(HEAD detached at {short_oid})")
+        } else {
+            "HEAD".to_string()
+        };
+
+        return Some(BranchListEntry {
+            name: if !short_oid.is_empty() {
+                short_oid.to_string()
+            } else {
+                display_name.clone()
+            },
+            display_name: Some(display_name),
+            detached_head: true,
+        });
     }
 
     None
@@ -4551,6 +4635,16 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
             .filter_map(|line| parse_branch_line(line, &branch_configs))
             .collect();
 
+        for branch in &mut branches {
+            branch.behind_base_branch = branch_base_reference(repo_path, branch)
+                .and_then(|base_branch| {
+                    base_branch
+                        .as_deref()
+                        .map_or(Ok(0), |base| branch_behind_base_count(repo_path, branch, base))
+                })
+                .unwrap_or(0);
+        }
+
         if let Some(head_index) = branches.iter().position(|branch| branch.is_head) {
             let mut head_branch = branches.remove(head_index);
             head_branch.recency = "  *".to_string();
@@ -4559,10 +4653,10 @@ fn read_branches(repo_path: &Path) -> Vec<BranchItem> {
             branches.insert(
                 0,
                 BranchItem {
-                    name: current_ref,
-                    display_name: None,
+                    name: current_ref.name,
+                    display_name: current_ref.display_name,
                     is_head: true,
-                    detached_head: true,
+                    detached_head: current_ref.detached_head,
                     upstream: None,
                     recency: "  *".to_string(),
                     ..BranchItem::default()
@@ -8748,6 +8842,49 @@ index 9ce8efb33..0632e41b0 100644
     }
 
     #[test]
+    fn cli_backend_populates_behind_base_branch_for_local_branches() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("shared.txt", "base\n")
+            .expect("write base file");
+        repo.commit_all("initial").expect("initial commit");
+
+        repo.checkout_new_branch("feature")
+            .expect("create feature branch");
+        repo.checkout("main").expect("checkout main");
+        repo.append_file("shared.txt", "main update\n")
+            .expect("append main change");
+        repo.commit_all("main update").expect("commit main update");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        let main = detail
+            .branches
+            .iter()
+            .find(|branch| branch.name == "main")
+            .expect("main branch should exist");
+        assert_eq!(main.behind_base_branch, 0);
+
+        let feature = detail
+            .branches
+            .iter()
+            .find(|branch| branch.name == "feature")
+            .expect("feature branch should exist");
+        assert_eq!(feature.behind_base_branch, 1);
+    }
+
+    #[test]
     fn cli_backend_prepends_detached_head_to_branch_list() {
         let repo = detached_head_repo().expect("fixture repo");
         let backend = CliGitBackend;
@@ -8769,7 +8906,12 @@ index 9ce8efb33..0632e41b0 100644
         assert!(current.is_head);
         assert!(current.detached_head);
         assert!(current.upstream.is_none());
-        assert!(current.name.contains("HEAD"));
+        assert_eq!(current.name.len(), 7);
+        assert!(current.name.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_eq!(
+            current.display_name.as_deref(),
+            Some(format!("(HEAD detached at {})", current.name).as_str())
+        );
     }
 
     #[test]
@@ -9031,7 +9173,11 @@ index 9ce8efb33..0632e41b0 100644
     fn parse_current_branch_list_entry_prefers_attached_symbolic_ref() {
         assert_eq!(
             parse_current_branch_list_entry("master", ""),
-            "master".to_string()
+            BranchListEntry {
+                name: "master".to_string(),
+                display_name: None,
+                detached_head: false,
+            }
         );
     }
 
@@ -9048,7 +9194,11 @@ index 9ce8efb33..0632e41b0 100644
 
         assert_eq!(
             parse_current_branch_list_entry("", detached_output),
-            "（头指针在 679b0456 分离）".to_string()
+            BranchListEntry {
+                name: "679b0456".to_string(),
+                display_name: Some("（头指针在 679b0456 分离）".to_string()),
+                detached_head: true,
+            }
         );
     }
 
@@ -9058,7 +9208,11 @@ index 9ce8efb33..0632e41b0 100644
 
         assert_eq!(
             parse_current_branch_list_entry("", detached_output),
-            "(HEAD detached at 6f71c57a)".to_string()
+            BranchListEntry {
+                name: "6f71c57a".to_string(),
+                display_name: Some("(HEAD detached at 6f71c57a)".to_string()),
+                detached_head: true,
+            }
         );
     }
 
@@ -9776,13 +9930,68 @@ index 9ce8efb33..0632e41b0 100644
     }
 
     #[test]
-    fn cli_backend_creates_and_removes_worktrees() {
+    fn cli_backend_detaches_linked_worktree_via_command() {
+        let repo = worktree_repo().expect("fixture repo");
+        let linked_worktree_path = repo
+            .worktree_list()
+            .expect("worktree list")
+            .lines()
+            .find_map(|line| {
+                let path = line.strip_prefix("worktree ")?;
+                path.ends_with("feature-tree").then(|| PathBuf::from(path))
+            })
+            .expect("linked worktree path");
+        let backend = CliGitBackend;
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:detach-worktree"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::DetachWorktree {
+                    path: linked_worktree_path.clone(),
+                },
+            })
+            .expect("detach worktree succeeds");
+
+        let head = git_stdout(&linked_worktree_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+            .expect("read detached head state");
+        assert_eq!(head.trim(), "HEAD");
+    }
+
+    #[test]
+    fn cli_backend_creates_detached_worktrees_from_base_ref() {
+        let repo = worktree_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let worktree_parent = tempfile::tempdir().expect("tempdir");
+        let created_path = worktree_parent.path().join("repo-review");
+
+        backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:create-worktree-detached"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::CreateWorktree {
+                    path: created_path.clone(),
+                    base_ref: "main".to_string(),
+                    branch: None,
+                    detach: true,
+                },
+            })
+            .expect("create detached worktree succeeds");
+
+        let after_create = repo.worktree_list().expect("worktree list");
+        assert!(after_create.contains(created_path.to_string_lossy().as_ref()));
+
+        let head = git_stdout(&created_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+            .expect("read detached created worktree head state");
+        assert_eq!(head.trim(), "HEAD");
+    }
+
+    #[test]
+    fn cli_backend_creates_and_force_removes_dirty_worktrees() {
         let repo = worktree_repo().expect("fixture repo");
         let backend = CliGitBackend;
         let worktree_parent = tempfile::tempdir().expect("tempdir");
         let created_path = worktree_parent.path().join("repo-hotfix");
-        repo.git(["branch", "hotfix", "main"])
-            .expect("create spare branch");
 
         backend
             .run_command(GitCommandRequest {
@@ -9790,7 +9999,9 @@ index 9ce8efb33..0632e41b0 100644
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 command: GitCommand::CreateWorktree {
                     path: created_path.clone(),
-                    branch_ref: "hotfix".to_string(),
+                    base_ref: "main".to_string(),
+                    branch: Some("hotfix".to_string()),
+                    detach: false,
                 },
             })
             .expect("create worktree succeeds");
@@ -9798,18 +10009,34 @@ index 9ce8efb33..0632e41b0 100644
         let after_create = repo.worktree_list().expect("worktree list");
         assert!(after_create.contains(created_path.to_string_lossy().as_ref()));
 
+        fs::write(created_path.join("dirty.txt"), "dirty\n").expect("write dirty worktree file");
+
+        let remove_without_force = backend.run_command(GitCommandRequest {
+            job_id: JobId::new("git:remove-worktree-no-force"),
+            repo_id: RepoId::new(repo.path().display().to_string()),
+            command: GitCommand::RemoveWorktree {
+                path: created_path.clone(),
+                force: false,
+            },
+        });
+        assert!(remove_without_force.is_err());
+
+        let after_failed_remove = repo.worktree_list().expect("worktree list");
+        assert!(after_failed_remove.contains(created_path.to_string_lossy().as_ref()));
+
         backend
             .run_command(GitCommandRequest {
-                job_id: JobId::new("git:remove-worktree"),
+                job_id: JobId::new("git:remove-worktree-force"),
                 repo_id: RepoId::new(repo.path().display().to_string()),
                 command: GitCommand::RemoveWorktree {
                     path: created_path.clone(),
+                    force: true,
                 },
             })
-            .expect("remove worktree succeeds");
+            .expect("force remove worktree succeeds");
 
-        let after_remove = repo.worktree_list().expect("worktree list");
-        assert!(!after_remove.contains(created_path.to_string_lossy().as_ref()));
+        let after_force_remove = repo.worktree_list().expect("worktree list");
+        assert!(!after_force_remove.contains(created_path.to_string_lossy().as_ref()));
     }
 
     #[test]
@@ -13408,6 +13635,78 @@ diff --git a/file.txt b/file.txt
         assert!(additions.is_single_hunk_for_whole_file());
         assert!(!mixed.is_single_hunk_for_whole_file());
         assert!(additions.format_plain().contains("new file mode 100644"));
+    }
+
+    #[test]
+    fn parse_patch_range_matches_upstream_range_defaults_and_errors() {
+        assert_eq!(
+            parse_patch_range("12").expect("single value range"),
+            (12, 1)
+        );
+        assert_eq!(parse_patch_range("7,3").expect("explicit range"), (7, 3));
+
+        let invalid_start = parse_patch_range("x,2").expect_err("invalid start should fail");
+        assert_eq!(
+            invalid_start,
+            GitError::OperationFailed {
+                message: "invalid patch range start `x`: invalid digit found in string".to_string(),
+            }
+        );
+
+        let invalid_length = parse_patch_range("3,y").expect_err("invalid length should fail");
+        assert_eq!(
+            invalid_length,
+            GitError::OperationFailed {
+                message: "invalid patch range length `y`: invalid digit found in string"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn build_selected_patch_reports_missing_and_empty_partial_hunks() {
+        let diff = "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -2,2 +2,2 @@
+-old two
++new two
+";
+
+        let missing = build_selected_patch(
+            diff,
+            &[SelectedHunk {
+                old_start: 9,
+                old_lines: 1,
+                new_start: 9,
+                new_lines: 1,
+            }],
+        )
+        .expect_err("missing hunk selection should fail");
+        assert_eq!(
+            missing,
+            GitError::OperationFailed {
+                message: "requested hunk -9,1 +9,1 was not found in patch".to_string(),
+            }
+        );
+
+        let empty_partial = build_selected_patch(
+            diff,
+            &[SelectedHunk {
+                old_start: 3,
+                old_lines: 0,
+                new_start: 3,
+                new_lines: 0,
+            }],
+        )
+        .expect_err("empty partial selection should fail");
+        assert_eq!(
+            empty_partial,
+            GitError::OperationFailed {
+                message: "requested hunk -3,0 +3,0 did not match any lines in patch".to_string(),
+            }
+        );
     }
 
     #[test]

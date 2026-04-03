@@ -302,6 +302,35 @@ impl AppRuntime {
                         }
                     }
                 }
+                Effect::LoadCommitMessageForReword {
+                    repo_id,
+                    commit,
+                    summary,
+                } => {
+                    let result = self.git.read_commit_message(repo_id, commit);
+                    self.diagnostics.extend_snapshot(self.git.diagnostics());
+
+                    match result {
+                        Ok(message) => {
+                            follow_up_events.push(Event::Worker(
+                                WorkerEvent::CommitMessageForRewordLoaded {
+                                    repo_id: repo_id.clone(),
+                                    commit: commit.clone(),
+                                    summary: summary.clone(),
+                                    message,
+                                },
+                            ));
+                        }
+                        Err(error) => {
+                            follow_up_events.push(Event::Worker(
+                                WorkerEvent::CommitMessageForRewordLoadFailed {
+                                    repo_id: repo_id.clone(),
+                                    error: error.to_string(),
+                                },
+                            ));
+                        }
+                    }
+                }
                 Effect::CheckBranchMerged {
                     repo_id,
                     branch_name,
@@ -864,6 +893,7 @@ fn git_command_summary(command: &GitCommand) -> &'static str {
         GitCommand::DropStash { .. } => "drop_stash",
         GitCommand::RenameStash { .. } => "rename_stash",
         GitCommand::CreateWorktree { .. } => "create_worktree",
+        GitCommand::DetachWorktree { .. } => "detach_worktree",
         GitCommand::RemoveWorktree { .. } => "remove_worktree",
         GitCommand::AddSubmodule { .. } => "add_submodule",
         GitCommand::EditSubmoduleUrl { .. } => "edit_submodule_url",

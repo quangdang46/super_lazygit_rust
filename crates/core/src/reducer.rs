@@ -1138,13 +1138,18 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 if selected_index == 0 {
                     return Err("Select an older commit before starting reword.".to_string());
                 }
-                Ok(InputPromptOperation::RewordCommit {
-                    commit: commit.oid.clone(),
-                    summary: format!("{} {}", commit.short_oid, commit.summary),
-                    initial_message: commit.summary.clone(),
-                })
+                Ok((
+                    commit.oid.clone(),
+                    format!("{} {}", commit.short_oid, commit.summary),
+                ))
             }) {
-                Ok(Some((repo_id, operation))) => open_input_prompt(state, repo_id, operation),
+                Ok(Some((repo_id, (commit, summary)))) => {
+                    effects.push(Effect::LoadCommitMessageForReword {
+                        repo_id,
+                        commit,
+                        summary,
+                    });
+                }
                 Ok(None) => push_warning(state, "Select a commit before starting reword."),
                 Err(message) => push_warning(state, message),
             }
@@ -3534,6 +3539,29 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
             push_warning(state, error);
             effects.push(Effect::ScheduleRender);
         }
+        WorkerEvent::CommitMessageForRewordLoaded {
+            repo_id,
+            commit,
+            summary,
+            message,
+        } => {
+            let auto_wrap_width = 72usize;
+            let initial_message = try_remove_hard_line_breaks(&message, auto_wrap_width);
+            open_input_prompt(
+                state,
+                repo_id,
+                InputPromptOperation::RewordCommit {
+                    commit,
+                    summary,
+                    initial_message,
+                },
+            );
+            effects.push(Effect::ScheduleRender);
+        }
+        WorkerEvent::CommitMessageForRewordLoadFailed { repo_id: _, error } => {
+            push_warning(state, error);
+            effects.push(Effect::ScheduleRender);
+        }
         WorkerEvent::BranchMergeCheckCompleted {
             repo_id,
             branch_name,
@@ -4146,7 +4174,7 @@ fn try_remove_hard_line_breaks(message: &str, auto_wrap_width: usize) -> String 
             let candidate = format!("{prefix} {suffix}");
             let soft_breaks = auto_wrap_break_indices(&candidate, auto_wrap_width);
             if soft_breaks.first().is_some_and(|break_index| {
-                *break_index == index.saturating_sub(last_hard_line_start) + 1
+                *break_index == index.saturating_sub(last_hard_line_start)
             }) {
                 result.replace_range(index..=index, " ");
             }
@@ -16695,9 +16723,9 @@ mod tests {
                 operation: crate::state::InputPromptOperation::RewordCommit {
                     commit: "older".to_string(),
                     summary: "old1234 older commit".to_string(),
-                    initial_message: "older commit".to_string(),
+                    initial_message: "older commit\n\nbody line".to_string(),
                 },
-                value: "reworded subject".to_string(),
+                value: "reworded subject\n\nnew body".to_string(),
                 return_focus: PaneId::RepoDetail,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -16718,7 +16746,7 @@ mod tests {
                 command: GitCommand::StartCommitRebase {
                     commit: "older".to_string(),
                     mode: RebaseStartMode::Reword {
-                        message: "reworded subject".to_string(),
+                        message: "reworded subject\n\nnew body".to_string(),
                     },
                 },
             })]
@@ -21612,7 +21640,7 @@ mod tests {
     }
 
     #[test]
-    fn reword_selected_commit_opens_prompt_with_selected_summary() {
+    fn reword_selected_commit_loads_full_message_for_selected_commit() {
         let state = AppState {
             mode: AppMode::Repository,
             repo_mode: Some(RepoModeState {
@@ -21652,6 +21680,38 @@ mod tests {
 
         let result = reduce(state, Event::Action(Action::RewordSelectedCommit));
 
+        assert_eq!(
+            result.effects,
+            vec![
+                Effect::LoadCommitMessageForReword {
+                    repo_id: RepoId::new("repo-1"),
+                    commit: "older".to_string(),
+                    summary: "old1234 older commit".to_string(),
+                },
+                Effect::ScheduleRender,
+            ]
+        );
+    }
+
+    #[test]
+    fn commit_message_for_reword_loaded_opens_prompt_with_unwrapped_message() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::CommitMessageForRewordLoaded {
+                repo_id,
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+                message: "subject\nwrapped body line\ncontinued text".to_string(),
+            }),
+        );
+
         assert_eq!(result.state.focused_pane, PaneId::Modal);
         assert_eq!(
             result
@@ -21662,7 +21722,7 @@ mod tests {
             Some(InputPromptOperation::RewordCommit {
                 commit: "older".to_string(),
                 summary: "old1234 older commit".to_string(),
-                initial_message: "older commit".to_string(),
+                initial_message: "subject\nwrapped body line\ncontinued text".to_string(),
             })
         );
     }

@@ -45,6 +45,11 @@ pub enum Effect {
         repo_id: RepoId,
         commit_oids: Vec<String>,
     },
+    LoadCommitMessageForReword {
+        repo_id: RepoId,
+        commit: String,
+        summary: String,
+    },
     CheckBranchMerged {
         repo_id: RepoId,
         branch_name: String,
@@ -493,10 +498,16 @@ pub enum GitCommand {
     },
     CreateWorktree {
         path: PathBuf,
-        branch_ref: String,
+        base_ref: String,
+        branch: Option<String>,
+        detach: bool,
+    },
+    DetachWorktree {
+        path: PathBuf,
     },
     RemoveWorktree {
         path: PathBuf,
+        force: bool,
     },
     AddSubmodule {
         path: PathBuf,
@@ -624,5 +635,32 @@ mod tests {
         assert_eq!(clone.credential_strategy(), CredentialStrategy::Prompt);
         assert!(clone.should_use_pty());
         assert!(clone.should_ignore_empty_error());
+    }
+
+    #[test]
+    fn shell_command_builder_helpers_match_cmd_obj_mutator_semantics() {
+        let request = ShellCommandRequest::from_args(
+            JobId::new("shell:repo:builder"),
+            RepoId::new("/tmp/repo"),
+            "git",
+            ["status", "--short"],
+        )
+        .set_stdin("input")
+        .add_env_vars(["A=1", "B=two"])
+        .set_wd("/tmp/custom")
+        .dont_log()
+        .stream_output()
+        .suppress_output_unless_error();
+
+        assert_eq!(request.args(), &["git", "status", "--short"]);
+        assert_eq!(request.stdin.as_deref(), Some("input"));
+        assert_eq!(request.env_vars(), &["A=1", "B=two"]);
+        assert_eq!(
+            request.working_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/custom"))
+        );
+        assert!(!request.should_log());
+        assert!(request.should_stream_output());
+        assert!(request.should_suppress_output_unless_error());
     }
 }

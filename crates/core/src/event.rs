@@ -75,6 +75,16 @@ pub enum WorkerEvent {
         repo_id: RepoId,
         error: String,
     },
+    CommitMessageForRewordLoaded {
+        repo_id: RepoId,
+        commit: String,
+        summary: String,
+        message: String,
+    },
+    CommitMessageForRewordLoadFailed {
+        repo_id: RepoId,
+        error: String,
+    },
     BranchMergeCheckCompleted {
         repo_id: RepoId,
         branch_name: String,
