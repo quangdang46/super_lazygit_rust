@@ -163,13 +163,21 @@ impl ShellCommandRequest {
         job_id: JobId,
         repo_id: RepoId,
         command: impl Into<String>,
+        shell_program: Option<&str>,
         shell_functions_file: Option<&str>,
     ) -> Self {
         let mut command = command.into();
         #[cfg(not(windows))]
         if let Some(shell_functions_file) = shell_functions_file.filter(|path| !path.is_empty()) {
+            let resolved_shell =
+                resolve_shell_program(shell_program, std::env::var("SHELL").ok().as_deref());
+            let prefix = if shell_functions_file_prefix(&resolved_shell).is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", shell_functions_file_prefix(&resolved_shell))
+            };
             command = format!(
-                ". {}\n{}",
+                "{prefix}. {}\n{}",
                 shell_quote_single(shell_functions_file),
                 command
             );
@@ -337,6 +345,22 @@ where
 
 fn shell_quote_single(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn resolve_shell_program(shell_program: Option<&str>, shell_env: Option<&str>) -> String {
+    shell_program
+        .filter(|value| !value.is_empty())
+        .or(shell_env.filter(|value| !value.is_empty()))
+        .unwrap_or("bash")
+        .to_string()
+}
+
+fn shell_functions_file_prefix(shell_program: &str) -> &'static str {
+    if shell_program.ends_with("bash") {
+        "shopt -s expand_aliases"
+    } else {
+        ""
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -693,16 +717,63 @@ mod tests {
             JobId::new("shell:repo:new-shell"),
             RepoId::new("/tmp/repo"),
             "printf hi",
+            None,
             Some("/tmp/lazygit-shell-functions.sh"),
         );
 
         #[cfg(not(windows))]
         assert_eq!(
             request.command,
-            ". '/tmp/lazygit-shell-functions.sh'\nprintf hi"
+            "shopt -s expand_aliases\n. '/tmp/lazygit-shell-functions.sh'\nprintf hi"
         );
 
         #[cfg(windows)]
         assert_eq!(request.command, "printf hi");
+    }
+
+    #[test]
+    fn shell_command_new_shell_adds_bash_alias_prefix_before_sourcing_functions_file() {
+        let request = ShellCommandRequest::new_shell(
+            JobId::new("shell:repo:new-shell-bash"),
+            RepoId::new("/tmp/repo"),
+            "printf hi",
+            Some("/bin/bash"),
+            Some("/tmp/lazygit-shell-functions.sh"),
+        );
+
+        #[cfg(not(windows))]
+        assert_eq!(
+            request.command,
+            "shopt -s expand_aliases\n. '/tmp/lazygit-shell-functions.sh'\nprintf hi"
+        );
+
+        #[cfg(windows)]
+        assert_eq!(request.command, "printf hi");
+    }
+
+    #[test]
+    fn resolve_shell_program_prefers_explicit_then_env_then_bash() {
+        assert_eq!(
+            resolve_shell_program(Some("/bin/zsh"), Some("/bin/bash")),
+            "/bin/zsh"
+        );
+        assert_eq!(
+            resolve_shell_program(None, Some("/usr/bin/bash")),
+            "/usr/bin/bash"
+        );
+        assert_eq!(resolve_shell_program(None, None), "bash");
+    }
+
+    #[test]
+    fn shell_functions_file_prefix_only_applies_to_bash_shells() {
+        assert_eq!(
+            shell_functions_file_prefix("bash"),
+            "shopt -s expand_aliases"
+        );
+        assert_eq!(
+            shell_functions_file_prefix("/bin/bash"),
+            "shopt -s expand_aliases"
+        );
+        assert_eq!(shell_functions_file_prefix("/bin/zsh"), "");
     }
 }

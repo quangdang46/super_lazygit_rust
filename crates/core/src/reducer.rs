@@ -11033,6 +11033,7 @@ mod tests {
                     super::OsCommandTemplateKind::OpenLink,
                 ),
                 None,
+                None,
             ))]
         );
     }
