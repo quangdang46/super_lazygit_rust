@@ -159,6 +159,25 @@ impl ShellCommandRequest {
     }
 
     #[must_use]
+    pub fn new_shell(
+        job_id: JobId,
+        repo_id: RepoId,
+        command: impl Into<String>,
+        shell_functions_file: Option<&str>,
+    ) -> Self {
+        let mut command = command.into();
+        #[cfg(not(windows))]
+        if let Some(shell_functions_file) = shell_functions_file.filter(|path| !path.is_empty()) {
+            command = format!(
+                ". {}\n{}",
+                shell_quote_single(shell_functions_file),
+                command
+            );
+        }
+        Self::new(job_id, repo_id, command)
+    }
+
+    #[must_use]
     pub fn args(&self) -> &[String] {
         &self.argv
     }
@@ -314,6 +333,10 @@ where
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn shell_quote_single(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -662,5 +685,24 @@ mod tests {
         assert!(!request.should_log());
         assert!(request.should_stream_output());
         assert!(request.should_suppress_output_unless_error());
+    }
+
+    #[test]
+    fn shell_command_new_shell_sources_functions_file_before_command() {
+        let request = ShellCommandRequest::new_shell(
+            JobId::new("shell:repo:new-shell"),
+            RepoId::new("/tmp/repo"),
+            "printf hi",
+            Some("/tmp/lazygit-shell-functions.sh"),
+        );
+
+        #[cfg(not(windows))]
+        assert_eq!(
+            request.command,
+            ". '/tmp/lazygit-shell-functions.sh'\nprintf hi"
+        );
+
+        #[cfg(windows)]
+        assert_eq!(request.command, "printf hi");
     }
 }

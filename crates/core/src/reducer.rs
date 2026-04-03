@@ -11024,7 +11024,7 @@ mod tests {
 
         assert_eq!(
             result.effects,
-            vec![Effect::RunShellCommand(ShellCommandRequest::new(
+            vec![Effect::RunShellCommand(ShellCommandRequest::new_shell(
                 JobId::new("shell:/tmp/repo-1:run-command"),
                 repo_id,
                 super::open_in_default_app_command(
@@ -11032,6 +11032,7 @@ mod tests {
                     &crate::state::OsConfigSnapshot::default(),
                     super::OsCommandTemplateKind::OpenLink,
                 ),
+                None,
             ))]
         );
     }
