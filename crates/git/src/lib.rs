@@ -2498,12 +2498,6 @@ fn parse_patch(diff: &str) -> GitResult<ParsedPatch> {
         hunks.push(ParsedHunk { selection, raw });
     }
 
-    if hunks.is_empty() {
-        return Err(GitError::OperationFailed {
-            message: "patch did not contain any hunks".to_string(),
-        });
-    }
-
     Ok(ParsedPatch {
         header_lines,
         hunks,
@@ -2512,7 +2506,13 @@ fn parse_patch(diff: &str) -> GitResult<ParsedPatch> {
 
 fn parse_hunk_header(line: &str) -> GitResult<Option<SelectedHunk>> {
     let Some(rest) = line.strip_prefix("@@ -") else {
-        return Ok(None);
+        return if line.starts_with("@@") {
+            Err(GitError::OperationFailed {
+                message: format!("invalid patch hunk header: {line}"),
+            })
+        } else {
+            Ok(None)
+        };
     };
     let Some((old_range, remainder)) = rest.split_once(" +") else {
         return Err(GitError::OperationFailed {
@@ -14013,6 +14013,72 @@ index 1111111..2222222 100644
                     .to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parse_patch_returns_empty_patch_when_diff_has_no_hunks() {
+        let patch = parse_patch("diff --git a/file.txt b/file.txt\nindex 111..222 100644")
+            .expect("header-only patch should parse");
+
+        assert!(patch
+            .header_lines
+            .iter()
+            .any(|line| line == "diff --git a/file.txt b/file.txt"));
+        assert!(patch.hunks.is_empty());
+        assert_eq!(
+            patch.format_plain(),
+            "diff --git a/file.txt b/file.txt\nindex 111..222 100644"
+        );
+        assert!(!patch.contains_changes());
+    }
+
+    #[test]
+    fn parse_hunk_header_rejects_invalid_headers_and_preserves_context_suffix() {
+        assert!(parse_hunk_header("not a hunk")
+            .expect("non-header should be ignored")
+            .is_none());
+
+        let parsed = parse_hunk_header("@@ -16,2 +14,3 @@ func demo() {")
+            .expect("valid hunk header")
+            .expect("selection");
+        assert_eq!(
+            parsed,
+            SelectedHunk {
+                old_start: 16,
+                old_lines: 2,
+                new_start: 14,
+                new_lines: 3,
+            }
+        );
+
+        let invalid = parse_hunk_header("@@ invalid @@").expect_err("invalid header should fail");
+        assert_eq!(
+            invalid,
+            GitError::OperationFailed {
+                message: "invalid patch hunk header: @@ invalid @@".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parsed_hunk_body_lines_treat_empty_strings_as_context_lines() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -1,1 +1,2 @@
+ line one
+
++line two
+",
+        )
+        .expect("patch should parse");
+        let body_lines = patch.hunks[0].body_lines();
+
+        assert_eq!(body_lines.len(), 3);
+        assert_eq!(body_lines[1].content, "");
+        assert_eq!(body_lines[1].kind, ParsedPatchLineKind::Context);
     }
 
     #[test]
