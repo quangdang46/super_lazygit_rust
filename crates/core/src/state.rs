@@ -2272,6 +2272,13 @@ impl CommitItem {
     }
 }
 
+#[must_use]
+pub fn is_head_commit(commits: &[CommitItem], index: usize) -> bool {
+    commits.get(index).is_some_and(|commit| {
+        !commit.is_todo() && (index == 0 || commits.get(index - 1).is_some_and(CommitItem::is_todo))
+    })
+}
+
 impl GitRef for CommitItem {
     fn full_ref_name(&self) -> String {
         self.oid.clone()
@@ -3144,6 +3151,32 @@ mod tests {
         };
         assert!(todo_commit.is_todo());
         assert!(crate::state::CommitItem::default().is_first_commit());
+    }
+
+    #[test]
+    fn is_head_commit_matches_upstream_todo_boundary_semantics() {
+        let normal = crate::state::CommitItem {
+            oid: "normal".to_string(),
+            ..crate::state::CommitItem::default()
+        };
+        let todo = crate::state::CommitItem {
+            oid: "todo".to_string(),
+            todo_action: crate::state::CommitTodoAction::Fixup,
+            ..crate::state::CommitItem::default()
+        };
+        let after_todo = crate::state::CommitItem {
+            oid: "after-todo".to_string(),
+            ..crate::state::CommitItem::default()
+        };
+
+        let commits = vec![normal.clone(), todo, after_todo.clone()];
+        assert!(crate::state::is_head_commit(&commits, 0));
+        assert!(!crate::state::is_head_commit(&commits, 1));
+        assert!(crate::state::is_head_commit(&commits, 2));
+
+        let prefixed_by_normal = vec![normal, after_todo];
+        assert!(!crate::state::is_head_commit(&prefixed_by_normal, 1));
+        assert!(!crate::state::is_head_commit(&prefixed_by_normal, 99));
     }
 
     #[test]
