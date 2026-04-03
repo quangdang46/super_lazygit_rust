@@ -1533,7 +1533,11 @@ pub fn visible_status_entries(repo_mode: &RepoModeState, pane: PaneId) -> Vec<Vi
         .collect::<Vec<_>>();
 
     if !repo_mode.status_tree_enabled {
-        return filtered_files
+        let mut flat_files = filtered_files;
+        flat_files.sort_by(|left, right| left.path.cmp(&right.path));
+        flat_files.sort_by_key(|item| flat_status_sort_key(item));
+
+        return flat_files
             .into_iter()
             .map(|item| VisibleStatusEntry {
                 path: item.path.clone(),
@@ -1545,91 +1549,165 @@ pub fn visible_status_entries(repo_mode: &RepoModeState, pane: PaneId) -> Vec<Vi
             .collect();
     }
 
-    let mut directory_children = BTreeMap::<PathBuf, BTreeSet<PathBuf>>::new();
-    let mut directory_files = BTreeMap::<PathBuf, Vec<&FileStatus>>::new();
-    let mut directory_aggregate = BTreeMap::<PathBuf, Vec<&FileStatus>>::new();
-
-    for item in filtered_files {
-        let mut parent = PathBuf::new();
-        let components = item.path.components().collect::<Vec<_>>();
-        for component in components.iter().take(components.len().saturating_sub(1)) {
-            let mut directory = parent.clone();
-            directory.push(component.as_os_str());
-            directory_children
-                .entry(parent.clone())
-                .or_default()
-                .insert(directory.clone());
-            directory_aggregate
-                .entry(directory.clone())
-                .or_default()
-                .push(item);
-            parent = directory;
-        }
-        directory_files.entry(parent).or_default().push(item);
-    }
-
-    let tree = StatusTreeCollections {
-        directory_children: &directory_children,
-        directory_files: &directory_files,
-        directory_aggregate: &directory_aggregate,
-    };
     let mut entries = Vec::new();
-    tree.append_entries(Path::new(""), 0, pane, repo_mode, &mut entries);
+    build_status_tree(filtered_files).append_entries(0, pane, repo_mode, &mut entries);
     entries
 }
 
-struct StatusTreeCollections<'a> {
-    directory_children: &'a BTreeMap<PathBuf, BTreeSet<PathBuf>>,
-    directory_files: &'a BTreeMap<PathBuf, Vec<&'a FileStatus>>,
-    directory_aggregate: &'a BTreeMap<PathBuf, Vec<&'a FileStatus>>,
+fn flat_status_sort_key(item: &FileStatus) -> u8 {
+    if item.has_merge_conflicts() {
+        0
+    } else if item.tracked() {
+        1
+    } else {
+        2
+    }
 }
 
-impl<'a> StatusTreeCollections<'a> {
+fn build_status_tree<'a>(files: Vec<&'a FileStatus>) -> StatusTreeNode<'a> {
+    let mut root = StatusTreeNode::root();
+    for item in files {
+        root.insert_file(item);
+    }
+    root.compress_children();
+    root
+}
+
+#[derive(Debug, Clone)]
+struct StatusTreeNode<'a> {
+    path: PathBuf,
+    directories: Vec<StatusTreeNode<'a>>,
+    files: Vec<&'a FileStatus>,
+}
+
+impl<'a> StatusTreeNode<'a> {
+    fn root() -> Self {
+        Self {
+            path: PathBuf::new(),
+            directories: Vec::new(),
+            files: Vec::new(),
+        }
+    }
+
+    fn insert_file(&mut self, item: &'a FileStatus) {
+        self.insert_file_components(item, item.path.components().collect::<Vec<_>>().as_slice());
+    }
+
+    fn insert_file_components(
+        &mut self,
+        item: &'a FileStatus,
+        components: &[std::path::Component<'_>],
+    ) {
+        if components.len() <= 1 {
+            self.files.push(item);
+            self.files.sort_by(|left, right| left.path.cmp(&right.path));
+            return;
+        }
+
+        let mut directory_path = self.path.clone();
+        directory_path.push(components[0].as_os_str());
+        let existing_index = self
+            .directories
+            .iter()
+            .position(|node| node.path == directory_path);
+        let index = if let Some(index) = existing_index {
+            index
+        } else {
+            self.directories.push(StatusTreeNode {
+                path: directory_path.clone(),
+                directories: Vec::new(),
+                files: Vec::new(),
+            });
+            self.directories
+                .sort_by(|left, right| left.path.cmp(&right.path));
+            self.directories
+                .iter()
+                .position(|node| node.path == directory_path)
+                .unwrap_or(0)
+        };
+        self.directories[index].insert_file_components(item, &components[1..]);
+    }
+
+    fn compress_children(&mut self) {
+        for directory in &mut self.directories {
+            directory.compress();
+        }
+    }
+
+    fn compress(&mut self) {
+        self.compress_children();
+
+        while self.files.is_empty()
+            && self.directories.len() == 1
+            && !self.directories[0].is_leaf_dir()
+        {
+            let child = self.directories.remove(0);
+            self.path = child.path;
+            self.directories = child.directories;
+            self.files = child.files;
+        }
+    }
+
+    fn is_leaf_dir(&self) -> bool {
+        self.directories.is_empty()
+    }
+
+    fn aggregate_kind(&self, pane: PaneId) -> Option<FileStatusKind> {
+        aggregate_status_kind(self.all_files().into_iter(), pane)
+    }
+
+    fn all_files(&self) -> Vec<&'a FileStatus> {
+        let mut files = self.files.clone();
+        for directory in &self.directories {
+            files.extend(directory.all_files());
+        }
+        files
+    }
+
     fn append_entries(
         &self,
-        parent: &Path,
         depth: usize,
         pane: PaneId,
         repo_mode: &RepoModeState,
         entries: &mut Vec<VisibleStatusEntry>,
     ) {
-        if let Some(children) = self.directory_children.get(parent) {
-            for directory in children {
-                let collapsed = repo_mode
-                    .collapsed_status_dirs
-                    .contains(directory.as_path());
-                let kind = self
-                    .directory_aggregate
-                    .get(directory.as_path())
-                    .and_then(|items| aggregate_status_kind(items.iter().copied(), pane));
-                let label = directory
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map_or_else(|| directory.display().to_string(), ToString::to_string);
-                entries.push(VisibleStatusEntry {
-                    path: directory.clone(),
-                    kind,
-                    depth,
-                    label,
-                    entry_kind: VisibleStatusEntryKind::Directory { collapsed },
-                });
-                if !collapsed {
-                    self.append_entries(directory.as_path(), depth + 1, pane, repo_mode, entries);
-                }
+        for directory in &self.directories {
+            let collapsed = repo_mode
+                .collapsed_status_dirs
+                .contains(directory.path.as_path());
+            let kind = directory.aggregate_kind(pane);
+            let label = if self.path.as_os_str().is_empty() {
+                directory.path.display().to_string()
+            } else {
+                directory
+                    .path
+                    .strip_prefix(&self.path)
+                    .ok()
+                    .and_then(Path::to_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| directory.path.display().to_string())
+            };
+            entries.push(VisibleStatusEntry {
+                path: directory.path.clone(),
+                kind,
+                depth,
+                label,
+                entry_kind: VisibleStatusEntryKind::Directory { collapsed },
+            });
+            if !collapsed {
+                directory.append_entries(depth + 1, pane, repo_mode, entries);
             }
         }
 
-        if let Some(files) = self.directory_files.get(parent) {
-            for item in files {
-                if let Some(kind) = status_kind_for_pane(item, pane) {
-                    entries.push(VisibleStatusEntry {
-                        path: item.path.clone(),
-                        kind: Some(kind),
-                        depth,
-                        label: status_entry_label(item, true),
-                        entry_kind: VisibleStatusEntryKind::File,
-                    });
-                }
+        for item in &self.files {
+            if let Some(kind) = status_kind_for_pane(item, pane) {
+                entries.push(VisibleStatusEntry {
+                    path: item.path.clone(),
+                    kind: Some(kind),
+                    depth,
+                    label: status_entry_label(item, true),
+                    entry_kind: VisibleStatusEntryKind::File,
+                });
             }
         }
     }
@@ -3413,6 +3491,131 @@ mod tests {
                 "src/ui".to_string(),
                 "src/ui/lib.rs".to_string(),
                 "src/ui/mod.rs".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_status_entries_compress_single_child_directory_chains() {
+        let repo_mode = RepoModeState {
+            detail: Some(RepoDetail {
+                file_tree: vec![FileStatus {
+                    path: PathBuf::from("src/ui/lib.rs"),
+                    kind: FileStatusKind::Modified,
+                    unstaged_kind: Some(FileStatusKind::Modified),
+                    ..FileStatus::default()
+                }],
+                ..RepoDetail::default()
+            }),
+            ..RepoModeState::new(RepoId::new("repo-a"))
+        };
+
+        let entries = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.path.display().to_string(),
+                    entry.depth,
+                    entry.entry_kind,
+                    entry.label,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            entries,
+            vec![
+                (
+                    "src".to_string(),
+                    0,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "src".to_string(),
+                ),
+                (
+                    "src/ui".to_string(),
+                    1,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "ui".to_string(),
+                ),
+                (
+                    "src/ui/lib.rs".to_string(),
+                    2,
+                    VisibleStatusEntryKind::File,
+                    "lib.rs".to_string(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_status_entries_flat_mode_orders_conflicts_then_tracked_then_untracked() {
+        let mut repo_mode = RepoModeState {
+            status_tree_enabled: false,
+            detail: Some(RepoDetail {
+                file_tree: vec![
+                    FileStatus {
+                        path: PathBuf::from("a2"),
+                        short_status: "??".to_string(),
+                        kind: FileStatusKind::Untracked,
+                        unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
+                    },
+                    FileStatus {
+                        path: PathBuf::from("a1"),
+                        short_status: "??".to_string(),
+                        kind: FileStatusKind::Untracked,
+                        unstaged_kind: Some(FileStatusKind::Untracked),
+                        ..FileStatus::default()
+                    },
+                    FileStatus {
+                        path: PathBuf::from("c2"),
+                        short_status: "UU".to_string(),
+                        kind: FileStatusKind::Conflicted,
+                        unstaged_kind: Some(FileStatusKind::Conflicted),
+                        ..FileStatus::default()
+                    },
+                    FileStatus {
+                        path: PathBuf::from("c1"),
+                        short_status: "AA".to_string(),
+                        kind: FileStatusKind::Conflicted,
+                        unstaged_kind: Some(FileStatusKind::Conflicted),
+                        ..FileStatus::default()
+                    },
+                    FileStatus {
+                        path: PathBuf::from("b2"),
+                        short_status: "M ".to_string(),
+                        kind: FileStatusKind::Modified,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
+                    },
+                    FileStatus {
+                        path: PathBuf::from("b1"),
+                        short_status: "M ".to_string(),
+                        kind: FileStatusKind::Modified,
+                        unstaged_kind: Some(FileStatusKind::Modified),
+                        ..FileStatus::default()
+                    },
+                ],
+                ..RepoDetail::default()
+            }),
+            ..RepoModeState::new(RepoId::new("repo-a"))
+        };
+
+        repo_mode.status_filter_mode = StatusFilterMode::All;
+        let entries = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| entry.path.display().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            entries,
+            vec![
+                "c1".to_string(),
+                "c2".to_string(),
+                "b1".to_string(),
+                "b2".to_string(),
+                "a1".to_string(),
+                "a2".to_string(),
             ]
         );
     }
