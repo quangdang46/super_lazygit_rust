@@ -6630,6 +6630,38 @@ impl ParsedPatch {
             .join("\n")
     }
 
+    fn format_view(&self, included_line_indices: &HashSet<usize>) -> String {
+        if !self.contains_changes() {
+            return String::new();
+        }
+
+        let mut rendered = Vec::new();
+        let mut line_idx = 0usize;
+
+        for line in &self.header_lines {
+            rendered.push(format_patch_view_line(
+                line,
+                patch_line_style(ParsedPatchLineKind::Header),
+                false,
+            ));
+            line_idx += 1;
+        }
+
+        for hunk in &self.hunks {
+            for line in hunk.all_lines() {
+                let included = line.is_change() && included_line_indices.contains(&line_idx);
+                rendered.push(format_patch_view_line(
+                    &line.content,
+                    patch_line_style(line.kind),
+                    included,
+                ));
+                line_idx += 1;
+            }
+        }
+
+        rendered.join("\n")
+    }
+
     fn lines(&self) -> Vec<ParsedPatchLine> {
         let mut lines = Vec::new();
         lines.extend(
@@ -6832,6 +6864,25 @@ impl ParsedHunk {
     fn contains_changes(&self) -> bool {
         self.body_lines().iter().any(ParsedPatchLine::is_change)
     }
+}
+
+fn patch_line_style(kind: ParsedPatchLineKind) -> &'static str {
+    match kind {
+        ParsedPatchLineKind::Header => "header-bold",
+        ParsedPatchLineKind::HunkHeader => "hunk-cyan",
+        ParsedPatchLineKind::Addition => "addition-green",
+        ParsedPatchLineKind::Deletion => "deletion-red",
+        ParsedPatchLineKind::Context | ParsedPatchLineKind::NoNewlineMarker => "default",
+    }
+}
+
+fn format_patch_view_line(line: &str, style: &str, included: bool) -> String {
+    let prefix = if included { "included" } else { style };
+    if line.len() < 2 {
+        return format!("<{prefix}>{line}");
+    }
+
+    format!("<{prefix}>{}<{}>{}", &line[..1], style, &line[1..])
 }
 
 #[cfg(test)]
@@ -13666,6 +13717,79 @@ index 1111111..2222222 100644
             patch.format_range_plain(4, 7),
             "@@ -2,3 +2,4 @@\n line two\n-old three\n+new three"
         );
+    }
+
+    #[test]
+    fn parsed_patch_format_view_returns_empty_when_patch_has_no_changes() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -2,2 +2,2 @@
+ line two
+ line three
+",
+        )
+        .expect("patch should parse");
+
+        assert_eq!(patch.format_view(&HashSet::new()), "");
+    }
+
+    #[test]
+    fn parsed_patch_format_view_marks_headers_styles_and_included_change_lines() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -2,3 +2,4 @@ heading
+ line two
+-old three
++new three
+ line four
++line five
+",
+        )
+        .expect("patch should parse");
+
+        let included = HashSet::from([6usize]);
+        let rendered = patch.format_view(&included);
+        let lines = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(
+            lines[0],
+            "<header-bold>d<header-bold>iff --git a/file.txt b/file.txt"
+        );
+        assert_eq!(lines[4], "<hunk-cyan>@<hunk-cyan>@ -2,3 +2,4 @@ heading");
+        assert_eq!(lines[5], "<default> <default>line two");
+        assert_eq!(lines[6], "<included>-<deletion-red>old three");
+        assert_eq!(lines[7], "<addition-green>+<addition-green>new three");
+        assert_eq!(lines[9], "<addition-green>+<addition-green>line five");
+    }
+
+    #[test]
+    fn parsed_patch_format_view_uses_plain_styles_for_non_included_change_lines() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -2,2 +2,2 @@
+-old line
++new line
+",
+        )
+        .expect("patch should parse");
+
+        let rendered = patch.format_view(&HashSet::new());
+        let lines = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[5], "<deletion-red>-<deletion-red>old line");
+        assert_eq!(lines[6], "<addition-green>+<addition-green>new line");
     }
 
     #[test]
