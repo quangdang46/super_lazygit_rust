@@ -108,7 +108,7 @@
 [x] ./references/lazygit-master/pkg/commands/git_commands/version_test.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/working_tree.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/working_tree_test.go
-./references/lazygit-master/pkg/commands/git_commands/worktree.go
+[x] ./references/lazygit-master/pkg/commands/git_commands/worktree.go
 [x] ./references/lazygit-master/pkg/commands/git_commands/worktree_loader.go
 ./references/lazygit-master/pkg/commands/git_commands/worktree_loader_test.go
 [x] ./references/lazygit-master/pkg/commands/git_config/cached_git_config.go

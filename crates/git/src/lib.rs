@@ -1568,6 +1568,11 @@ impl GitBackend for CliGitBackend {
                 branch,
                 detach,
             } => {
+                if *detach && branch.is_some() {
+                    return Err(GitError::OperationFailed {
+                        message: "cannot specify branch when detaching worktree".to_string(),
+                    });
+                }
                 git_builder(
                     &repo_path,
                     GitCommandBuilder::new("worktree")
@@ -10537,6 +10542,35 @@ index 9ce8efb33..0632e41b0 100644
 
         let after_force_remove = repo.worktree_list().expect("worktree list");
         assert!(!after_force_remove.contains(created_path.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn cli_backend_rejects_create_worktree_with_branch_and_detach_combined() {
+        let repo = worktree_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let worktree_parent = tempfile::tempdir().expect("tempdir");
+        let created_path = worktree_parent.path().join("repo-invalid");
+
+        let error = backend
+            .run_command(GitCommandRequest {
+                job_id: JobId::new("git:create-worktree-invalid-detach-branch"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::CreateWorktree {
+                    path: created_path.clone(),
+                    base_ref: "main".to_string(),
+                    branch: Some("hotfix".to_string()),
+                    detach: true,
+                },
+            })
+            .expect_err("detach plus branch should be rejected");
+
+        assert_eq!(
+            error,
+            GitError::OperationFailed {
+                message: "cannot specify branch when detaching worktree".to_string(),
+            }
+        );
+        assert!(!created_path.exists());
     }
 
     #[test]
