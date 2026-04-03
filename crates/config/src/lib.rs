@@ -19,6 +19,7 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 #[serde(default)]
 pub struct AppConfig {
     pub workspace: WorkspaceConfig,
+    pub git: GitConfig,
     pub os: OsConfig,
     pub editor: EditorConfig,
     pub gui: GuiConfig,
@@ -255,6 +256,117 @@ impl ConfigValidationError {
         Self {
             message: message.into(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitConfig {
+    pub pagers: Vec<PagingConfig>,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self { pagers: Vec::new() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PagingConfig {
+    #[serde(alias = "pager", skip_serializing_if = "String::is_empty")]
+    pub pager: String,
+    #[serde(alias = "colorArg", skip_serializing_if = "String::is_empty")]
+    pub color_arg: String,
+    #[serde(
+        alias = "externalDiffCommand",
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub external_diff_command: String,
+    #[serde(alias = "useExternalDiffGitConfig")]
+    pub use_external_diff_git_config: bool,
+}
+
+impl Default for PagingConfig {
+    fn default() -> Self {
+        Self {
+            pager: String::new(),
+            color_arg: String::new(),
+            external_diff_command: String::new(),
+            use_external_diff_git_config: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PagerConfig<'a> {
+    git: &'a GitConfig,
+    pager_index: usize,
+}
+
+impl<'a> PagerConfig<'a> {
+    #[must_use]
+    pub fn new(git: &'a GitConfig) -> Self {
+        Self {
+            git,
+            pager_index: 0,
+        }
+    }
+
+    fn current_pager_config(&mut self) -> Option<&PagingConfig> {
+        if self.git.pagers.is_empty() {
+            return None;
+        }
+        if self.pager_index >= self.git.pagers.len() {
+            self.pager_index = 0;
+        }
+        self.git.pagers.get(self.pager_index)
+    }
+
+    #[must_use]
+    pub fn pager_command(&mut self, width: usize) -> String {
+        let Some(current) = self.current_pager_config() else {
+            return String::new();
+        };
+        current.pager.replace(
+            "{{columnWidth}}",
+            &(width / 2usize).saturating_sub(6).to_string(),
+        )
+    }
+
+    #[must_use]
+    pub fn color_arg(&mut self) -> String {
+        let Some(current) = self.current_pager_config() else {
+            return String::from("always");
+        };
+        if current.color_arg.is_empty() {
+            String::from("always")
+        } else {
+            current.color_arg.clone()
+        }
+    }
+
+    #[must_use]
+    pub fn external_diff_command(&mut self) -> String {
+        self.current_pager_config()
+            .map_or_else(String::new, |current| current.external_diff_command.clone())
+    }
+
+    #[must_use]
+    pub fn use_external_diff_git_config(&mut self) -> bool {
+        self.current_pager_config()
+            .is_some_and(|current| current.use_external_diff_git_config)
+    }
+
+    pub fn cycle_pagers(&mut self) {
+        if !self.git.pagers.is_empty() {
+            self.pager_index = (self.pager_index + 1) % self.git.pagers.len();
+        }
+    }
+
+    #[must_use]
+    pub fn current_pager_index(&self) -> (usize, usize) {
+        (self.pager_index, self.git.pagers.len())
     }
 }
 
@@ -1663,6 +1775,70 @@ command = "nvim"
             normalize_keybinding_alias("Ctrl+X").as_deref(),
             Some("ctrl+x")
         );
+    }
+
+    #[test]
+    fn pager_config_defaults_match_upstream_empty_behavior() {
+        let git = GitConfig::default();
+        let mut pager = PagerConfig::new(&git);
+
+        assert_eq!(pager.pager_command(120), "");
+        assert_eq!(pager.color_arg(), "always");
+        assert_eq!(pager.external_diff_command(), "");
+        assert!(!pager.use_external_diff_git_config());
+        assert_eq!(pager.current_pager_index(), (0, 0));
+    }
+
+    #[test]
+    fn pager_config_resolves_width_placeholder_and_cycles_entries() {
+        let git = GitConfig {
+            pagers: vec![
+                PagingConfig {
+                    pager: "delta --width={{columnWidth}}".to_string(),
+                    color_arg: String::new(),
+                    external_diff_command: "git difftool --extcmd=delta".to_string(),
+                    use_external_diff_git_config: false,
+                },
+                PagingConfig {
+                    pager: "less -R".to_string(),
+                    color_arg: "never".to_string(),
+                    external_diff_command: "custom diff".to_string(),
+                    use_external_diff_git_config: true,
+                },
+            ],
+        };
+        let mut pager = PagerConfig::new(&git);
+
+        assert_eq!(pager.pager_command(120), "delta --width=54");
+        assert_eq!(pager.color_arg(), "always");
+        assert_eq!(pager.external_diff_command(), "git difftool --extcmd=delta");
+        assert!(!pager.use_external_diff_git_config());
+        assert_eq!(pager.current_pager_index(), (0, 2));
+
+        pager.cycle_pagers();
+
+        assert_eq!(pager.pager_command(120), "less -R");
+        assert_eq!(pager.color_arg(), "never");
+        assert_eq!(pager.external_diff_command(), "custom diff");
+        assert!(pager.use_external_diff_git_config());
+        assert_eq!(pager.current_pager_index(), (1, 2));
+    }
+
+    #[test]
+    fn pager_config_resets_out_of_range_index_when_configs_shrink() {
+        let git = GitConfig {
+            pagers: vec![PagingConfig {
+                pager: "less -R".to_string(),
+                ..PagingConfig::default()
+            }],
+        };
+        let mut pager = PagerConfig {
+            git: &git,
+            pager_index: 9,
+        };
+
+        assert_eq!(pager.pager_command(100), "less -R");
+        assert_eq!(pager.current_pager_index(), (0, 1));
     }
 
     #[test]
