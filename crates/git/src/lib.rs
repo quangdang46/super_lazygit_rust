@@ -6603,6 +6603,21 @@ impl ParsedPatchLine {
             ParsedPatchLineKind::Addition | ParsedPatchLineKind::Deletion
         )
     }
+
+    fn is_addition(&self) -> bool {
+        self.kind == ParsedPatchLineKind::Addition
+    }
+
+    fn is_deletion(&self) -> bool {
+        self.kind == ParsedPatchLineKind::Deletion
+    }
+}
+
+fn n_lines_with_kind(lines: &[ParsedPatchLine], kinds: &[ParsedPatchLineKind]) -> usize {
+    lines
+        .iter()
+        .filter(|line| kinds.contains(&line.kind))
+        .count()
 }
 
 #[allow(dead_code)]
@@ -6832,27 +6847,17 @@ impl ParsedPatch {
 #[allow(dead_code)]
 impl ParsedHunk {
     fn old_length(&self) -> u32 {
-        self.body_lines()
-            .iter()
-            .filter(|line| {
-                matches!(
-                    line.kind,
-                    ParsedPatchLineKind::Context | ParsedPatchLineKind::Deletion
-                )
-            })
-            .count() as u32
+        n_lines_with_kind(
+            &self.body_lines(),
+            &[ParsedPatchLineKind::Context, ParsedPatchLineKind::Deletion],
+        ) as u32
     }
 
     fn new_length(&self) -> u32 {
-        self.body_lines()
-            .iter()
-            .filter(|line| {
-                matches!(
-                    line.kind,
-                    ParsedPatchLineKind::Context | ParsedPatchLineKind::Addition
-                )
-            })
-            .count() as u32
+        n_lines_with_kind(
+            &self.body_lines(),
+            &[ParsedPatchLineKind::Context, ParsedPatchLineKind::Addition],
+        ) as u32
     }
 
     fn format_header_start(&self) -> String {
@@ -13904,6 +13909,84 @@ index 1111111..2222222 100644
         );
         assert_eq!(hunk.line_count(), 5);
         assert!(hunk.contains_changes());
+    }
+
+    #[test]
+    fn parsed_patch_line_helpers_match_upstream_patch_line_behavior() {
+        let addition = ParsedPatchLine {
+            content: "+new line".to_string(),
+            kind: ParsedPatchLineKind::Addition,
+        };
+        let deletion = ParsedPatchLine {
+            content: "-old line".to_string(),
+            kind: ParsedPatchLineKind::Deletion,
+        };
+        let context = ParsedPatchLine {
+            content: " line".to_string(),
+            kind: ParsedPatchLineKind::Context,
+        };
+        let newline = ParsedPatchLine {
+            content: r#"\ No newline at end of file"#.to_string(),
+            kind: ParsedPatchLineKind::NoNewlineMarker,
+        };
+
+        assert!(addition.is_change());
+        assert!(addition.is_addition());
+        assert!(!addition.is_deletion());
+
+        assert!(deletion.is_change());
+        assert!(!deletion.is_addition());
+        assert!(deletion.is_deletion());
+
+        assert!(!context.is_change());
+        assert!(!newline.is_change());
+
+        let lines = vec![addition, deletion, context, newline];
+        assert_eq!(
+            n_lines_with_kind(
+                &lines,
+                &[ParsedPatchLineKind::Addition, ParsedPatchLineKind::Deletion]
+            ),
+            2
+        );
+        assert_eq!(
+            n_lines_with_kind(
+                &lines,
+                &[
+                    ParsedPatchLineKind::Context,
+                    ParsedPatchLineKind::NoNewlineMarker
+                ]
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn parsed_hunk_body_lines_classify_no_newline_marker_like_upstream() {
+        let patch = parse_patch(
+            "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -1 +1 @@
+-old line
++new line
+\\ No newline at end of file
+",
+        )
+        .expect("patch should parse");
+        let body_lines = patch.hunks[0].body_lines();
+
+        assert_eq!(body_lines.len(), 3);
+        assert!(body_lines[0].is_deletion());
+        assert!(body_lines[1].is_addition());
+        assert_eq!(body_lines[2].kind, ParsedPatchLineKind::NoNewlineMarker);
+        assert!(!body_lines[2].is_change());
+        assert_eq!(
+            n_lines_with_kind(&body_lines, &[ParsedPatchLineKind::NoNewlineMarker]),
+            1
+        );
     }
 
     #[test]
