@@ -184,10 +184,18 @@ const BRANCH_PANEL_TABS: [RepoSidePanelTabDef; 3] = [
     },
 ];
 
-const COMMIT_PANEL_TABS: [RepoSidePanelTabDef; 2] = [
+const COMMIT_PANEL_TABS: [RepoSidePanelTabDef; 4] = [
     RepoSidePanelTabDef {
         label: "Commits",
         target: RepoSidePanelTab::Subview(RepoSubview::Commits),
+    },
+    RepoSidePanelTabDef {
+        label: "Compare",
+        target: RepoSidePanelTab::Subview(RepoSubview::Compare),
+    },
+    RepoSidePanelTabDef {
+        label: "Rebase",
+        target: RepoSidePanelTab::Subview(RepoSubview::Rebase),
     },
     RepoSidePanelTabDef {
         label: "Reflog",
@@ -1250,6 +1258,8 @@ impl TuiApp {
             )
             | (RepoSidePanel::Branches, RepoSidePanelTab::Subview(subview @ RepoSubview::Tags))
             | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Commits))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Compare))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Rebase))
             | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Reflog))
             | (RepoSidePanel::Stash, RepoSidePanelTab::Subview(subview @ RepoSubview::Stash)) => {
                 let target = match subview {
@@ -1259,12 +1269,11 @@ impl TuiApp {
                     RepoSubview::Remotes => RepoListScrollTarget::SidePanelRemotes,
                     RepoSubview::Tags => RepoListScrollTarget::SidePanelTags,
                     RepoSubview::Commits => RepoListScrollTarget::SidePanelCommits,
+                    RepoSubview::Compare => RepoListScrollTarget::SidePanelCommits,
+                    RepoSubview::Rebase => RepoListScrollTarget::SidePanelCommits,
                     RepoSubview::Reflog => RepoListScrollTarget::SidePanelReflog,
                     RepoSubview::Stash => RepoListScrollTarget::SidePanelStash,
-                    RepoSubview::Status
-                    | RepoSubview::RemoteBranches
-                    | RepoSubview::Compare
-                    | RepoSubview::Rebase => return None,
+                    RepoSubview::Status | RepoSubview::RemoteBranches => return None,
                 };
                 let (len, selected_position, _, _) = self.repo_scroll_metrics(target)?;
                 let index = detached_list_window(
@@ -1335,6 +1344,8 @@ impl TuiApp {
             )
             | (RepoSidePanel::Branches, RepoSidePanelTab::Subview(subview @ RepoSubview::Tags))
             | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Commits))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Compare))
+            | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Rebase))
             | (RepoSidePanel::Commits, RepoSidePanelTab::Subview(subview @ RepoSubview::Reflog))
             | (RepoSidePanel::Stash, RepoSidePanelTab::Subview(subview @ RepoSubview::Stash)) => {
                 let target = match subview {
@@ -1344,12 +1355,13 @@ impl TuiApp {
                     RepoSubview::Remotes => RepoListScrollTarget::SidePanelRemotes,
                     RepoSubview::Tags => RepoListScrollTarget::SidePanelTags,
                     RepoSubview::Commits => RepoListScrollTarget::SidePanelCommits,
+                    RepoSubview::Compare => RepoListScrollTarget::SidePanelCommits,
+                    RepoSubview::Rebase => RepoListScrollTarget::SidePanelCommits,
                     RepoSubview::Reflog => RepoListScrollTarget::SidePanelReflog,
                     RepoSubview::Stash => RepoListScrollTarget::SidePanelStash,
-                    RepoSubview::Status
-                    | RepoSubview::RemoteBranches
-                    | RepoSubview::Compare
-                    | RepoSubview::Rebase => return (Vec::new(), false),
+                    RepoSubview::Status | RepoSubview::RemoteBranches => {
+                        return (Vec::new(), false)
+                    }
                 };
                 (
                     vec![
@@ -4047,6 +4059,15 @@ impl TuiApp {
                         }
 
                         if self.binding_matches_action(
+                            "detach_selected_worktree",
+                            raw,
+                            normalized,
+                            &["x"],
+                        ) {
+                            return Some(Action::DetachSelectedWorktree);
+                        }
+
+                        if self.binding_matches_action(
                             "remove_selected_worktree",
                             raw,
                             normalized,
@@ -4941,6 +4962,8 @@ impl TuiApp {
                 _ => RepoSidePanelTab::Subview(RepoSubview::Branches),
             },
             RepoSidePanel::Commits => match repo_mode.active_subview {
+                RepoSubview::Compare => RepoSidePanelTab::Subview(RepoSubview::Compare),
+                RepoSubview::Rebase => RepoSidePanelTab::Subview(RepoSubview::Rebase),
                 RepoSubview::Reflog => RepoSidePanelTab::Subview(RepoSubview::Reflog),
                 _ => RepoSidePanelTab::Subview(RepoSubview::Commits),
             },
@@ -7745,7 +7768,7 @@ fn repo_worktree_lines(
     }
     lines.extend([
         Line::from("Context: Enter/Space switch. 0 main. / filter."),
-        Line::from("Other: n create. o open selected worktree. d remove."),
+        Line::from("Other: n create. o open selected worktree. x detach. d remove."),
         Line::from(""),
     ]);
 
@@ -8941,10 +8964,20 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
                 "Create a fixup commit for {summary} from the currently staged changes and autosquash it with rebase?"
             )
         }
-        super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit { summary, .. } => {
-            format!(
-                "Fold {summary} into its parent and keep that commit message with git rebase fixup -C?"
-            )
+        super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit {
+            summary,
+            keep_message,
+            ..
+        } => {
+            if *keep_message {
+                format!(
+                    "Fold {summary} into its parent and keep that commit message with git rebase fixup -C?"
+                )
+            } else {
+                format!(
+                    "Fold {summary} into its parent and discard that commit message with git rebase fixup?"
+                )
+            }
         }
         super_lazygit_core::ConfirmableOperation::SquashCommit { summary, .. } => {
             format!(
@@ -8972,6 +9005,11 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         } => {
             format!(
                 "Move {summary} below {adjacent_summary}? Git will rewrite the current branch and swap those adjacent commits."
+            )
+        }
+        super_lazygit_core::ConfirmableOperation::RewordCommitInEditor { summary, .. } => {
+            format!(
+                "Reword {summary} in your editor? This will open the editor and rewrite the selected commit message."
             )
         }
         super_lazygit_core::ConfirmableOperation::CherryPickCommit { summary, .. } => {
@@ -9088,11 +9126,19 @@ fn confirmation_copy(operation: &super_lazygit_core::ConfirmableOperation) -> St
         super_lazygit_core::ConfirmableOperation::DropStash { stash_ref } => {
             format!("Drop {stash_ref}? This permanently removes the stash entry.")
         }
-        super_lazygit_core::ConfirmableOperation::RemoveWorktree { path } => {
-            format!(
-                "Remove linked worktree {}? Git will delete the worktree checkout.",
-                path.display()
-            )
+        super_lazygit_core::ConfirmableOperation::RemoveWorktree { path, force } => {
+            if *force {
+                format!(
+                    "Force-remove linked worktree {}? This runs git worktree remove -f {} and deletes the worktree checkout even if it has local modifications.",
+                    path.display(),
+                    path.display()
+                )
+            } else {
+                format!(
+                    "Remove linked worktree {}? Git will delete the worktree checkout.",
+                    path.display()
+                )
+            }
         }
         super_lazygit_core::ConfirmableOperation::RemoveSubmodule { name, path } => {
             format!(
@@ -9226,7 +9272,7 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             }
         },
         super_lazygit_core::InputPromptOperation::CreateWorktree => {
-            "Enter worktree details as: <path> <branch>. Example: ../repo-feature feature."
+            "Enter worktree details as: <path> <base> [branch] or <path> <base> --detach. Examples: ../repo-feature main feature, ../repo-review main --detach, or ../repo-main main."
                 .to_string()
         }
         super_lazygit_core::InputPromptOperation::CreateSubmodule => {
@@ -9310,6 +9356,9 @@ fn menu_copy(operation: super_lazygit_core::MenuOperation) -> &'static str {
         }
         super_lazygit_core::MenuOperation::CommitFixupOptions => {
             "Choose whether to create a fixup! commit or one of the amend! variants for the selected commit."
+        }
+        super_lazygit_core::MenuOperation::CommitSetFixupMessageOptions => {
+            "Choose whether to discard the selected fixup commit message or keep it with git rebase fixup -C."
         }
         super_lazygit_core::MenuOperation::BisectOptions => {
             "Open the shipped bisect flows for the selected commit or the active bisect candidate."
@@ -9398,6 +9447,10 @@ fn menu_lines(
             "Create fixup! commit".to_string(),
             "Create amend! commit with staged changes".to_string(),
             "Create amend! commit without file changes".to_string(),
+        ],
+        super_lazygit_core::MenuOperation::CommitSetFixupMessageOptions => vec![
+            "Discard fixup commit message".to_string(),
+            "Keep fixup commit message".to_string(),
         ],
         super_lazygit_core::MenuOperation::BisectOptions => bisect_menu_lines(state),
         super_lazygit_core::MenuOperation::BranchUpstreamOptions => vec![
@@ -12135,6 +12188,43 @@ mod tests {
     }
 
     #[test]
+    fn selected_repo_side_tab_distinguishes_compare_and_rebase_from_commits() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let base_state = |active_subview| AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+
+        let compare_app = TuiApp::new(base_state(RepoSubview::Compare), AppConfig::default());
+        assert_eq!(
+            compare_app.selected_repo_side_tab(RepoSidePanel::Commits),
+            RepoSidePanelTab::Subview(RepoSubview::Compare)
+        );
+
+        let rebase_app = TuiApp::new(base_state(RepoSubview::Rebase), AppConfig::default());
+        assert_eq!(
+            rebase_app.selected_repo_side_tab(RepoSidePanel::Commits),
+            RepoSidePanelTab::Subview(RepoSubview::Rebase)
+        );
+    }
+
+    #[test]
     fn route_repository_mouse_click_focuses_main_repo_panes() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {
@@ -13221,7 +13311,7 @@ mod tests {
     }
 
     #[test]
-    fn route_repository_commit_history_c_opens_set_fixup_message_confirmation() {
+    fn route_repository_commit_history_c_opens_set_fixup_message_menu() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {
             mode: AppMode::Repository,
@@ -13238,7 +13328,25 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
-                detail: Some(sample_repo_detail()),
+                detail: Some(super_lazygit_core::RepoDetail {
+                    merge_state: super_lazygit_core::MergeState::RebaseInProgress,
+                    commits: vec![
+                        super_lazygit_core::CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..Default::default()
+                        },
+                        super_lazygit_core::CommitItem {
+                            oid: "1234567890abcdef".to_string(),
+                            short_oid: "1234567".to_string(),
+                            summary: "second".to_string(),
+                            todo_action: super_lazygit_core::CommitTodoAction::Fixup,
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
                 },
@@ -13254,17 +13362,16 @@ mod tests {
 
         assert_eq!(result.state.focused_pane, PaneId::Modal);
         assert_eq!(
-            result
-                .state
-                .pending_confirmation
-                .as_ref()
-                .map(|pending| pending.operation.clone()),
-            Some(
-                super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit {
-                    commit: "1234567890abcdef".to_string(),
-                    summary: "1234567 second".to_string(),
-                }
-            )
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus
+            )),
+            Some((
+                super_lazygit_core::MenuOperation::CommitSetFixupMessageOptions,
+                0,
+                PaneId::RepoDetail,
+            ))
         );
     }
 
@@ -13919,6 +14026,14 @@ mod tests {
             &super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit {
                 commit: "1234567890abcdef".to_string(),
                 summary: "1234567 second".to_string(),
+                keep_message: true,
+            },
+        );
+        let set_fixup_message_discard = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::SetFixupMessageForCommit {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+                keep_message: false,
             },
         );
         let move_up = confirmation_copy(&super_lazygit_core::ConfirmableOperation::MoveCommitUp {
@@ -13927,6 +14042,12 @@ mod tests {
             summary: "1234567 second".to_string(),
             adjacent_summary: "fedcba0 add lib".to_string(),
         });
+        let reword_in_editor = confirmation_copy(
+            &super_lazygit_core::ConfirmableOperation::RewordCommitInEditor {
+                commit: "1234567890abcdef".to_string(),
+                summary: "1234567 second".to_string(),
+            },
+        );
         let cherry_pick = confirmation_copy(
             &super_lazygit_core::ConfirmableOperation::CherryPickCommit {
                 commit: "1234567890abcdef".to_string(),
@@ -13941,7 +14062,9 @@ mod tests {
         assert!(amend.contains("older-commit amend"));
         assert!(fixup.contains("fixup commit"));
         assert!(set_fixup_message.contains("fixup -C"));
+        assert!(set_fixup_message_discard.contains("discard that commit message"));
         assert!(move_up.contains("swap those adjacent commits"));
+        assert!(reword_in_editor.contains("open the editor"));
         assert!(cherry_pick.contains("Cherry-pick 1234567 second"));
         assert!(revert.contains("Revert 1234567 second"));
     }
@@ -16915,16 +17038,19 @@ mod tests {
             Some(super_lazygit_core::InputPromptOperation::CreateWorktree)
         );
 
-        let mut open_app = TuiApp::new(blurred_filter.state.clone(), AppConfig::default());
-        let open = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
-            key: "o".to_string(),
+        let mut detach_app = TuiApp::new(blurred_filter.state.clone(), AppConfig::default());
+        let detach = detach_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "x".to_string(),
         })));
         assert_eq!(
-            open.effects,
-            vec![super_lazygit_core::Effect::OpenEditor {
-                cwd: PathBuf::from("/tmp/repo-1"),
-                target: PathBuf::from("/tmp/repo-1-feature"),
-            }]
+            detach
+                .state
+                .background_jobs
+                .get(&super_lazygit_core::JobId::new(
+                    "git:repo-1:detach-worktree"
+                ))
+                .map(|job| &job.state),
+            Some(&super_lazygit_core::BackgroundJobState::Queued)
         );
 
         let mut remove_app = TuiApp::new(blurred_filter.state, AppConfig::default());
@@ -16940,6 +17066,7 @@ mod tests {
                 .map(|pending| pending.operation.clone()),
             Some(super_lazygit_core::ConfirmableOperation::RemoveWorktree {
                 path: PathBuf::from("/tmp/repo-1-feature"),
+                force: false,
             })
         );
     }
@@ -18804,6 +18931,18 @@ mod tests {
         assert!(copy.contains("Force-checkout feature?"));
         assert!(copy.contains("git checkout -f feature"));
         assert!(copy.contains("discards tracked working tree changes"));
+    }
+
+    #[test]
+    fn force_remove_worktree_confirmation_copy_mentions_worktree_remove_f() {
+        let copy = confirmation_copy(&super_lazygit_core::ConfirmableOperation::RemoveWorktree {
+            path: PathBuf::from("/tmp/repo-1-feature"),
+            force: true,
+        });
+
+        assert!(copy.contains("Force-remove linked worktree /tmp/repo-1-feature?"));
+        assert!(copy.contains("git worktree remove -f /tmp/repo-1-feature"));
+        assert!(copy.contains("local modifications"));
     }
 
     #[test]

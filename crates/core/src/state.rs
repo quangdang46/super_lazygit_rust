@@ -181,6 +181,7 @@ pub enum ConfirmableOperation {
     SetFixupMessageForCommit {
         commit: String,
         summary: String,
+        keep_message: bool,
     },
     SquashCommit {
         commit: String,
@@ -201,6 +202,10 @@ pub enum ConfirmableOperation {
         adjacent_commit: String,
         summary: String,
         adjacent_summary: String,
+    },
+    RewordCommitInEditor {
+        commit: String,
+        summary: String,
     },
     CherryPickCommit {
         commit: String,
@@ -268,6 +273,7 @@ pub enum ConfirmableOperation {
     },
     RemoveWorktree {
         path: PathBuf,
+        force: bool,
     },
     RemoveSubmodule {
         name: String,
@@ -401,6 +407,7 @@ pub enum MenuOperation {
     ReflogResetOptions,
     CommitAmendAttributeOptions,
     CommitFixupOptions,
+    CommitSetFixupMessageOptions,
     BisectOptions,
     BranchUpstreamOptions,
     MergeRebaseOptions,
@@ -1345,6 +1352,111 @@ pub struct FileStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileStatusFields {
+    pub has_staged_changes: bool,
+    pub has_unstaged_changes: bool,
+    pub tracked: bool,
+    pub deleted: bool,
+    pub added: bool,
+    pub has_merge_conflicts: bool,
+    pub has_inline_merge_conflicts: bool,
+    pub short_status: String,
+}
+
+impl FileStatus {
+    #[must_use]
+    pub fn is_rename(&self) -> bool {
+        self.previous_path.is_some()
+    }
+
+    #[must_use]
+    pub fn names(&self) -> Vec<&Path> {
+        let mut names = vec![self.path.as_path()];
+        if let Some(previous_path) = self.previous_path.as_deref() {
+            names.push(previous_path);
+        }
+        names
+    }
+
+    #[must_use]
+    pub fn matches_file(&self, other: &Self) -> bool {
+        self.names()
+            .iter()
+            .any(|path| other.names().iter().any(|other_path| path == other_path))
+    }
+
+    #[must_use]
+    pub fn has_staged_changes(&self) -> bool {
+        self.staged_kind.is_some()
+    }
+
+    #[must_use]
+    pub fn has_unstaged_changes(&self) -> bool {
+        self.unstaged_kind.is_some()
+    }
+
+    #[must_use]
+    pub fn tracked(&self) -> bool {
+        !matches!(self.short_status.as_str(), "??" | "A " | "AM")
+    }
+
+    #[must_use]
+    pub fn added(&self) -> bool {
+        self.short_status.chars().any(|ch| ch == 'A') || !self.tracked()
+    }
+
+    #[must_use]
+    pub fn deleted(&self) -> bool {
+        self.short_status.chars().any(|ch| ch == 'D')
+    }
+
+    #[must_use]
+    pub fn has_inline_merge_conflicts(&self) -> bool {
+        matches!(self.short_status.as_str(), "UU" | "AA")
+    }
+
+    #[must_use]
+    pub fn has_merge_conflicts(&self) -> bool {
+        self.has_inline_merge_conflicts()
+            || matches!(self.short_status.as_str(), "DD" | "AU" | "UA" | "UD" | "DU")
+    }
+
+    #[must_use]
+    pub fn merge_state_description(&self) -> Option<&'static str> {
+        match self.short_status.as_str() {
+            "DD" => Some("Conflict: this file was moved or renamed both in the current and the incoming changes, but to different destinations. I don't know which ones, but they should both show up as conflicts too (marked 'AU' and 'UA', respectively). The most likely resolution is to delete this file, and pick one of the destinations and delete the other."),
+            "AU" => Some("Conflict: this file is the destination of a move or rename in the current changes, but was moved or renamed to a different destination in the incoming changes. That other destination should also show up as a conflict (marked 'UA'), as well as the file that both were renamed from (marked 'DD')."),
+            "UA" => Some("Conflict: this file is the destination of a move or rename in the incoming changes, but was moved or renamed to a different destination in the current changes. That other destination should also show up as a conflict (marked 'AU'), as well as the file that both were renamed from (marked 'DD')."),
+            "DU" => Some("Conflict: this file was deleted in the current changes and modified in the incoming changes.\n\nThe most likely resolution is to delete the file after applying the incoming modifications manually to some other place in the code."),
+            "UD" => Some("Conflict: this file was modified in the current changes and deleted in incoming changes.\n\nThe most likely resolution is to delete the file after applying the current modifications manually to some other place in the code."),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn derived_status_fields(short_status: &str) -> FileStatusFields {
+        let staged_change = short_status.chars().next().unwrap_or(' ');
+        let unstaged_change = short_status.chars().nth(1).unwrap_or(' ');
+        let tracked = !matches!(short_status, "??" | "A " | "AM");
+        let has_staged_changes = !matches!(staged_change, ' ' | 'U' | '?');
+        let has_inline_merge_conflicts = matches!(short_status, "UU" | "AA");
+        let has_merge_conflicts =
+            has_inline_merge_conflicts || matches!(short_status, "DD" | "AU" | "UA" | "UD" | "DU");
+
+        FileStatusFields {
+            has_staged_changes,
+            has_unstaged_changes: unstaged_change != ' ',
+            tracked,
+            deleted: unstaged_change == 'D' || staged_change == 'D',
+            added: unstaged_change == 'A' || !tracked,
+            has_merge_conflicts,
+            has_inline_merge_conflicts,
+            short_status: short_status.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibleStatusEntry {
     pub path: PathBuf,
     pub kind: Option<FileStatusKind>,
@@ -1714,6 +1826,90 @@ pub struct BranchItem {
     pub behind_base_branch: i32,
 }
 
+impl BranchItem {
+    #[must_use]
+    pub fn urn(&self) -> String {
+        format!("branch-{}", self.ref_name())
+    }
+
+    #[must_use]
+    pub fn full_upstream_ref_name(&self) -> String {
+        self.upstream_remote
+            .as_deref()
+            .zip(self.upstream_branch.as_deref())
+            .map(|(remote, branch)| format!("refs/remotes/{remote}/{branch}"))
+            .unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn short_upstream_ref_name(&self) -> String {
+        self.upstream_remote
+            .as_deref()
+            .zip(self.upstream_branch.as_deref())
+            .map(|(remote, branch)| format!("{remote}/{branch}"))
+            .unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn is_tracking_remote(&self) -> bool {
+        self.upstream_remote.is_some()
+    }
+
+    #[must_use]
+    pub fn worktree_for_branch<'a>(
+        &self,
+        worktrees: &'a [WorktreeItem],
+    ) -> Option<&'a WorktreeItem> {
+        worktrees
+            .iter()
+            .find(|worktree| worktree.branch.as_deref() == Some(self.name.as_str()))
+    }
+
+    #[must_use]
+    pub fn checked_out_by_other_worktree(&self, worktrees: &[WorktreeItem]) -> bool {
+        self.worktree_for_branch(worktrees)
+            .map(|worktree| !worktree.is_current)
+            .unwrap_or(false)
+    }
+
+    #[must_use]
+    pub fn remote_branch_stored_locally(&self) -> bool {
+        self.is_tracking_remote() && self.ahead_for_pull != "?" && self.behind_for_pull != "?"
+    }
+
+    #[must_use]
+    pub fn remote_branch_not_stored_locally(&self) -> bool {
+        self.is_tracking_remote() && self.ahead_for_pull == "?" && self.behind_for_pull == "?"
+    }
+
+    #[must_use]
+    pub fn matches_upstream(&self) -> bool {
+        self.remote_branch_stored_locally()
+            && self.ahead_for_pull == "0"
+            && self.behind_for_pull == "0"
+    }
+
+    #[must_use]
+    pub fn is_ahead_for_pull(&self) -> bool {
+        self.remote_branch_stored_locally() && self.ahead_for_pull != "0"
+    }
+
+    #[must_use]
+    pub fn is_behind_for_pull(&self) -> bool {
+        self.remote_branch_stored_locally() && self.behind_for_pull != "0"
+    }
+
+    #[must_use]
+    pub fn is_behind_for_push(&self) -> bool {
+        self.remote_branch_stored_locally() && self.behind_for_push != "0"
+    }
+
+    #[must_use]
+    pub fn is_real_branch(&self) -> bool {
+        !self.ahead_for_pull.is_empty() && !self.behind_for_pull.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteItem {
     pub name: String,
@@ -1722,11 +1918,45 @@ pub struct RemoteItem {
     pub branch_count: usize,
 }
 
+impl RemoteItem {
+    #[must_use]
+    pub fn ref_name(&self) -> String {
+        self.name.clone()
+    }
+
+    #[must_use]
+    pub fn id(&self) -> String {
+        self.ref_name()
+    }
+
+    #[must_use]
+    pub fn urn(&self) -> String {
+        format!("remote-{}", self.id())
+    }
+
+    #[must_use]
+    pub fn description(&self) -> String {
+        self.ref_name()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteBranchItem {
     pub name: String,
     pub remote_name: String,
     pub branch_name: String,
+}
+
+impl RemoteBranchItem {
+    #[must_use]
+    pub fn full_name(&self) -> String {
+        format!("{}/{}", self.remote_name, self.branch_name)
+    }
+
+    #[must_use]
+    pub fn id(&self) -> String {
+        self.ref_name()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1749,6 +1979,18 @@ pub struct TagItem {
     pub target_short_oid: String,
     pub summary: String,
     pub annotated: bool,
+}
+
+impl TagItem {
+    #[must_use]
+    pub fn id(&self) -> String {
+        self.ref_name()
+    }
+
+    #[must_use]
+    pub fn urn(&self) -> String {
+        format!("tag-{}", self.id())
+    }
 }
 
 pub trait GitRef {
@@ -1890,6 +2132,8 @@ pub enum CommitDivergence {
     Right,
 }
 
+pub const EMPTY_TREE_COMMIT_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitItem {
     pub oid: String,
@@ -1908,6 +2152,48 @@ pub struct CommitItem {
     pub filter_paths: Vec<PathBuf>,
     pub changed_files: Vec<CommitFileItem>,
     pub diff: DiffModel,
+}
+
+impl CommitItem {
+    #[must_use]
+    pub fn is_first_commit(&self) -> bool {
+        self.parents.is_empty()
+    }
+
+    #[must_use]
+    pub fn is_merge(&self) -> bool {
+        self.parents.len() > 1
+    }
+
+    #[must_use]
+    pub fn is_todo(&self) -> bool {
+        self.todo_action != CommitTodoAction::None
+    }
+}
+
+impl GitRef for CommitItem {
+    fn full_ref_name(&self) -> String {
+        self.oid.clone()
+    }
+
+    fn ref_name(&self) -> String {
+        self.oid.clone()
+    }
+
+    fn short_ref_name(&self) -> String {
+        self.short_oid.clone()
+    }
+
+    fn parent_ref_name(&self) -> String {
+        if self.is_first_commit() {
+            return EMPTY_TREE_COMMIT_HASH.to_string();
+        }
+        format!("{}^", self.ref_name())
+    }
+
+    fn description(&self) -> String {
+        format!("{} {}", self.short_ref_name(), self.summary)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1956,6 +2242,23 @@ pub struct WorktreeItem {
     pub git_dir: Option<PathBuf>,
 }
 
+impl WorktreeItem {
+    #[must_use]
+    pub fn ref_name(&self) -> String {
+        self.name.clone()
+    }
+
+    #[must_use]
+    pub fn id(&self) -> String {
+        self.path.display().to_string()
+    }
+
+    #[must_use]
+    pub fn description(&self) -> String {
+        self.ref_name()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubmoduleItem {
     pub name: String,
@@ -1966,6 +2269,43 @@ pub struct SubmoduleItem {
     pub initialized: bool,
     pub dirty: bool,
     pub conflicted: bool,
+}
+
+impl SubmoduleItem {
+    #[must_use]
+    pub fn full_name(&self) -> String {
+        self.name.clone()
+    }
+
+    #[must_use]
+    pub fn full_path(&self) -> PathBuf {
+        self.path.clone()
+    }
+
+    #[must_use]
+    pub fn ref_name(&self) -> String {
+        self.full_name()
+    }
+
+    #[must_use]
+    pub fn id(&self) -> String {
+        self.ref_name()
+    }
+
+    #[must_use]
+    pub fn description(&self) -> String {
+        self.ref_name()
+    }
+
+    #[must_use]
+    pub fn git_dir_path(&self, repo_git_dir_path: &Path) -> PathBuf {
+        self.name
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .fold(repo_git_dir_path.to_path_buf(), |path, segment| {
+                path.join("modules").join(segment)
+            })
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2419,12 +2759,13 @@ mod tests {
         visible_status_entries, workspace_attention_score, Author, BranchItem, CommitFilesMode,
         EffectiveWorkingTreeState, FileStatus, FileStatusKind, GitRef, ListViewState,
         OperationProgress, PaneId, RemoteBranchItem, RemoteSummary, RepoDetail, RepoId,
-        RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, TagItem, Timestamp,
-        VisibleStatusEntryKind, WorkingTreeState, WorkspaceFilterMode, WorkspaceSortMode,
-        WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, SubmoduleItem, TagItem,
+        Timestamp, VisibleStatusEntryKind, WorkingTreeState, WorkspaceFilterMode,
+        WorkspaceSortMode, WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES,
+        DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn summary(repo_id: &str, display_name: &str) -> RepoSummary {
         RepoSummary {
@@ -2493,17 +2834,127 @@ mod tests {
     }
 
     #[test]
+    fn submodule_item_helpers_match_upstream_submodule_config_semantics() {
+        let nested = SubmoduleItem {
+            name: "vendor/child-module".to_string(),
+            path: PathBuf::from("deps/child-module"),
+            url: "https://example.com/child.git".to_string(),
+            ..SubmoduleItem::default()
+        };
+
+        assert_eq!(nested.full_name(), "vendor/child-module");
+        assert_eq!(nested.full_path(), PathBuf::from("deps/child-module"));
+        assert_eq!(nested.ref_name(), "vendor/child-module");
+        assert_eq!(nested.id(), "vendor/child-module");
+        assert_eq!(nested.description(), "vendor/child-module");
+        assert_eq!(
+            nested.git_dir_path(Path::new("/repo/.git")),
+            PathBuf::from("/repo/.git/modules/vendor/modules/child-module")
+        );
+
+        let top_level = SubmoduleItem {
+            name: "top".to_string(),
+            path: PathBuf::from("top"),
+            ..SubmoduleItem::default()
+        };
+        assert_eq!(
+            top_level.git_dir_path(Path::new("/repo/.git")),
+            PathBuf::from("/repo/.git/modules/top")
+        );
+    }
+
+    #[test]
+    fn branch_helpers_match_upstream_semantics() {
+        let branch = BranchItem {
+            name: "feature/test".to_string(),
+            upstream_remote: Some("origin".to_string()),
+            upstream_branch: Some("feature/test".to_string()),
+            ahead_for_pull: "0".to_string(),
+            behind_for_pull: "0".to_string(),
+            ahead_for_push: "2".to_string(),
+            behind_for_push: "3".to_string(),
+            ..BranchItem::default()
+        };
+
+        assert_eq!(
+            branch.full_upstream_ref_name(),
+            "refs/remotes/origin/feature/test"
+        );
+        assert_eq!(branch.urn(), "branch-feature/test");
+        assert_eq!(branch.short_upstream_ref_name(), "origin/feature/test");
+        assert!(branch.is_tracking_remote());
+        assert!(branch.remote_branch_stored_locally());
+        assert!(!branch.remote_branch_not_stored_locally());
+        assert!(branch.matches_upstream());
+        assert!(!branch.is_ahead_for_pull());
+        assert!(!branch.is_behind_for_pull());
+        assert!(branch.is_behind_for_push());
+        assert!(branch.is_real_branch());
+    }
+
+    #[test]
+    fn branch_helpers_handle_missing_or_unknown_upstream_state_like_lazygit() {
+        let no_upstream = BranchItem {
+            name: "feature/no-upstream".to_string(),
+            ahead_for_pull: "".to_string(),
+            behind_for_pull: "".to_string(),
+            ..BranchItem::default()
+        };
+        assert_eq!(no_upstream.full_upstream_ref_name(), "");
+        assert_eq!(no_upstream.short_upstream_ref_name(), "");
+        assert!(!no_upstream.is_tracking_remote());
+        assert!(!no_upstream.remote_branch_stored_locally());
+        assert!(!no_upstream.remote_branch_not_stored_locally());
+        assert!(!no_upstream.matches_upstream());
+        assert!(!no_upstream.is_ahead_for_pull());
+        assert!(!no_upstream.is_behind_for_pull());
+        assert!(!no_upstream.is_behind_for_push());
+        assert!(!no_upstream.is_real_branch());
+
+        let unknown_remote_state = BranchItem {
+            name: "feature/question-marks".to_string(),
+            upstream_remote: Some("origin".to_string()),
+            upstream_branch: Some("feature/question-marks".to_string()),
+            ahead_for_pull: "?".to_string(),
+            behind_for_pull: "?".to_string(),
+            ..BranchItem::default()
+        };
+        assert!(unknown_remote_state.is_tracking_remote());
+        assert!(!unknown_remote_state.remote_branch_stored_locally());
+        assert!(unknown_remote_state.remote_branch_not_stored_locally());
+        assert!(!unknown_remote_state.matches_upstream());
+        assert!(!unknown_remote_state.is_ahead_for_pull());
+        assert!(!unknown_remote_state.is_behind_for_pull());
+        assert!(unknown_remote_state.is_real_branch());
+    }
+
+    #[test]
     fn git_ref_remote_branch_matches_upstream_semantics() {
         let branch = RemoteBranchItem {
             name: "origin/feature".to_string(),
             remote_name: "origin".to_string(),
             branch_name: "feature".to_string(),
         };
+        assert_eq!(branch.full_name(), "origin/feature");
         assert_eq!(branch.full_ref_name(), "refs/remotes/origin/feature");
         assert_eq!(branch.ref_name(), "origin/feature");
         assert_eq!(branch.short_ref_name(), "origin/feature");
         assert_eq!(branch.parent_ref_name(), "origin/feature^");
+        assert_eq!(branch.id(), "origin/feature");
         assert_eq!(branch.description(), "origin/feature");
+    }
+
+    #[test]
+    fn remote_helpers_match_upstream_semantics() {
+        let remote = crate::state::RemoteItem {
+            name: "origin".to_string(),
+            ..crate::state::RemoteItem::default()
+        };
+
+        assert_eq!(remote.ref_name(), "origin");
+        assert_eq!(remote.id(), "origin");
+        assert_eq!(remote.urn(), "remote-origin");
+        assert_eq!(remote.description(), "origin");
     }
 
     #[test]
@@ -2517,7 +2968,54 @@ mod tests {
         assert_eq!(tag.ref_name(), "v1.2.3");
         assert_eq!(tag.short_ref_name(), "v1.2.3");
         assert_eq!(tag.parent_ref_name(), "v1.2.3^");
+        assert_eq!(tag.id(), "v1.2.3");
+        assert_eq!(tag.urn(), "tag-v1.2.3");
         assert_eq!(tag.description(), "release summary");
+    }
+
+    #[test]
+    fn git_ref_commit_matches_upstream_semantics() {
+        let commit = crate::state::CommitItem {
+            oid: "abcdef1234567890".to_string(),
+            short_oid: "abcdef1".to_string(),
+            summary: "implement parity".to_string(),
+            parents: vec!["parent-1".to_string()],
+            ..crate::state::CommitItem::default()
+        };
+        assert_eq!(commit.full_ref_name(), "abcdef1234567890");
+        assert_eq!(commit.ref_name(), "abcdef1234567890");
+        assert_eq!(commit.short_ref_name(), "abcdef1");
+        assert_eq!(commit.parent_ref_name(), "abcdef1234567890^");
+        assert_eq!(commit.description(), "abcdef1 implement parity");
+
+        let first = crate::state::CommitItem {
+            oid: "1234567890abcdef".to_string(),
+            short_oid: "1234567".to_string(),
+            summary: "root commit".to_string(),
+            ..crate::state::CommitItem::default()
+        };
+        assert_eq!(
+            first.parent_ref_name(),
+            crate::state::EMPTY_TREE_COMMIT_HASH
+        );
+    }
+
+    #[test]
+    fn commit_helpers_match_upstream_semantics() {
+        let merge_commit = crate::state::CommitItem {
+            parents: vec!["parent-1".to_string(), "parent-2".to_string()],
+            ..crate::state::CommitItem::default()
+        };
+        assert!(merge_commit.is_merge());
+        assert!(!merge_commit.is_first_commit());
+        assert!(!merge_commit.is_todo());
+
+        let todo_commit = crate::state::CommitItem {
+            todo_action: crate::state::CommitTodoAction::Fixup,
+            ..crate::state::CommitItem::default()
+        };
+        assert!(todo_commit.is_todo());
+        assert!(crate::state::CommitItem::default().is_first_commit());
     }
 
     #[test]
@@ -2543,6 +3041,61 @@ mod tests {
         assert_eq!(stash.short_ref_name(), "stash@{2}");
         assert_eq!(stash.parent_ref_name(), "stash@{2}^");
         assert_eq!(stash.description(), "stash@{2}: WIP on main: example stash");
+    }
+
+    #[test]
+    fn worktree_helpers_match_upstream_semantics() {
+        let branch = crate::state::BranchItem {
+            name: "feature-branch".to_string(),
+            ..crate::state::BranchItem::default()
+        };
+        let current_worktree = crate::state::WorktreeItem {
+            name: "feature-branch".to_string(),
+            path: PathBuf::from("/tmp/repo-feature"),
+            branch: Some("feature-branch".to_string()),
+            is_current: true,
+            ..crate::state::WorktreeItem::default()
+        };
+        let other_worktree = crate::state::WorktreeItem {
+            name: "feature-branch".to_string(),
+            path: PathBuf::from("/tmp/repo-feature-linked"),
+            branch: Some("feature-branch".to_string()),
+            is_current: false,
+            ..crate::state::WorktreeItem::default()
+        };
+        let detached_worktree = crate::state::WorktreeItem {
+            name: "detached-review".to_string(),
+            path: PathBuf::from("/tmp/repo-review"),
+            branch: None,
+            is_current: false,
+            ..crate::state::WorktreeItem::default()
+        };
+
+        assert_eq!(current_worktree.ref_name(), "feature-branch");
+        assert_eq!(current_worktree.id(), "/tmp/repo-feature");
+        assert_eq!(current_worktree.description(), "feature-branch");
+
+        let current_only = vec![current_worktree.clone(), detached_worktree.clone()];
+        assert_eq!(
+            branch
+                .worktree_for_branch(&current_only)
+                .map(|item| item.path.clone()),
+            Some(PathBuf::from("/tmp/repo-feature"))
+        );
+        assert!(!branch.checked_out_by_other_worktree(&current_only));
+
+        let other_only = vec![other_worktree.clone(), detached_worktree.clone()];
+        assert_eq!(
+            branch
+                .worktree_for_branch(&other_only)
+                .map(|item| item.path.clone()),
+            Some(PathBuf::from("/tmp/repo-feature-linked"))
+        );
+        assert!(branch.checked_out_by_other_worktree(&other_only));
+
+        let no_match = vec![detached_worktree];
+        assert!(branch.worktree_for_branch(&no_match).is_none());
+        assert!(!branch.checked_out_by_other_worktree(&no_match));
     }
 
     #[test]
@@ -2839,6 +3392,66 @@ mod tests {
                 "src/ui/mod.rs".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn file_status_helpers_match_upstream_file_model_semantics() {
+        let renamed = FileStatus {
+            path: PathBuf::from("src/new_name.rs"),
+            previous_path: Some(PathBuf::from("src/old_name.rs")),
+            short_status: "R ".to_string(),
+            staged_kind: Some(FileStatusKind::Renamed),
+            ..FileStatus::default()
+        };
+        let same_file = FileStatus {
+            path: PathBuf::from("src/old_name.rs"),
+            short_status: "M ".to_string(),
+            ..FileStatus::default()
+        };
+
+        assert!(renamed.is_rename());
+        assert!(renamed.matches_file(&same_file));
+        assert!(renamed.has_staged_changes());
+        assert!(!renamed.has_unstaged_changes());
+
+        let derived = FileStatus::derived_status_fields("AM");
+        assert!(derived.has_staged_changes);
+        assert!(derived.has_unstaged_changes);
+        assert!(!derived.tracked);
+        assert!(derived.added);
+        assert!(!derived.deleted);
+        assert!(!derived.has_merge_conflicts);
+        assert!(!derived.has_inline_merge_conflicts);
+    }
+
+    #[test]
+    fn file_status_merge_conflict_descriptions_match_upstream_copy() {
+        let dd = FileStatus {
+            short_status: "DD".to_string(),
+            ..FileStatus::default()
+        };
+        let ud = FileStatus {
+            short_status: "UD".to_string(),
+            ..FileStatus::default()
+        };
+        let uu = FileStatus {
+            short_status: "UU".to_string(),
+            ..FileStatus::default()
+        };
+
+        assert!(dd.has_merge_conflicts());
+        assert!(!dd.has_inline_merge_conflicts());
+        assert_eq!(
+            dd.merge_state_description(),
+            Some("Conflict: this file was moved or renamed both in the current and the incoming changes, but to different destinations. I don't know which ones, but they should both show up as conflicts too (marked 'AU' and 'UA', respectively). The most likely resolution is to delete this file, and pick one of the destinations and delete the other.")
+        );
+        assert_eq!(
+            ud.merge_state_description(),
+            Some("Conflict: this file was modified in the current changes and deleted in incoming changes.\n\nThe most likely resolution is to delete the file after applying the current modifications manually to some other place in the code.")
+        );
+        assert!(uu.has_merge_conflicts());
+        assert!(uu.has_inline_merge_conflicts());
+        assert_eq!(uu.merge_state_description(), None);
     }
 
     #[test]

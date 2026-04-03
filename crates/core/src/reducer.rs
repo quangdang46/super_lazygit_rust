@@ -7,11 +7,12 @@ use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
 use crate::hosting_service;
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
-    CommitFilesMode, CommitHistoryMode, ComparisonTarget, ConfirmableOperation, DiffLineKind,
-    DiffPresentation, InputPromptOperation, JobId, MenuOperation, MergeFastForwardPreference,
-    MergeState, MergeVariant, MessageLevel, Notification, OperationProgress, PaneId,
-    PendingInputPrompt, PendingMenu, RepoModeState, ResetMode, ScanStatus, SelectedHunk, StashMode,
-    StatusMessage, WatcherHealth, MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
+    CommitFilesMode, CommitHistoryMode, CommitTodoAction, ComparisonTarget, ConfirmableOperation,
+    DiffLineKind, DiffPresentation, InputPromptOperation, JobId, MenuOperation,
+    MergeFastForwardPreference, MergeState, MergeVariant, MessageLevel, Notification,
+    OperationProgress, PaneId, PendingInputPrompt, PendingMenu, RepoModeState, ResetMode,
+    ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
+    MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
     RENAME_SIMILARITY_THRESHOLD_STEP,
 };
 
@@ -992,19 +993,39 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::SetFixupMessageForSelectedCommit => {
-            match pending_history_commit_operation(state, |_, commit, selected_index| {
-                if selected_index == 0 {
-                    return Err(
-                        "Select an older commit before setting the fixup message.".to_string()
-                    );
-                }
-                Ok(ConfirmableOperation::SetFixupMessageForCommit {
-                    commit: commit.oid.clone(),
-                    summary: format!("{} {}", commit.short_oid, commit.summary),
+            let outcome = state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| {
+                    let detail = repo_mode.detail.as_ref()?;
+                    let (selected_index, commit) = selected_commit_entry(repo_mode)?;
+                    Some((
+                        repo_mode.current_repo_id.clone(),
+                        detail,
+                        selected_index,
+                        commit,
+                    ))
                 })
-            }) {
-                Ok(Some((repo_id, operation))) => {
-                    open_confirmation_modal(state, repo_id, operation)
+                .map_or_else(
+                    || Ok(None),
+                    |(repo_id, detail, selected_index, commit)| {
+                        if selected_index == 0 {
+                            return Err("Select an older commit before setting the fixup message."
+                                .to_string());
+                        }
+                        if detail.merge_state != MergeState::RebaseInProgress {
+                            return Err("A rebase is not in progress.".to_string());
+                        }
+                        if commit.todo_action != CommitTodoAction::Fixup {
+                            return Err("Select a fixup commit before setting the fixup message."
+                                .to_string());
+                        }
+                        Ok(Some(repo_id))
+                    },
+                );
+            match outcome {
+                Ok(Some(repo_id)) => {
+                    open_menu(state, repo_id, MenuOperation::CommitSetFixupMessageOptions);
                 }
                 Ok(None) => {
                     push_warning(state, "Select a commit before setting the fixup message.")
@@ -1134,17 +1155,13 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 if selected_index == 0 {
                     return Err("Select an older commit before starting reword.".to_string());
                 }
-                Ok((
-                    GitCommand::RewordCommitWithEditor {
-                        commit: commit.oid.clone(),
-                    },
-                    format!("Reword {} {}", commit.short_oid, commit.summary),
-                ))
+                Ok(ConfirmableOperation::RewordCommitInEditor {
+                    commit: commit.oid.clone(),
+                    summary: format!("{} {}", commit.short_oid, commit.summary),
+                })
             }) {
-                Ok(Some((repo_id, (command, summary)))) => {
-                    let job = git_job(repo_id, command);
-                    enqueue_git_job(state, &job, &summary);
-                    effects.push(Effect::RunGitCommand(job));
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation)
                 }
                 Ok(None) => {
                     push_warning(state, "Select a commit before starting reword.");
@@ -2948,6 +2965,15 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::DetachSelectedWorktree => {
+            if let Some((repo_id, path)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_worktree_item(repo_mode)
+                    .map(|item| (repo_mode.current_repo_id.clone(), item.path.clone()))
+            }) {
+                let job = git_job(repo_id, GitCommand::DetachWorktree { path: path.clone() });
+                enqueue_git_job(state, &job, &format!("Detach worktree {}", path.display()));
+            }
+        }
         Action::RemoveSelectedWorktree => {
             if let Some((repo_id, path)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_worktree_item(repo_mode)
@@ -2960,7 +2986,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     open_confirmation_modal(
                         state,
                         repo_id,
-                        ConfirmableOperation::RemoveWorktree { path },
+                        ConfirmableOperation::RemoveWorktree { path, force: false },
                     );
                     effects.push(Effect::ScheduleRender);
                 }
@@ -4401,8 +4427,16 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         ConfirmableOperation::FixupCommit { summary, .. } => {
             format!("Fixup {summary}")
         }
-        ConfirmableOperation::SetFixupMessageForCommit { summary, .. } => {
-            format!("Set fixup message from {summary}")
+        ConfirmableOperation::SetFixupMessageForCommit {
+            summary,
+            keep_message,
+            ..
+        } => {
+            if *keep_message {
+                format!("Keep fixup message from {summary}")
+            } else {
+                format!("Discard fixup message from {summary}")
+            }
         }
         ConfirmableOperation::SquashCommit { summary, .. } => {
             format!("Squash {summary}")
@@ -4423,6 +4457,9 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
             ..
         } => {
             format!("Move {summary} below {adjacent_summary}")
+        }
+        ConfirmableOperation::RewordCommitInEditor { summary, .. } => {
+            format!("Reword {summary} in editor")
         }
         ConfirmableOperation::CherryPickCommit { summary, .. } => {
             format!("Cherry-pick {summary}")
@@ -4480,8 +4517,12 @@ fn confirmation_title(operation: &ConfirmableOperation) -> String {
         } => format!("Push tag {tag_name} to {remote_name}"),
         ConfirmableOperation::PopStash { stash_ref } => format!("Pop stash {stash_ref}"),
         ConfirmableOperation::DropStash { stash_ref } => format!("Drop stash {stash_ref}"),
-        ConfirmableOperation::RemoveWorktree { path } => {
-            format!("Remove worktree {}", path.display())
+        ConfirmableOperation::RemoveWorktree { path, force } => {
+            if *force {
+                format!("Force remove worktree {}", path.display())
+            } else {
+                format!("Remove worktree {}", path.display())
+            }
         }
         ConfirmableOperation::RemoveSubmodule { name, .. } => {
             format!("Remove submodule {name}")
@@ -4546,12 +4587,24 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Start fixup autosquash",
         ),
-        ConfirmableOperation::SetFixupMessageForCommit { commit, .. } => (
+        ConfirmableOperation::SetFixupMessageForCommit {
+            commit,
+            keep_message,
+            ..
+        } => (
             GitCommand::StartCommitRebase {
                 commit,
-                mode: RebaseStartMode::FixupWithMessage,
+                mode: if keep_message {
+                    RebaseStartMode::FixupWithMessage
+                } else {
+                    RebaseStartMode::Fixup
+                },
             },
-            "Set fixup message",
+            if keep_message {
+                "Keep fixup message"
+            } else {
+                "Discard fixup message"
+            },
         ),
         ConfirmableOperation::SquashCommit { commit, .. } => (
             GitCommand::StartCommitRebase {
@@ -4588,6 +4641,10 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
                 mode: RebaseStartMode::MoveDown { adjacent_commit },
             },
             "Move selected commit down",
+        ),
+        ConfirmableOperation::RewordCommitInEditor { commit, .. } => (
+            GitCommand::RewordCommitWithEditor { commit },
+            "Reword selected commit in editor",
         ),
         ConfirmableOperation::CherryPickCommit { commit, .. } => (
             GitCommand::CherryPickCommit { commit },
@@ -4709,9 +4766,16 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             },
             "Drop stash",
         ),
-        ConfirmableOperation::RemoveWorktree { path } => (
-            GitCommand::RemoveWorktree { path: path.clone() },
-            "Remove worktree",
+        ConfirmableOperation::RemoveWorktree { path, force } => (
+            GitCommand::RemoveWorktree {
+                path: path.clone(),
+                force,
+            },
+            if force {
+                "Force remove worktree"
+            } else {
+                "Remove worktree"
+            },
         ),
         ConfirmableOperation::RemoveSubmodule { path, .. } => (
             GitCommand::RemoveSubmodule { path: path.clone() },
@@ -5084,20 +5148,44 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
             stash_operation_summary(mode, if value.is_empty() { None } else { Some(&value) }),
         ),
         InputPromptOperation::CreateWorktree => {
-            let Some((path, branch_ref)) = parse_create_worktree_input(&value) else {
-                push_warning(state, "Enter worktree details as: <path> <branch>.");
+            let Some(opts) = parse_create_worktree_input(&value) else {
+                push_warning(
+                    state,
+                    "Enter worktree details as: <path> <base> [branch] or <path> <base> --detach.",
+                );
                 state.pending_input_prompt = Some(pending);
                 return None;
+            };
+            let summary = if opts.detach {
+                format!(
+                    "Create detached worktree {} from {}",
+                    opts.path.display(),
+                    opts.base_ref
+                )
+            } else if let Some(branch) = opts.branch.as_deref() {
+                format!(
+                    "Create worktree {} from {} as {branch}",
+                    opts.path.display(),
+                    opts.base_ref
+                )
+            } else {
+                format!(
+                    "Create worktree {} from {}",
+                    opts.path.display(),
+                    opts.base_ref
+                )
             };
             (
                 PromptSubmission::Git(git_job(
                     pending.repo_id.clone(),
                     GitCommand::CreateWorktree {
-                        path: path.clone(),
-                        branch_ref: branch_ref.clone(),
+                        path: opts.path.clone(),
+                        base_ref: opts.base_ref.clone(),
+                        branch: opts.branch.clone(),
+                        detach: opts.detach,
                     },
                 )),
-                format!("Create worktree {} from {branch_ref}", path.display()),
+                summary,
             )
         }
         InputPromptOperation::CreateSubmodule => {
@@ -5195,14 +5283,45 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
     Some(submission)
 }
 
-fn parse_create_worktree_input(value: &str) -> Option<(std::path::PathBuf, String)> {
-    let (path, branch_ref) = value.rsplit_once(char::is_whitespace)?;
-    let path = path.trim();
-    let branch_ref = branch_ref.trim();
-    if path.is_empty() || branch_ref.is_empty() {
+struct CreateWorktreeInput {
+    path: std::path::PathBuf,
+    base_ref: String,
+    branch: Option<String>,
+    detach: bool,
+}
+
+fn parse_create_worktree_input(value: &str) -> Option<CreateWorktreeInput> {
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    let opts = match parts.as_slice() {
+        [path, base_ref] => CreateWorktreeInput {
+            path: std::path::PathBuf::from(path),
+            base_ref: (*base_ref).to_string(),
+            branch: None,
+            detach: false,
+        },
+        [path, base_ref, "--detach"] => CreateWorktreeInput {
+            path: std::path::PathBuf::from(path),
+            base_ref: (*base_ref).to_string(),
+            branch: None,
+            detach: true,
+        },
+        [path, base_ref, branch] => CreateWorktreeInput {
+            path: std::path::PathBuf::from(path),
+            base_ref: (*base_ref).to_string(),
+            branch: Some((*branch).to_string()),
+            detach: false,
+        },
+        _ => return None,
+    };
+
+    if opts.path.as_os_str().is_empty()
+        || opts.base_ref.is_empty()
+        || (opts.detach && opts.branch.is_some())
+    {
         return None;
     }
-    Some((std::path::PathBuf::from(path), branch_ref.to_string()))
+
+    Some(opts)
 }
 
 fn parse_create_submodule_input(value: &str) -> Option<(std::path::PathBuf, String)> {
@@ -5265,6 +5384,7 @@ fn menu_title(operation: MenuOperation) -> &'static str {
         MenuOperation::ReflogResetOptions => "Reflog reset options",
         MenuOperation::CommitAmendAttributeOptions => "Amend commit attributes",
         MenuOperation::CommitFixupOptions => "Fixup options",
+        MenuOperation::CommitSetFixupMessageOptions => "Set fixup message",
         MenuOperation::BisectOptions => "Bisect options",
         MenuOperation::BranchUpstreamOptions => "Branch upstream options",
         MenuOperation::MergeRebaseOptions => "Merge / rebase options",
@@ -5295,6 +5415,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::ReflogResetOptions => reflog_reset_menu_entries(state).len(),
         MenuOperation::CommitAmendAttributeOptions => 2,
         MenuOperation::CommitFixupOptions => 3,
+        MenuOperation::CommitSetFixupMessageOptions => 2,
         MenuOperation::BisectOptions => bisect_menu_entries(state).len(),
         MenuOperation::BranchUpstreamOptions => branch_upstream_menu_entries(state).len(),
         MenuOperation::MergeRebaseOptions => merge_rebase_menu_entries(state).len(),
@@ -5902,6 +6023,67 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
                 open_input_prompt(state, menu.repo_id, operation);
             } else {
                 reduce_action(state, Action::CreateFixupCommit, effects);
+            }
+            true
+        }
+        MenuOperation::CommitSetFixupMessageOptions => {
+            let keep_message = match selected_index {
+                0 => false,
+                1 => true,
+                _ => return false,
+            };
+            let confirmation = state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| {
+                    let detail = repo_mode.detail.as_ref()?;
+                    let (selected_index, commit) = selected_commit_entry(repo_mode)?;
+                    Some((
+                        repo_mode.current_repo_id.clone(),
+                        detail,
+                        selected_index,
+                        commit,
+                    ))
+                })
+                .map_or_else(
+                    || Ok(None),
+                    |(repo_id, detail, selected_index, commit)| {
+                        if selected_index == 0 {
+                            return Err("Select an older commit before setting the fixup message."
+                                .to_string());
+                        }
+                        if detail.merge_state != MergeState::RebaseInProgress {
+                            return Err("A rebase is not in progress.".to_string());
+                        }
+                        if commit.todo_action != CommitTodoAction::Fixup {
+                            return Err("Select a fixup commit before setting the fixup message."
+                                .to_string());
+                        }
+                        Ok(Some((
+                            repo_id,
+                            ConfirmableOperation::SetFixupMessageForCommit {
+                                commit: commit.oid.clone(),
+                                summary: format!("{} {}", commit.short_oid, commit.summary),
+                                keep_message,
+                            },
+                        )))
+                    },
+                );
+            let Some(menu) = state.pending_menu.take() else {
+                return false;
+            };
+            state.modal_stack.pop();
+            if state.modal_stack.is_empty() {
+                state.focused_pane = menu.return_focus;
+            }
+            match confirmation {
+                Ok(Some((repo_id, operation))) => {
+                    open_confirmation_modal(state, repo_id, operation);
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    push_warning(state, message);
+                }
             }
             true
         }
@@ -9873,6 +10055,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::PopStash { .. } => "pop-stash",
         GitCommand::DropStash { .. } => "drop-stash",
         GitCommand::CreateWorktree { .. } => "create-worktree",
+        GitCommand::DetachWorktree { .. } => "detach-worktree",
         GitCommand::RemoveWorktree { .. } => "remove-worktree",
         GitCommand::AddSubmodule { .. } => "add-submodule",
         GitCommand::EditSubmoduleUrl { .. } => "edit-submodule-url",
@@ -9977,13 +10160,13 @@ mod tests {
     use crate::event::{Event, TimerEvent, WatcherEvent, WorkerEvent};
     use crate::state::{
         AppMode, AppState, BackgroundJobKind, BackgroundJobState, CommitBoxMode, CommitFileItem,
-        CommitHistoryMode, CommitItem, ConfirmableOperation, DiffHunk, DiffLine, DiffLineKind,
-        DiffModel, DiffPresentation, FileStatus, FileStatusKind, InputPromptOperation, JobId,
-        MenuOperation, MergeFastForwardPreference, MergeState, MergeVariant, MessageLevel,
-        ModalKind, OperationProgress, PaneId, RebaseKind, RebaseState, ReflogItem, RepoDetail,
-        RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState, RepoSummary, ScanStatus,
-        SelectedHunk, StashItem, StashMode, SubmoduleItem, Timestamp, WatcherHealth,
-        WorkspaceFilterMode, WorktreeItem,
+        CommitHistoryMode, CommitItem, CommitTodoAction, ConfirmableOperation, DiffHunk, DiffLine,
+        DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
+        InputPromptOperation, JobId, MenuOperation, MergeFastForwardPreference, MergeState,
+        MergeVariant, MessageLevel, ModalKind, OperationProgress, PaneId, RebaseKind, RebaseState,
+        ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState,
+        RepoSummary, ScanStatus, SelectedHunk, StashItem, StashMode, SubmoduleItem, Timestamp,
+        WatcherHealth, WorkspaceFilterMode, WorktreeItem,
     };
 
     use super::{
@@ -15857,9 +16040,51 @@ mod tests {
                 repo_id,
                 ConfirmableOperation::RemoveWorktree {
                     path: removable_path,
+                    force: false,
                 }
             ))
         );
+    }
+
+    #[test]
+    fn detach_selected_worktree_enqueues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let worktree_path = std::path::PathBuf::from("/tmp/repo-feature");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Worktrees,
+                detail: Some(RepoDetail {
+                    worktrees: vec![WorktreeItem {
+                        path: worktree_path.clone(),
+                        branch: Some("feature".to_string()),
+                        ..WorktreeItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                worktree_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::DetachSelectedWorktree));
+        let job_id = JobId::new("git:repo-1:detach-worktree");
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert!(result.effects.is_empty());
     }
 
     #[test]
@@ -16353,7 +16578,7 @@ mod tests {
             pending_input_prompt: Some(crate::state::PendingInputPrompt {
                 repo_id: repo_id.clone(),
                 operation: crate::state::InputPromptOperation::CreateWorktree,
-                value: "../repo-feature feature".to_string(),
+                value: "../repo-feature main feature".to_string(),
                 return_focus: PaneId::RepoDetail,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -16367,16 +16592,50 @@ mod tests {
         assert!(result.state.modal_stack.is_empty());
         assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(
+            result
+                .state
+                .background_jobs
+                .get(&job_id)
+                .map(|job| &job.state),
+            Some(&BackgroundJobState::Queued)
+        );
+        assert_eq!(
             result.effects,
             vec![Effect::RunGitCommand(GitCommandRequest {
                 job_id,
                 repo_id,
                 command: GitCommand::CreateWorktree {
                     path: std::path::PathBuf::from("../repo-feature"),
-                    branch_ref: "feature".to_string(),
+                    base_ref: "main".to_string(),
+                    branch: Some("feature".to_string()),
+                    detach: false,
                 },
             })]
         );
+    }
+
+    #[test]
+    fn parse_create_worktree_input_supports_base_branch_and_detach_forms() {
+        let plain = super::parse_create_worktree_input("../repo-main main")
+            .expect("plain create worktree parse");
+        assert_eq!(plain.path, std::path::PathBuf::from("../repo-main"));
+        assert_eq!(plain.base_ref, "main");
+        assert_eq!(plain.branch, None);
+        assert!(!plain.detach);
+
+        let branched = super::parse_create_worktree_input("../repo-feature main feature")
+            .expect("branch create worktree parse");
+        assert_eq!(branched.path, std::path::PathBuf::from("../repo-feature"));
+        assert_eq!(branched.base_ref, "main");
+        assert_eq!(branched.branch.as_deref(), Some("feature"));
+        assert!(!branched.detach);
+
+        let detached = super::parse_create_worktree_input("../repo-review main --detach")
+            .expect("detached create worktree parse");
+        assert_eq!(detached.path, std::path::PathBuf::from("../repo-review"));
+        assert_eq!(detached.base_ref, "main");
+        assert_eq!(detached.branch, None);
+        assert!(detached.detach);
     }
 
     #[test]
@@ -16827,6 +17086,7 @@ mod tests {
                 operation: ConfirmableOperation::SetFixupMessageForCommit {
                     commit: "older".to_string(),
                     summary: "old1234 older commit".to_string(),
+                    keep_message: true,
                 },
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -19586,6 +19846,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::History,
                 detail: Some(RepoDetail {
                     commits: vec![
                         CommitItem {
@@ -20411,13 +20672,15 @@ mod tests {
     }
 
     #[test]
-    fn set_fixup_message_opens_confirmation_for_selected_commit() {
+    fn set_fixup_message_opens_set_fixup_message_menu_for_fixup_commit_mid_rebase() {
         let state = AppState {
             mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
             repo_mode: Some(RepoModeState {
                 current_repo_id: RepoId::new("repo-1"),
                 active_subview: RepoSubview::Commits,
                 detail: Some(RepoDetail {
+                    merge_state: MergeState::RebaseInProgress,
                     commits: vec![
                         CommitItem {
                             oid: "head".to_string(),
@@ -20429,6 +20692,7 @@ mod tests {
                             oid: "older".to_string(),
                             short_oid: "old1234".to_string(),
                             summary: "older commit".to_string(),
+                            todo_action: CommitTodoAction::Fixup,
                             ..CommitItem::default()
                         },
                     ],
@@ -20447,6 +20711,70 @@ mod tests {
             Event::Action(Action::SetFixupMessageForSelectedCommit),
         );
 
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result.state.pending_menu.as_ref().map(|menu| (
+                menu.operation,
+                menu.selected_index,
+                menu.return_focus,
+            )),
+            Some((
+                MenuOperation::CommitSetFixupMessageOptions,
+                0,
+                PaneId::RepoDetail,
+            ))
+        );
+    }
+
+    #[test]
+    fn submit_set_fixup_message_options_selection_opens_fixup_confirmation() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Set fixup message",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitSetFixupMessageOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    merge_state: MergeState::RebaseInProgress,
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            todo_action: CommitTodoAction::Fixup,
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
         assert_eq!(
             result
                 .state
@@ -20456,7 +20784,171 @@ mod tests {
             Some(ConfirmableOperation::SetFixupMessageForCommit {
                 commit: "older".to_string(),
                 summary: "old1234 older commit".to_string(),
+                keep_message: false,
             })
+        );
+    }
+
+    #[test]
+    fn submit_set_fixup_message_options_selection_opens_fixup_with_message_confirmation() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Menu,
+                "Set fixup message",
+            )],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::CommitSetFixupMessageOptions,
+                selected_index: 1,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    merge_state: MergeState::RebaseInProgress,
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            todo_action: CommitTodoAction::Fixup,
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitMenuSelection));
+
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::SetFixupMessageForCommit {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+                keep_message: true,
+            })
+        );
+    }
+
+    #[test]
+    fn set_fixup_message_requires_mid_rebase() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    merge_state: MergeState::None,
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            todo_action: CommitTodoAction::Fixup,
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SetFixupMessageForSelectedCommit),
+        );
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("A rebase is not in progress.")
+        );
+    }
+
+    #[test]
+    fn set_fixup_message_requires_selected_fixup_todo_commit() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    merge_state: MergeState::RebaseInProgress,
+                    commits: vec![
+                        CommitItem {
+                            oid: "head".to_string(),
+                            short_oid: "head".to_string(),
+                            summary: "HEAD".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "older".to_string(),
+                            short_oid: "old1234".to_string(),
+                            summary: "older commit".to_string(),
+                            todo_action: CommitTodoAction::Pick,
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::SetFixupMessageForSelectedCommit),
+        );
+
+        assert!(result.state.pending_confirmation.is_none());
+        assert_eq!(
+            result
+                .state
+                .notifications
+                .back()
+                .map(|notification| notification.text.as_str()),
+            Some("Select a fixup commit before setting the fixup message.")
         );
     }
 
@@ -21180,6 +21672,7 @@ mod tests {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
             mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
@@ -21209,6 +21702,43 @@ mod tests {
         };
 
         let result = reduce(state, Event::Action(Action::RewordSelectedCommitWithEditor));
+
+        assert_eq!(
+            result
+                .state
+                .pending_confirmation
+                .as_ref()
+                .map(|pending| pending.operation.clone()),
+            Some(ConfirmableOperation::RewordCommitInEditor {
+                commit: "older".to_string(),
+                summary: "old1234 older commit".to_string(),
+            })
+        );
+        assert_eq!(result.state.focused_pane, PaneId::Modal);
+    }
+
+    #[test]
+    fn confirm_pending_operation_queues_reword_selected_commit_with_editor_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::Confirm,
+                "Reword old1234 older commit in editor",
+            )],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::RewordCommitInEditor {
+                    commit: "older".to_string(),
+                    summary: "old1234 older commit".to_string(),
+                },
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
 
         assert_eq!(
             result.effects,
