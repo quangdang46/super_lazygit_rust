@@ -14128,6 +14128,77 @@ diff --git a/file.txt b/file.txt
     }
 
     #[test]
+    fn build_selected_patch_keeps_header_and_exact_selected_hunks() {
+        let diff = "\
+diff --git a/file.txt b/file.txt
+index 1111111..2222222 100644
+--- a/file.txt
++++ b/file.txt
+@@ -2,2 +2,2 @@
+-old two
++new two
+@@ -8,2 +8,2 @@
+-old eight
++new eight
+";
+
+        let patch = build_selected_patch(
+            diff,
+            &[
+                SelectedHunk {
+                    old_start: 2,
+                    old_lines: 2,
+                    new_start: 2,
+                    new_lines: 2,
+                },
+                SelectedHunk {
+                    old_start: 8,
+                    old_lines: 2,
+                    new_start: 8,
+                    new_lines: 2,
+                },
+            ],
+        )
+        .expect("selected hunks should build");
+
+        assert!(patch.starts_with("diff --git a/file.txt b/file.txt\nindex 1111111..2222222 100644\n--- a/file.txt\n+++ b/file.txt\n"));
+        assert!(patch.contains("@@ -2,2 +2,2 @@\n-old two\n+new two\n"));
+        assert!(patch.contains("@@ -8,2 +8,2 @@\n-old eight\n+new eight\n"));
+    }
+
+    #[test]
+    fn build_selected_patch_builds_partial_hunk_from_selection_within_hunk() {
+        let diff = "\
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -2,3 +2,3 @@ heading
+-old two
++new two
+-old three
++new three
+";
+
+        let patch = build_selected_patch(
+            diff,
+            &[SelectedHunk {
+                old_start: 3,
+                old_lines: 1,
+                new_start: 3,
+                new_lines: 1,
+            }],
+        )
+        .expect("partial hunk should build");
+
+        assert!(
+            patch.starts_with("diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n")
+        );
+        assert!(patch.contains("@@ -3 +3 @@ heading\n-old three\n+new three\n"));
+        assert!(!patch.contains("old two"));
+        assert!(!patch.contains("new two"));
+    }
+
+    #[test]
     fn cli_backend_reads_submodule_inventory() {
         let repo = submodule_repo().expect("fixture repo");
         let backend = CliGitBackend;
