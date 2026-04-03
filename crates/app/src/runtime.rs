@@ -989,6 +989,7 @@ fn io_error_to_git(error: std::io::Error) -> GitError {
 #[cfg(test)]
 mod tests {
     use std::io;
+    use std::path::Path;
 
     use super::*;
     use super_lazygit_config::AppConfig;
@@ -1000,6 +1001,14 @@ mod tests {
         history_preview_repo, staged_and_unstaged_repo, submodule_repo, temp_repo,
     };
 
+    fn new_dummy_runtime(repo_path: &Path) -> AppRuntime {
+        AppRuntime::new(
+            TuiApp::new(AppState::default(), AppConfig::default()),
+            WorkspaceRegistry::new(Some(repo_path.to_path_buf())),
+            GitFacade::default(),
+        )
+    }
+
     #[test]
     fn interactive_commit_uses_git_editor() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
@@ -1010,11 +1019,7 @@ mod tests {
         repo.git(["config", "core.editor", "sh editor.sh"])?;
 
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let events = runtime.apply_effects(&[Effect::RunGitCommand(GitCommandRequest {
             job_id: JobId::new("git:repo:commit-staged-editor"),
@@ -1045,11 +1050,7 @@ mod tests {
 
         let repo_id = RepoId::new(repo.path().display().to_string());
         let target = repo.rev_parse("HEAD~1")?;
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let events = runtime.apply_effects(&[Effect::RunGitCommand(GitCommandRequest {
             job_id: JobId::new("git:repo:reword-commit-editor"),
@@ -1073,11 +1074,7 @@ mod tests {
     fn shell_command_effect_runs_command_in_repo_root() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest::new(
             JobId::new("shell:repo:run-command"),
@@ -1099,11 +1096,7 @@ mod tests {
     fn shell_command_effect_reports_failures() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest::new(
             JobId::new("shell:repo:run-command"),
@@ -1123,11 +1116,7 @@ mod tests {
     fn shell_command_effect_surfaces_command_output_on_failure() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let events = runtime.apply_effects(&[Effect::RunShellCommand(ShellCommandRequest::new(
             JobId::new("shell:repo:stderr"),
@@ -1147,11 +1136,7 @@ mod tests {
     fn shell_command_effect_ignores_empty_error_when_requested() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let request = ShellCommandRequest::new(
             JobId::new("shell:repo:ignore-empty-error"),
@@ -1173,11 +1158,7 @@ mod tests {
     fn shell_command_effect_fails_fast_on_credential_prompt() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let request = ShellCommandRequest::from_args(
             JobId::new("shell:repo:credential-prompt"),
@@ -1204,11 +1185,7 @@ mod tests {
         let repo_id = RepoId::new(repo.path().display().to_string());
         let custom_dir = repo.path().join("nested");
         std::fs::create_dir_all(&custom_dir)?;
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let request = ShellCommandRequest::new(
             JobId::new("shell:repo:custom-working-dir"),
@@ -1233,11 +1210,7 @@ mod tests {
     fn shell_command_effect_passes_stdin() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let request =
             ShellCommandRequest::new(JobId::new("shell:repo:stdin"), repo_id, "cat > stdin.txt")
@@ -1253,11 +1226,7 @@ mod tests {
     fn shell_command_effect_appends_env_vars() -> io::Result<()> {
         let repo = staged_and_unstaged_repo()?;
         let repo_id = RepoId::new(repo.path().display().to_string());
-        let mut runtime = AppRuntime::new(
-            TuiApp::new(AppState::default(), AppConfig::default()),
-            WorkspaceRegistry::new(Some(repo.path().to_path_buf())),
-            GitFacade::default(),
-        );
+        let mut runtime = new_dummy_runtime(repo.path());
 
         let request = ShellCommandRequest::new(
             JobId::new("shell:repo:env"),
