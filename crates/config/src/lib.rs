@@ -316,12 +316,54 @@ fn default_open_link_command() -> String {
 
 #[cfg(all(not(windows), target_os = "linux"))]
 fn default_open_command() -> String {
+    if is_wsl_from_strings(
+        read_kernel_osrelease(),
+        read_cgroup_v1(),
+        std::env::var_os("CONTAINER"),
+    ) {
+        return r#"powershell.exe start explorer.exe "$(wslpath -w {{filename}})" >/dev/null"#
+            .to_string();
+    }
     r#"xdg-open {{filename}} >/dev/null"#.to_string()
 }
 
 #[cfg(all(not(windows), target_os = "linux"))]
 fn default_open_link_command() -> String {
+    if is_wsl_from_strings(
+        read_kernel_osrelease(),
+        read_cgroup_v1(),
+        std::env::var_os("CONTAINER"),
+    ) {
+        return r#"powershell.exe start '{{link}}' >/dev/null"#.to_string();
+    }
     r#"xdg-open {{link}} >/dev/null"#.to_string()
+}
+
+#[cfg(all(not(windows), target_os = "linux"))]
+fn read_kernel_osrelease() -> Option<String> {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease").ok()
+}
+
+#[cfg(all(not(windows), target_os = "linux"))]
+fn read_cgroup_v1() -> Option<String> {
+    std::fs::read_to_string("/proc/1/cgroup").ok()
+}
+
+#[cfg(all(not(windows), target_os = "linux"))]
+fn is_wsl_from_strings(
+    kernel_osrelease: Option<String>,
+    cgroup: Option<String>,
+    container_env: Option<std::ffi::OsString>,
+) -> bool {
+    let is_wsl = kernel_osrelease
+        .as_deref()
+        .is_some_and(|value| value.to_ascii_lowercase().contains("microsoft"));
+    let is_container = cgroup
+        .as_deref()
+        .is_some_and(|value| value.contains("docker") || value.contains("/lxc/"))
+        || container_env.is_some();
+
+    is_wsl && !is_container
 }
 
 #[cfg(all(not(windows), not(target_os = "linux")))]
@@ -1044,8 +1086,8 @@ mod tests {
 
         #[cfg(all(not(windows), target_os = "linux"))]
         {
-            assert_eq!(config.os.open, "xdg-open {{filename}} >/dev/null");
-            assert_eq!(config.os.open_link, "xdg-open {{link}} >/dev/null");
+            assert_eq!(config.os.open, default_open_command());
+            assert_eq!(config.os.open_link, default_open_link_command());
         }
 
         #[cfg(all(not(windows), not(target_os = "linux")))]
@@ -1150,8 +1192,8 @@ shellFunctionsFile = "~/.config/lazygit/functions.sh"
 
         #[cfg(all(not(windows), target_os = "linux"))]
         {
-            assert_eq!(config.open, "xdg-open {{filename}} >/dev/null");
-            assert_eq!(config.open_link, "xdg-open {{link}} >/dev/null");
+            assert_eq!(config.open, default_open_command());
+            assert_eq!(config.open_link, default_open_link_command());
         }
 
         #[cfg(all(not(windows), not(target_os = "linux")))]
@@ -1159,6 +1201,41 @@ shellFunctionsFile = "~/.config/lazygit/functions.sh"
             assert_eq!(config.open, "open -- {{filename}}");
             assert_eq!(config.open_link, "open {{link}}");
         }
+    }
+
+    #[cfg(all(not(windows), target_os = "linux"))]
+    #[test]
+    fn linux_default_platform_detects_wsl_without_container() {
+        assert!(is_wsl_from_strings(
+            Some("6.6.36.3-microsoft-standard-WSL2".to_string()),
+            Some("12:memory:/".to_string()),
+            None,
+        ));
+    }
+
+    #[cfg(all(not(windows), target_os = "linux"))]
+    #[test]
+    fn linux_default_platform_rejects_wsl_when_running_in_container() {
+        assert!(!is_wsl_from_strings(
+            Some("6.6.36.3-microsoft-standard-WSL2".to_string()),
+            Some("12:memory:/docker/abc".to_string()),
+            None,
+        ));
+        assert!(!is_wsl_from_strings(
+            Some("6.6.36.3-microsoft-standard-WSL2".to_string()),
+            Some("12:memory:/".to_string()),
+            Some(std::ffi::OsString::from("1")),
+        ));
+    }
+
+    #[cfg(all(not(windows), target_os = "linux"))]
+    #[test]
+    fn linux_default_platform_rejects_non_wsl_kernel() {
+        assert!(!is_wsl_from_strings(
+            Some("6.8.0-41-generic".to_string()),
+            Some("12:memory:/".to_string()),
+            None,
+        ));
     }
 
     #[test]
