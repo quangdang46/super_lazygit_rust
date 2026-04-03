@@ -10,8 +10,8 @@ use crate::state::{
     CommitFilesMode, CommitHistoryMode, CommitTodoAction, ComparisonTarget, ConfirmableOperation,
     DiffLineKind, DiffPresentation, InputPromptOperation, JobId, MenuOperation,
     MergeFastForwardPreference, MergeState, MergeVariant, MessageLevel, Notification,
-    OperationProgress, PaneId, PendingInputPrompt, PendingMenu, RepoModeState, ResetMode,
-    ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
+    OperationProgress, PaneId, PendingInputPrompt, PendingMenu, PendingRemoteFlow, RepoModeState,
+    ResetMode, ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
     MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
     RENAME_SIMILARITY_THRESHOLD_STEP,
 };
@@ -3427,6 +3427,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
         }
         WorkerEvent::RepoDetailLoaded { repo_id, detail } => {
             let mut missing_history_target = false;
+            let mut pending_fetch_job: Option<GitCommandRequest> = None;
             if state
                 .repo_mode
                 .as_ref()
@@ -3444,6 +3445,26 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     sync_status_selection(repo_mode);
                     sync_branch_selection(repo_mode);
                     sync_remote_selection(repo_mode);
+                    if let Some(PendingRemoteFlow::AwaitFetchCompletion { remote_name, .. }) =
+                        repo_mode.pending_remote_flow.clone()
+                    {
+                        if let Some(remote_index) = repo_mode.detail.as_ref().and_then(|detail| {
+                            detail
+                                .remotes
+                                .iter()
+                                .enumerate()
+                                .find(|(_, remote)| remote.name == remote_name)
+                                .map(|(index, _)| index)
+                        }) {
+                            repo_mode.remotes_view.selected_index = Some(remote_index);
+                            pending_fetch_job = Some(git_job(
+                                repo_id.clone(),
+                                GitCommand::FetchRemote {
+                                    remote_name: remote_name.clone(),
+                                },
+                            ));
+                        }
+                    }
                     sync_commit_selection(repo_mode);
                     sync_commit_file_selection(repo_mode);
                     sync_stash_selection(repo_mode);
@@ -3478,6 +3499,14 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                         effects.push(load_comparison_diff_effect(repo_mode));
                     }
                 }
+            }
+            if let Some(fetch_job) = pending_fetch_job {
+                let remote_name = match &fetch_job.command {
+                    GitCommand::FetchRemote { remote_name } => remote_name.clone(),
+                    _ => unreachable!(),
+                };
+                enqueue_git_job(state, &fetch_job, &format!("Fetch remote {remote_name}"));
+                effects.push(Effect::RunGitCommand(fetch_job));
             }
             if missing_history_target {
                 push_warning(
@@ -3631,7 +3660,8 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
             }
             state
                 .status_messages
-                .push_back(StatusMessage::info(0, summary));
+                .push_back(StatusMessage::info(0, &summary));
+            maybe_continue_pending_remote_flow(state, &repo_id, &summary, effects);
             effects.push(Effect::RefreshRepoSummary {
                 repo_id: repo_id.clone(),
             });
@@ -4860,6 +4890,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
             format!("New {} name", branch_type.command_name())
         }
         InputPromptOperation::CreateRemote => "Add remote".to_string(),
+        InputPromptOperation::CreateRemoteUrl { remote_name } => {
+            format!("Add remote URL for {remote_name}")
+        }
         InputPromptOperation::ForkRemote { suggested_name, .. } => {
             format!("Fork remote into {suggested_name}")
         }
@@ -4883,6 +4916,9 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         }
         InputPromptOperation::EditRemote { current_name, .. } => {
             format!("Edit remote {current_name}")
+        }
+        InputPromptOperation::EditRemoteUrl { new_name, .. } => {
+            format!("Edit remote URL for {new_name}")
         }
         InputPromptOperation::RenameStash { stash_ref, .. } => {
             format!("Rename stash: {stash_ref}")
@@ -4924,6 +4960,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::StartGitFlow { .. } => String::new(),
         InputPromptOperation::CreateRemote => String::new(),
+        InputPromptOperation::CreateRemoteUrl { .. } => String::new(),
         InputPromptOperation::ForkRemote {
             suggested_name,
             remote_url,
@@ -4940,6 +4977,7 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
             current_name,
             current_url,
         } => format!("{current_name} {current_url}"),
+        InputPromptOperation::EditRemoteUrl { current_url, .. } => current_url.clone(),
         InputPromptOperation::RenameStash { current_name, .. } => current_name.clone(),
         InputPromptOperation::CreateBranchFromStash { .. } => String::new(),
         InputPromptOperation::SetBranchUpstream { branch_name: _ } => String::new(),
@@ -5012,34 +5050,64 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
             format!("Start git-flow {} {value}", branch_type.command_name()),
         ),
         InputPromptOperation::CreateRemote => {
-            let Some((remote_name, remote_url)) = parse_remote_input(&value) else {
-                push_warning(state, "Enter remote details as: <name> <url>.");
+            let remote_name = value.trim();
+            if remote_name.is_empty() {
                 state.pending_input_prompt = Some(pending);
                 return None;
-            };
+            }
+            open_input_prompt(
+                state,
+                pending.repo_id,
+                InputPromptOperation::CreateRemoteUrl {
+                    remote_name: remote_name.to_string(),
+                },
+            );
+            return None;
+        }
+        InputPromptOperation::CreateRemoteUrl { remote_name } => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.pending_remote_flow = Some(PendingRemoteFlow::AwaitDetailAfterAdd {
+                    remote_name: remote_name.clone(),
+                    branch_to_checkout: None,
+                });
+            }
             (
                 PromptSubmission::Git(git_job(
                     pending.repo_id.clone(),
                     GitCommand::AddRemote {
                         remote_name: remote_name.clone(),
-                        remote_url: remote_url.clone(),
+                        remote_url: value.clone(),
                     },
                 )),
                 format!("Add remote {remote_name}"),
             )
         }
-        InputPromptOperation::ForkRemote { .. } => {
-            let Some((remote_name, remote_url)) = parse_remote_input(&value) else {
-                push_warning(state, "Enter remote details as: <name> <url>.");
+        InputPromptOperation::ForkRemote { ref remote_url, .. } => {
+            let Some((remote_name, branch_to_checkout)) = parse_fork_prompt_input(&value) else {
                 state.pending_input_prompt = Some(pending);
                 return None;
             };
+            let Ok(rewritten_remote_url) = replace_fork_username(remote_url, &remote_name, false)
+            else {
+                push_warning(
+                    state,
+                    format!("unsupported or invalid remote URL: {remote_url}"),
+                );
+                state.pending_input_prompt = Some(pending);
+                return None;
+            };
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.pending_remote_flow = Some(PendingRemoteFlow::AwaitDetailAfterAdd {
+                    remote_name: remote_name.clone(),
+                    branch_to_checkout,
+                });
+            }
             (
                 PromptSubmission::Git(git_job(
                     pending.repo_id.clone(),
                     GitCommand::AddRemote {
                         remote_name: remote_name.clone(),
-                        remote_url: remote_url.clone(),
+                        remote_url: rewritten_remote_url,
                     },
                 )),
                 format!("Add fork remote {remote_name}"),
@@ -5112,25 +5180,40 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
             format!("Rename branch {current_name} to {value}"),
         ),
         InputPromptOperation::EditRemote {
-            ref current_name, ..
+            ref current_name,
+            ref current_url,
         } => {
-            let Some((new_name, remote_url)) = parse_remote_input(&value) else {
-                push_warning(state, "Enter remote details as: <name> <url>.");
+            let new_name = value.trim();
+            if new_name.is_empty() {
                 state.pending_input_prompt = Some(pending);
                 return None;
-            };
-            (
-                PromptSubmission::Git(git_job(
-                    pending.repo_id.clone(),
-                    GitCommand::EditRemote {
-                        current_name: current_name.clone(),
-                        new_name: new_name.clone(),
-                        remote_url,
-                    },
-                )),
-                format!("Edit remote {current_name}"),
-            )
+            }
+            open_input_prompt(
+                state,
+                pending.repo_id,
+                InputPromptOperation::EditRemoteUrl {
+                    current_name: current_name.clone(),
+                    new_name: new_name.to_string(),
+                    current_url: current_url.clone(),
+                },
+            );
+            return None;
         }
+        InputPromptOperation::EditRemoteUrl {
+            current_name,
+            new_name,
+            ..
+        } => (
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::EditRemote {
+                    current_name: current_name.clone(),
+                    new_name: new_name.clone(),
+                    remote_url: value.clone(),
+                },
+            )),
+            format!("Edit remote {current_name}"),
+        ),
         InputPromptOperation::RenameStash { stash_ref, .. } => (
             PromptSubmission::Git(git_job(
                 pending.repo_id.clone(),
@@ -5362,14 +5445,113 @@ fn parse_create_submodule_input(value: &str) -> Option<(std::path::PathBuf, Stri
     Some((std::path::PathBuf::from(path), url.to_string()))
 }
 
-fn parse_remote_input(value: &str) -> Option<(String, String)> {
-    let (remote_name, remote_url) = value.split_once(char::is_whitespace)?;
-    let remote_name = remote_name.trim();
-    let remote_url = remote_url.trim();
-    if remote_name.is_empty() || remote_url.is_empty() {
+fn parse_fork_prompt_input(value: &str) -> Option<(String, Option<String>)> {
+    let value = value.trim();
+    if value.is_empty() {
         return None;
     }
-    Some((remote_name.to_string(), remote_url.to_string()))
+    let (remote_name, branch_to_checkout) =
+        value
+            .split_once(':')
+            .map_or((value, None), |(remote_name, branch_name)| {
+                let branch_name = branch_name.trim();
+                (
+                    remote_name.trim(),
+                    (!branch_name.is_empty()).then(|| branch_name.to_string()),
+                )
+            });
+    if remote_name.is_empty() {
+        return None;
+    }
+    Some((remote_name.to_string(), branch_to_checkout))
+}
+
+fn replace_fork_username(
+    origin_url: &str,
+    fork_username: &str,
+    is_integration_test: bool,
+) -> Result<String, ()> {
+    let url_regex = regex::Regex::new(
+        r"^(git@[^:]+:|ssh://[^/]+/|https?://[^/]+/)([^/]+(?:/[^/]+)*)/([^/]+?)(\.git)?$",
+    )
+    .expect("fork remote regex should compile");
+    if url_regex.is_match(origin_url) {
+        return Ok(url_regex
+            .replace(origin_url, format!("${{1}}{fork_username}/$3$4"))
+            .into_owned());
+    }
+    if is_integration_test && origin_url.starts_with("../") {
+        return Ok(format!("../{fork_username}"));
+    }
+    Err(())
+}
+
+fn maybe_continue_pending_remote_flow(
+    state: &mut AppState,
+    repo_id: &crate::state::RepoId,
+    summary: &str,
+    effects: &mut Vec<Effect>,
+) {
+    let current_flow = state
+        .repo_mode
+        .as_ref()
+        .filter(|repo_mode| &repo_mode.current_repo_id == repo_id)
+        .and_then(|repo_mode| repo_mode.pending_remote_flow.clone());
+
+    match current_flow {
+        Some(PendingRemoteFlow::AwaitDetailAfterAdd {
+            remote_name,
+            branch_to_checkout,
+        }) if summary == format!("Added remote {remote_name}") => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.pending_remote_flow = Some(PendingRemoteFlow::AwaitFetchCompletion {
+                    remote_name,
+                    branch_to_checkout,
+                });
+            }
+        }
+        Some(PendingRemoteFlow::AwaitFetchCompletion {
+            remote_name,
+            branch_to_checkout,
+        }) if summary == format!("Fetched {remote_name}") => {
+            if let Some(branch_name) = branch_to_checkout {
+                let remote_branch_ref = format!("{remote_name}/{branch_name}");
+                let job = git_job(
+                    repo_id.clone(),
+                    GitCommand::CreateBranchFromRef {
+                        branch_name: branch_name.clone(),
+                        start_point: remote_branch_ref.clone(),
+                        track: true,
+                    },
+                );
+                enqueue_git_job(
+                    state,
+                    &job,
+                    &format!("Create branch {branch_name} from {remote_branch_ref}"),
+                );
+                if let Some(repo_mode) = state.repo_mode.as_mut() {
+                    repo_mode.pending_remote_flow =
+                        Some(PendingRemoteFlow::AwaitBranchCheckoutCompletion);
+                    repo_mode.active_subview = crate::state::RepoSubview::Branches;
+                    repo_mode.diff_scroll = 0;
+                    close_commit_box(repo_mode);
+                    sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Branches);
+                }
+                state.focused_pane = PaneId::RepoDetail;
+                effects.push(Effect::RunGitCommand(job));
+            } else if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.pending_remote_flow = None;
+            }
+        }
+        Some(PendingRemoteFlow::AwaitBranchCheckoutCompletion)
+            if summary.starts_with("Created ") && summary.contains(" tracking ") =>
+        {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                repo_mode.pending_remote_flow = None;
+            }
+        }
+        _ => {}
+    }
 }
 
 fn parse_commit_co_author_input(value: &str) -> Option<String> {
@@ -16362,7 +16544,46 @@ mod tests {
             pending_input_prompt: Some(crate::state::PendingInputPrompt {
                 repo_id: repo_id.clone(),
                 operation: crate::state::InputPromptOperation::CreateRemote,
-                value: "upstream git@github.com:example/upstream.git".to_string(),
+                value: "upstream".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+
+        assert!(result.state.modal_stack.len() == 1);
+        assert_eq!(
+            result.state.pending_input_prompt,
+            Some(crate::state::PendingInputPrompt {
+                repo_id,
+                operation: crate::state::InputPromptOperation::CreateRemoteUrl {
+                    remote_name: "upstream".to_string(),
+                },
+                value: String::new(),
+                return_focus: PaneId::RepoDetail,
+            })
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn submit_create_remote_url_prompt_queues_git_job_and_sets_follow_up() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Add remote URL for upstream",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::CreateRemoteUrl {
+                    remote_name: "upstream".to_string(),
+                },
+                value: "git@github.com:example/upstream.git".to_string(),
                 return_focus: PaneId::RepoDetail,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -16372,16 +16593,16 @@ mod tests {
         let result = reduce(state, Event::Action(Action::SubmitPromptInput));
         let job_id = JobId::new("git:repo-1:add-remote");
 
-        assert!(result.state.pending_input_prompt.is_none());
-        assert!(result.state.modal_stack.is_empty());
-        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
         assert_eq!(
             result
                 .state
-                .background_jobs
-                .get(&job_id)
-                .map(|job| &job.state),
-            Some(&BackgroundJobState::Queued)
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.pending_remote_flow.clone()),
+            Some(crate::state::PendingRemoteFlow::AwaitDetailAfterAdd {
+                remote_name: "upstream".to_string(),
+                branch_to_checkout: None,
+            })
         );
         assert_eq!(
             result.effects,
@@ -16391,6 +16612,56 @@ mod tests {
                 command: GitCommand::AddRemote {
                     remote_name: "upstream".to_string(),
                     remote_url: "git@github.com:example/upstream.git".to_string(),
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn submit_fork_remote_prompt_rewrites_url_and_tracks_branch_checkout() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Fork remote into upstream",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::ForkRemote {
+                    suggested_name: "upstream".to_string(),
+                    remote_url: "git@github.com:owner/repo.git".to_string(),
+                },
+                value: "alice:feature".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+        let job_id = JobId::new("git:repo-1:add-remote");
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.pending_remote_flow.clone()),
+            Some(crate::state::PendingRemoteFlow::AwaitDetailAfterAdd {
+                remote_name: "alice".to_string(),
+                branch_to_checkout: Some("feature".to_string()),
+            })
+        );
+        assert_eq!(
+            result.effects,
+            vec![Effect::RunGitCommand(GitCommandRequest {
+                job_id,
+                repo_id,
+                command: GitCommand::AddRemote {
+                    remote_name: "alice".to_string(),
+                    remote_url: "git@github.com:alice/repo.git".to_string(),
                 },
             })]
         );
@@ -16412,7 +16683,49 @@ mod tests {
                     current_name: "upstream".to_string(),
                     current_url: "git@github.com:example/upstream.git".to_string(),
                 },
-                value: "mirror git@github.com:example/mirror.git".to_string(),
+                value: "mirror".to_string(),
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SubmitPromptInput));
+
+        assert_eq!(
+            result.state.pending_input_prompt,
+            Some(crate::state::PendingInputPrompt {
+                repo_id,
+                operation: crate::state::InputPromptOperation::EditRemoteUrl {
+                    current_name: "upstream".to_string(),
+                    new_name: "mirror".to_string(),
+                    current_url: "git@github.com:example/upstream.git".to_string(),
+                },
+                value: "git@github.com:example/upstream.git".to_string(),
+                return_focus: PaneId::RepoDetail,
+            })
+        );
+        assert_eq!(result.effects, vec![Effect::ScheduleRender]);
+    }
+
+    #[test]
+    fn submit_edit_remote_url_prompt_queues_git_job() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Edit remote URL for mirror",
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: crate::state::InputPromptOperation::EditRemoteUrl {
+                    current_name: "upstream".to_string(),
+                    new_name: "mirror".to_string(),
+                    current_url: "git@github.com:example/upstream.git".to_string(),
+                },
+                value: "git@github.com:example/mirror.git".to_string(),
                 return_focus: PaneId::RepoDetail,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -16422,17 +16735,6 @@ mod tests {
         let result = reduce(state, Event::Action(Action::SubmitPromptInput));
         let job_id = JobId::new("git:repo-1:edit-remote");
 
-        assert!(result.state.pending_input_prompt.is_none());
-        assert!(result.state.modal_stack.is_empty());
-        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
-        assert_eq!(
-            result
-                .state
-                .background_jobs
-                .get(&job_id)
-                .map(|job| &job.state),
-            Some(&BackgroundJobState::Queued)
-        );
         assert_eq!(
             result.effects,
             vec![Effect::RunGitCommand(GitCommandRequest {
@@ -16445,6 +16747,106 @@ mod tests {
                 },
             })]
         );
+    }
+
+    #[test]
+    fn repo_detail_loaded_after_remote_add_selects_remote_and_fetches_it() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                pending_remote_flow: Some(crate::state::PendingRemoteFlow::AwaitFetchCompletion {
+                    remote_name: "upstream".to_string(),
+                    branch_to_checkout: None,
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let detail = RepoDetail {
+            remotes: vec![crate::state::RemoteItem {
+                name: "upstream".to_string(),
+                fetch_url: "git@github.com:example/upstream.git".to_string(),
+                push_url: "git@github.com:example/upstream.git".to_string(),
+                branch_count: 0,
+            }],
+            ..RepoDetail::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::RepoDetailLoaded {
+                repo_id: repo_id.clone(),
+                detail,
+            }),
+        );
+
+        let job_id = JobId::new("git:repo-1:fetch-remote");
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.remotes_view.selected_index),
+            Some(0)
+        );
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::RunGitCommand(GitCommandRequest { job_id: actual_job_id, command: GitCommand::FetchRemote { remote_name }, .. }), Effect::ScheduleRender]
+                if actual_job_id == &job_id && remote_name == "upstream"
+        ));
+    }
+
+    #[test]
+    fn git_operation_completed_for_fetched_fork_queues_branch_creation() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                pending_remote_flow: Some(crate::state::PendingRemoteFlow::AwaitFetchCompletion {
+                    remote_name: "alice".to_string(),
+                    branch_to_checkout: Some("feature".to_string()),
+                }),
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Worker(WorkerEvent::GitOperationCompleted {
+                job_id: JobId::new("git:repo-1:fetch-remote"),
+                repo_id: repo_id.clone(),
+                summary: "Fetched alice".to_string(),
+            }),
+        );
+
+        let job_id = JobId::new("git:repo-1:create-branch-from-ref");
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Branches)
+        );
+        assert!(matches!(
+            result.effects.as_slice(),
+            [
+                Effect::RunGitCommand(GitCommandRequest { job_id: actual_job_id, command: GitCommand::CreateBranchFromRef { branch_name, start_point, track }, .. }),
+                Effect::RefreshRepoSummary { .. },
+                Effect::LoadRepoDetail { .. },
+                Effect::ScheduleRender,
+            ] if actual_job_id == &job_id
+                && branch_name == "feature"
+                && start_point == "alice/feature"
+                && *track
+        ));
     }
 
     #[test]

@@ -317,6 +317,9 @@ pub enum InputPromptOperation {
         branch_type: GitFlowBranchType,
     },
     CreateRemote,
+    CreateRemoteUrl {
+        remote_name: String,
+    },
     ForkRemote {
         suggested_name: String,
         remote_url: String,
@@ -343,6 +346,11 @@ pub enum InputPromptOperation {
     },
     EditRemote {
         current_name: String,
+        current_url: String,
+    },
+    EditRemoteUrl {
+        current_name: String,
+        new_name: String,
         current_url: String,
     },
     RenameStash {
@@ -824,6 +832,7 @@ pub struct RepoModeState {
     pub commit_files_filter: RepoSubviewFilterState,
     pub commit_history_ref: Option<String>,
     pub pending_commit_selection_oid: Option<String>,
+    pub pending_remote_flow: Option<PendingRemoteFlow>,
     pub stash_filter: RepoSubviewFilterState,
     pub reflog_filter: RepoSubviewFilterState,
     pub worktree_filter: RepoSubviewFilterState,
@@ -894,6 +903,7 @@ impl RepoModeState {
             commit_files_filter: RepoSubviewFilterState::default(),
             commit_history_ref: None,
             pending_commit_selection_oid: None,
+            pending_remote_flow: None,
             stash_filter: RepoSubviewFilterState::default(),
             reflog_filter: RepoSubviewFilterState::default(),
             worktree_filter: RepoSubviewFilterState::default(),
@@ -1916,6 +1926,19 @@ pub struct RemoteItem {
     pub fetch_url: String,
     pub push_url: String,
     pub branch_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PendingRemoteFlow {
+    AwaitDetailAfterAdd {
+        remote_name: String,
+        branch_to_checkout: Option<String>,
+    },
+    AwaitFetchCompletion {
+        remote_name: String,
+        branch_to_checkout: Option<String>,
+    },
+    AwaitBranchCheckoutCompletion,
 }
 
 impl RemoteItem {
