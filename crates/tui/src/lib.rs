@@ -11,6 +11,7 @@ use ratatui::{
     Frame,
 };
 use super_lazygit_config::AppConfig;
+use super_lazygit_config::ScrollOffBehavior;
 use super_lazygit_core::{
     reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitFilesMode,
     CommitHistoryMode, CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind,
@@ -103,6 +104,15 @@ enum RepoSidePanelTab {
 struct ListViewportState {
     offset: usize,
     detached: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ListViewportMetrics {
+    len: usize,
+    selected_position: usize,
+    viewport_lines: usize,
+    header_lines: usize,
+    footer_lines: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -544,102 +554,311 @@ impl TuiApp {
         state.detached = true;
     }
 
-    fn clear_repo_scroll(&mut self, target: RepoListScrollTarget) {
-        if let Some(state) = self.repo_scroll.get_mut(&target) {
-            state.detached = false;
+    fn repo_scroll_metrics_with_viewport(
+        &self,
+        target: RepoListScrollTarget,
+        viewport_lines: usize,
+    ) -> Option<ListViewportMetrics> {
+        let (len, selected_position, header_lines, footer_lines) =
+            self.repo_scroll_metrics(target)?;
+        Some(ListViewportMetrics {
+            len,
+            selected_position,
+            viewport_lines,
+            header_lines,
+            footer_lines,
+        })
+    }
+
+    fn list_viewport_lines(&self, target: RepoListScrollTarget) -> Option<usize> {
+        let area = Rect::new(
+            0,
+            0,
+            self.viewport.width.max(1),
+            self.viewport.height.max(1),
+        );
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(3)])
+            .split(area);
+        let body = vertical[1];
+
+        match self.state.settings.screen_mode {
+            ScreenMode::FullScreen if self.fullscreen_repo_pane() == PaneId::RepoDetail => {
+                let inner = inner_rect(body);
+                match target {
+                    RepoListScrollTarget::SidePanelStatusUnstaged
+                    | RepoListScrollTarget::SidePanelStatusStaged
+                    | RepoListScrollTarget::SidePanelBranches
+                    | RepoListScrollTarget::SidePanelRemotes
+                    | RepoListScrollTarget::SidePanelTags
+                    | RepoListScrollTarget::SidePanelCommits
+                    | RepoListScrollTarget::SidePanelReflog
+                    | RepoListScrollTarget::SidePanelStash
+                    | RepoListScrollTarget::SidePanelWorktrees
+                    | RepoListScrollTarget::SidePanelSubmodules
+                    | RepoListScrollTarget::SidePanelCommandLog => Some(usize::from(inner.height)),
+                    _ => None,
+                }
+            }
+            ScreenMode::FullScreen => {
+                let inner = inner_rect(body);
+                match target {
+                    RepoListScrollTarget::MainUnstaged | RepoListScrollTarget::MainStaged => {
+                        Some(usize::from(inner.height))
+                    }
+                    RepoListScrollTarget::DetailBranches
+                    | RepoListScrollTarget::DetailRemotes
+                    | RepoListScrollTarget::DetailRemoteBranches
+                    | RepoListScrollTarget::DetailTags
+                    | RepoListScrollTarget::DetailCommits
+                    | RepoListScrollTarget::DetailCommitFiles
+                    | RepoListScrollTarget::DetailStash
+                    | RepoListScrollTarget::DetailStashFiles
+                    | RepoListScrollTarget::DetailReflog
+                    | RepoListScrollTarget::DetailWorktrees
+                    | RepoListScrollTarget::DetailSubmodules => Some(usize::from(inner.height)),
+                    _ => None,
+                }
+            }
+            ScreenMode::Normal | ScreenMode::HalfScreen => {
+                let split = self.repo_split_layout(body);
+                let side_panel_height = |panel: RepoSidePanel| -> usize {
+                    usize::from(inner_rect(split.side_panels[panel.index()]).height)
+                };
+                match target {
+                    RepoListScrollTarget::MainUnstaged => {
+                        Some(usize::from(inner_rect(split.main_unstaged).height))
+                    }
+                    RepoListScrollTarget::MainStaged => {
+                        Some(usize::from(inner_rect(split.main_staged).height))
+                    }
+                    RepoListScrollTarget::SidePanelStatusUnstaged
+                    | RepoListScrollTarget::SidePanelStatusStaged => {
+                        Some(side_panel_height(RepoSidePanel::Files))
+                    }
+                    RepoListScrollTarget::SidePanelBranches
+                    | RepoListScrollTarget::SidePanelRemotes
+                    | RepoListScrollTarget::SidePanelTags => {
+                        Some(side_panel_height(RepoSidePanel::Branches))
+                    }
+                    RepoListScrollTarget::SidePanelCommits
+                    | RepoListScrollTarget::SidePanelReflog => {
+                        Some(side_panel_height(RepoSidePanel::Commits))
+                    }
+                    RepoListScrollTarget::SidePanelStash
+                    | RepoListScrollTarget::SidePanelCommandLog => {
+                        Some(side_panel_height(RepoSidePanel::Stash))
+                    }
+                    RepoListScrollTarget::SidePanelWorktrees
+                    | RepoListScrollTarget::SidePanelSubmodules => {
+                        Some(side_panel_height(RepoSidePanel::Files))
+                    }
+                    RepoListScrollTarget::DetailBranches
+                    | RepoListScrollTarget::DetailRemotes
+                    | RepoListScrollTarget::DetailRemoteBranches
+                    | RepoListScrollTarget::DetailTags
+                    | RepoListScrollTarget::DetailCommits
+                    | RepoListScrollTarget::DetailCommitFiles
+                    | RepoListScrollTarget::DetailStash
+                    | RepoListScrollTarget::DetailStashFiles
+                    | RepoListScrollTarget::DetailReflog
+                    | RepoListScrollTarget::DetailWorktrees
+                    | RepoListScrollTarget::DetailSubmodules => {
+                        Some(usize::from(inner_rect(split.main_detail).height))
+                    }
+                }
+            }
         }
     }
 
-    fn sync_repo_scroll_after_state_change(&mut self, before: &AppState, after: &AppState) {
-        macro_rules! clear_pair_when_changed {
-            ($before:expr, $after:expr, $first:expr, $second:expr) => {
-                if $before != $after {
-                    self.clear_repo_scroll($first);
-                    self.clear_repo_scroll($second);
-                }
-            };
+    fn update_attached_repo_scroll(
+        &mut self,
+        before: &AppState,
+        after: &AppState,
+        primary: RepoListScrollTarget,
+        mirrored: RepoListScrollTarget,
+        before_selected: Option<usize>,
+        after_selected: Option<usize>,
+    ) {
+        let Some(before_selected) = before_selected else {
+            return;
+        };
+        let Some(after_selected) = after_selected else {
+            return;
+        };
+        if before_selected == after_selected {
+            return;
         }
 
+        let Some(metrics) = self
+            .list_viewport_lines(primary)
+            .and_then(|viewport_lines| {
+                self.repo_scroll_metrics_with_viewport(primary, viewport_lines)
+            })
+        else {
+            return;
+        };
+        if metrics.len == 0 {
+            return;
+        }
+
+        let current_state = self.repo_scroll_state(primary);
+        let current_offset = if current_state.detached {
+            current_state.offset
+        } else {
+            compute_jump_window_start(
+                metrics.selected_position,
+                metrics.len,
+                metrics.viewport_lines,
+                metrics.header_lines,
+                metrics.footer_lines,
+            )
+        };
+        let next_offset = match self.config.gui.scroll_off_behavior {
+            ScrollOffBehavior::Margin => compute_margin_window_start(
+                current_offset,
+                metrics.viewport_lines,
+                metrics.header_lines,
+                metrics.footer_lines,
+                self.config.gui.scroll_off_margin,
+                before_selected,
+                after_selected,
+                metrics.len,
+            ),
+            ScrollOffBehavior::Jump => compute_jump_window_start(
+                metrics.selected_position,
+                metrics.len,
+                metrics.viewport_lines,
+                metrics.header_lines,
+                metrics.footer_lines,
+            ),
+        };
+
+        self.repo_scroll.insert(
+            primary,
+            ListViewportState {
+                offset: next_offset,
+                detached: false,
+            },
+        );
+        self.repo_scroll.insert(
+            mirrored,
+            ListViewportState {
+                offset: next_offset,
+                detached: false,
+            },
+        );
+        let _ = (before, after);
+    }
+
+    fn sync_repo_scroll_after_state_change(&mut self, before: &AppState, after: &AppState) {
         let before_repo = before.repo_mode.as_ref();
         let after_repo = after.repo_mode.as_ref();
 
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::MainUnstaged,
+            RepoListScrollTarget::SidePanelStatusUnstaged,
             before_repo.and_then(|repo_mode| repo_mode.status_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.status_view.selected_index),
-            RepoListScrollTarget::MainUnstaged,
-            RepoListScrollTarget::SidePanelStatusUnstaged
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::MainStaged,
+            RepoListScrollTarget::SidePanelStatusStaged,
             before_repo.and_then(|repo_mode| repo_mode.staged_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.staged_view.selected_index),
-            RepoListScrollTarget::MainStaged,
-            RepoListScrollTarget::SidePanelStatusStaged
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelBranches,
+            RepoListScrollTarget::DetailBranches,
             before_repo.and_then(|repo_mode| repo_mode.branches_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.branches_view.selected_index),
-            RepoListScrollTarget::SidePanelBranches,
-            RepoListScrollTarget::DetailBranches
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelRemotes,
+            RepoListScrollTarget::DetailRemotes,
             before_repo.and_then(|repo_mode| repo_mode.remotes_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.remotes_view.selected_index),
-            RepoListScrollTarget::SidePanelRemotes,
-            RepoListScrollTarget::DetailRemotes
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::DetailRemoteBranches,
+            RepoListScrollTarget::DetailRemoteBranches,
             before_repo.and_then(|repo_mode| repo_mode.remote_branches_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.remote_branches_view.selected_index),
-            RepoListScrollTarget::DetailRemoteBranches,
-            RepoListScrollTarget::DetailRemoteBranches
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelTags,
+            RepoListScrollTarget::DetailTags,
             before_repo.and_then(|repo_mode| repo_mode.tags_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.tags_view.selected_index),
-            RepoListScrollTarget::SidePanelTags,
-            RepoListScrollTarget::DetailTags
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelCommits,
+            RepoListScrollTarget::DetailCommits,
             before_repo.and_then(|repo_mode| repo_mode.commits_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.commits_view.selected_index),
-            RepoListScrollTarget::SidePanelCommits,
-            RepoListScrollTarget::DetailCommits
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::DetailCommitFiles,
+            RepoListScrollTarget::DetailCommitFiles,
             before_repo.and_then(|repo_mode| repo_mode.commit_files_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.commit_files_view.selected_index),
-            RepoListScrollTarget::DetailCommitFiles,
-            RepoListScrollTarget::DetailCommitFiles
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelStash,
+            RepoListScrollTarget::DetailStash,
             before_repo.and_then(|repo_mode| repo_mode.stash_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.stash_view.selected_index),
-            RepoListScrollTarget::SidePanelStash,
-            RepoListScrollTarget::DetailStash
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::DetailStashFiles,
+            RepoListScrollTarget::DetailStashFiles,
             before_repo.and_then(|repo_mode| repo_mode.stash_files_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.stash_files_view.selected_index),
-            RepoListScrollTarget::DetailStashFiles,
-            RepoListScrollTarget::DetailStashFiles
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelReflog,
+            RepoListScrollTarget::DetailReflog,
             before_repo.and_then(|repo_mode| repo_mode.reflog_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.reflog_view.selected_index),
-            RepoListScrollTarget::SidePanelReflog,
-            RepoListScrollTarget::DetailReflog
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelWorktrees,
+            RepoListScrollTarget::DetailWorktrees,
             before_repo.and_then(|repo_mode| repo_mode.worktree_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.worktree_view.selected_index),
-            RepoListScrollTarget::SidePanelWorktrees,
-            RepoListScrollTarget::DetailWorktrees
         );
-        clear_pair_when_changed!(
+        self.update_attached_repo_scroll(
+            before,
+            after,
+            RepoListScrollTarget::SidePanelSubmodules,
+            RepoListScrollTarget::DetailSubmodules,
             before_repo.and_then(|repo_mode| repo_mode.submodules_view.selected_index),
             after_repo.and_then(|repo_mode| repo_mode.submodules_view.selected_index),
-            RepoListScrollTarget::SidePanelSubmodules,
-            RepoListScrollTarget::DetailSubmodules
         );
     }
 
@@ -6211,6 +6430,104 @@ fn centered_list_window(
     (window_start, window_end.saturating_sub(window_start))
 }
 
+fn scroll_margin_top(viewport_height: usize, scroll_off_margin: usize) -> usize {
+    scroll_off_margin.min(viewport_height / 2)
+}
+
+fn scroll_margin_bottom(viewport_height: usize, scroll_off_margin: usize) -> usize {
+    scroll_off_margin.min(viewport_height.saturating_sub(1) / 2)
+}
+
+fn calculate_lines_to_scroll_up(
+    viewport_start: usize,
+    viewport_height: usize,
+    scroll_off_margin: usize,
+    line_idx_before: usize,
+    line_idx_after: usize,
+) -> usize {
+    if viewport_height == 0 {
+        return 0;
+    }
+    let margin_end = viewport_start + scroll_margin_top(viewport_height, scroll_off_margin);
+    if line_idx_before >= viewport_start && line_idx_before < viewport_start + viewport_height {
+        return margin_end.saturating_sub(line_idx_after);
+    }
+    0
+}
+
+fn calculate_lines_to_scroll_down(
+    viewport_start: usize,
+    viewport_height: usize,
+    scroll_off_margin: usize,
+    line_idx_before: usize,
+    line_idx_after: usize,
+) -> usize {
+    if viewport_height == 0 {
+        return 0;
+    }
+    let margin_start = viewport_start + viewport_height
+        - scroll_margin_bottom(viewport_height, scroll_off_margin)
+        - 1;
+    if line_idx_before >= viewport_start && line_idx_before < viewport_start + viewport_height {
+        return line_idx_after.saturating_sub(margin_start);
+    }
+    0
+}
+
+fn compute_margin_window_start(
+    viewport_start: usize,
+    viewport_lines: usize,
+    header_lines: usize,
+    footer_lines: usize,
+    scroll_off_margin: usize,
+    line_idx_before: usize,
+    line_idx_after: usize,
+    len: usize,
+) -> usize {
+    let viewport_height = viewport_lines
+        .saturating_sub(header_lines.saturating_add(footer_lines))
+        .max(1);
+    let max_start = len.saturating_sub(viewport_height);
+    if line_idx_after < line_idx_before {
+        viewport_start
+            .saturating_sub(calculate_lines_to_scroll_up(
+                viewport_start,
+                viewport_height,
+                scroll_off_margin,
+                line_idx_before,
+                line_idx_after,
+            ))
+            .min(max_start)
+    } else {
+        viewport_start
+            .saturating_add(calculate_lines_to_scroll_down(
+                viewport_start,
+                viewport_height,
+                scroll_off_margin,
+                line_idx_before,
+                line_idx_after,
+            ))
+            .min(max_start)
+    }
+}
+
+fn compute_jump_window_start(
+    selected_position: usize,
+    len: usize,
+    viewport_lines: usize,
+    header_lines: usize,
+    footer_lines: usize,
+) -> usize {
+    centered_list_window(
+        selected_position,
+        len,
+        viewport_lines,
+        header_lines,
+        footer_lines,
+    )
+    .0
+}
+
 fn detached_list_window(
     scroll_state: ListViewportState,
     selected_position: usize,
@@ -9199,14 +9516,19 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
             )
         }
         super_lazygit_core::InputPromptOperation::CreateRemote => {
-            "Enter remote details as: <name> <url>. Example: upstream git@github.com:owner/repo.git."
+            "Enter the new remote name. The next prompt will collect the remote URL."
                 .to_string()
+        }
+        super_lazygit_core::InputPromptOperation::CreateRemoteUrl { remote_name } => {
+            format!(
+                "Enter the URL for remote {remote_name}. The remote will be added, selected, and fetched."
+            )
         }
         super_lazygit_core::InputPromptOperation::ForkRemote {
             suggested_name,
             remote_url,
         } => format!(
-            "Enter fork remote details as: <name> <url>. The prompt starts from {suggested_name} {remote_url} so you can keep or adjust both values before adding the remote."
+            "Enter the fork remote username or username:branch. The prompt starts from {suggested_name} and rewrites {remote_url} to the fork URL before adding and fetching it."
         ),
         super_lazygit_core::InputPromptOperation::CreateTag => {
             "Enter the new tag name. The tag will be created at the current HEAD.".to_string()
@@ -9233,7 +9555,16 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
         }
         super_lazygit_core::InputPromptOperation::EditRemote { current_name, .. } => {
             format!(
-                "Edit remote {current_name} as: <name> <url>. Renaming and URL updates are applied together."
+                "Enter the new name for remote {current_name}. The next prompt will collect the updated URL."
+            )
+        }
+        super_lazygit_core::InputPromptOperation::EditRemoteUrl {
+            current_name,
+            new_name,
+            ..
+        } => {
+            format!(
+                "Enter the new URL for remote {current_name}. The remote will be renamed to {new_name} before updating the URL."
             )
         }
         super_lazygit_core::InputPromptOperation::RenameStash { stash_ref, .. } => {
@@ -12075,6 +12406,66 @@ mod tests {
                 .map(|prompt| prompt.operation.clone()),
             Some(super_lazygit_core::InputPromptOperation::ShellCommand)
         );
+    }
+
+    #[test]
+    fn scroll_off_margin_math_matches_upstream_cases() {
+        let up_scenarios = [
+            (10, 10, 3, 9, 8, 0),
+            (10, 10, 3, 20, 19, 0),
+            (10, 10, 3, 14, 13, 0),
+            (10, 10, 3, 13, 12, 1),
+            (10, 10, 0, 10, 9, 1),
+            (10, 10, 3, 11, 10, 3),
+            (10, 10, 999, 15, 14, 1),
+            (10, 9, 999, 14, 13, 1),
+        ];
+        for (start, height, margin, before, after, expected) in up_scenarios {
+            assert_eq!(
+                calculate_lines_to_scroll_up(start, height, margin, before, after),
+                expected
+            );
+        }
+
+        let down_scenarios = [
+            (10, 10, 3, 9, 10, 0),
+            (10, 10, 3, 20, 21, 0),
+            (10, 10, 3, 15, 16, 0),
+            (10, 10, 3, 16, 17, 1),
+            (10, 10, 0, 19, 20, 1),
+            (10, 10, 3, 18, 19, 3),
+            (10, 10, 999, 15, 16, 1),
+            (10, 9, 999, 14, 15, 1),
+        ];
+        for (start, height, margin, before, after, expected) in down_scenarios {
+            assert_eq!(
+                calculate_lines_to_scroll_down(start, height, margin, before, after),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn margin_window_start_scrolls_only_when_selection_enters_margin() {
+        assert_eq!(
+            compute_margin_window_start(10, 10, 0, 0, 3, 14, 13, 100),
+            10
+        );
+        assert_eq!(compute_margin_window_start(10, 10, 0, 0, 3, 13, 12, 100), 9);
+        assert_eq!(
+            compute_margin_window_start(10, 10, 0, 0, 3, 16, 17, 100),
+            11
+        );
+        assert_eq!(
+            compute_margin_window_start(10, 10, 0, 0, 3, 18, 19, 100),
+            13
+        );
+    }
+
+    #[test]
+    fn jump_window_start_centers_selection() {
+        assert_eq!(compute_jump_window_start(15, 100, 10, 0, 0), 10);
+        assert_eq!(compute_jump_window_start(4, 100, 9, 0, 0), 0);
     }
 
     #[test]

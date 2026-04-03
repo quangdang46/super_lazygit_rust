@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub workspace: WorkspaceConfig,
     pub os: OsConfig,
     pub editor: EditorConfig,
+    pub gui: GuiConfig,
     pub theme: ThemeConfig,
     pub keybindings: KeybindingConfig,
     pub diagnostics: DiagnosticsConfig,
@@ -303,6 +304,37 @@ pub struct EditorConfig {
     pub open_dir_in_editor: String,
     #[serde(alias = "editInTerminal", skip_serializing_if = "Option::is_none")]
     pub edit_in_terminal: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GuiConfig {
+    #[serde(alias = "scrollOffMargin")]
+    pub scroll_off_margin: usize,
+    #[serde(alias = "scrollOffBehavior")]
+    pub scroll_off_behavior: ScrollOffBehavior,
+}
+
+impl Default for GuiConfig {
+    fn default() -> Self {
+        Self {
+            scroll_off_margin: 2,
+            scroll_off_behavior: ScrollOffBehavior::Margin,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollOffBehavior {
+    Margin,
+    Jump,
+}
+
+impl Default for ScrollOffBehavior {
+    fn default() -> Self {
+        Self::Margin
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -964,6 +996,8 @@ mod tests {
         assert_eq!(config.os.shell_functions_file, "");
         assert_eq!(config.editor.command, "");
         assert!(config.editor.args.is_empty());
+        assert_eq!(config.gui.scroll_off_margin, 2);
+        assert_eq!(config.gui.scroll_off_behavior, ScrollOffBehavior::Margin);
         assert_eq!(resolved.command, "vim -- '/tmp/repo/file.txt'");
         assert!(resolved.suspend);
         assert_eq!(config.theme.preset, ThemePreset::DefaultDark);
@@ -982,10 +1016,28 @@ mod tests {
         assert!(rendered.contains("[workspace]"));
         assert!(rendered.contains("[os]"));
         assert!(rendered.contains("[editor]"));
+        assert!(rendered.contains("[gui]"));
+        assert!(rendered.contains("scroll_off_margin = 2"));
+        assert!(rendered.contains("scroll_off_behavior = \"margin\""));
         assert!(rendered.contains("[theme]"));
         assert!(rendered.contains("active_border_color = ["));
         assert!(rendered.contains("selected_line_bg_color = ["));
         assert!(rendered.contains("[diagnostics]"));
+    }
+
+    #[test]
+    fn load_with_discovery_parses_scroll_off_gui_overrides() {
+        let parsed: AppConfig = toml::from_str(
+            r#"
+[gui]
+scrollOffMargin = 5
+scrollOffBehavior = "jump"
+"#,
+        )
+        .expect("parse gui config");
+
+        assert_eq!(parsed.gui.scroll_off_margin, 5);
+        assert_eq!(parsed.gui.scroll_off_behavior, ScrollOffBehavior::Jump);
     }
 
     #[test]
