@@ -462,6 +462,7 @@ pub struct StatusMessage {
     pub id: u64,
     pub level: MessageLevel,
     pub text: String,
+    pub command_log_kind: CommandLogKind,
 }
 
 impl StatusMessage {
@@ -471,6 +472,7 @@ impl StatusMessage {
             id,
             level: MessageLevel::Info,
             text: text.into(),
+            command_log_kind: CommandLogKind::Message,
         }
     }
 
@@ -480,8 +482,36 @@ impl StatusMessage {
             id,
             level: MessageLevel::Error,
             text: text.into(),
+            command_log_kind: CommandLogKind::Message,
         }
     }
+
+    #[must_use]
+    pub fn command_log_action(id: u64, text: impl Into<String>) -> Self {
+        Self {
+            id,
+            level: MessageLevel::Info,
+            text: text.into(),
+            command_log_kind: CommandLogKind::Action,
+        }
+    }
+
+    #[must_use]
+    pub fn command_log_command(id: u64, text: impl Into<String>, command_line: bool) -> Self {
+        Self {
+            id,
+            level: MessageLevel::Info,
+            text: text.into(),
+            command_log_kind: CommandLogKind::Command { command_line },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommandLogKind {
+    Message,
+    Action,
+    Command { command_line: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

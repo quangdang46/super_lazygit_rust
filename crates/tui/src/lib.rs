@@ -17,6 +17,7 @@ use super_lazygit_core::{
     CommitHistoryMode, CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind,
     DiffPresentation, Event, InputEvent, InputPromptOperation, KeyPress, PaneId, ReduceResult,
     RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, ScreenMode, StashSubviewMode,
+    StatusMessage,
 };
 
 #[derive(Debug)]
@@ -5909,12 +5910,7 @@ impl TuiApp {
             0,
         );
         for message in messages.into_iter().skip(window_start).take(window_len) {
-            let prefix = match message.level {
-                super_lazygit_core::MessageLevel::Error => "!",
-                super_lazygit_core::MessageLevel::Success => "+",
-                _ => "•",
-            };
-            lines.push(Line::from(format!("{prefix} {}", message.text)));
+            lines.extend(command_log_compact_lines(message));
         }
         lines.truncate(available_lines);
         lines
@@ -10163,8 +10159,59 @@ fn command_log_menu_lines(state: &AppState) -> Vec<String> {
         .status_messages
         .iter()
         .rev()
-        .map(|message| format!("[{:?}] {}", message.level, message.text))
+        .flat_map(command_log_menu_entry_lines)
         .collect()
+}
+
+fn command_log_compact_lines(message: &StatusMessage) -> Vec<Line<'static>> {
+    match message.command_log_kind {
+        super_lazygit_core::CommandLogKind::Action => {
+            vec![Line::from(format!("> {}", message.text))]
+        }
+        super_lazygit_core::CommandLogKind::Command { command_line } => {
+            command_log_text_lines(&message.text, if command_line { "  $ " } else { "  · " })
+                .into_iter()
+                .map(Line::from)
+                .collect()
+        }
+        super_lazygit_core::CommandLogKind::Message => {
+            let prefix = match message.level {
+                super_lazygit_core::MessageLevel::Error => "! ",
+                super_lazygit_core::MessageLevel::Success => "+ ",
+                _ => "• ",
+            };
+            command_log_text_lines(&message.text, prefix)
+                .into_iter()
+                .map(Line::from)
+                .collect()
+        }
+    }
+}
+
+fn command_log_menu_entry_lines(message: &StatusMessage) -> Vec<String> {
+    match message.command_log_kind {
+        super_lazygit_core::CommandLogKind::Action => vec![message.text.clone()],
+        super_lazygit_core::CommandLogKind::Command { command_line } => command_log_text_lines(
+            &message.text,
+            if command_line { "  " } else { "  [internal] " },
+        ),
+        super_lazygit_core::CommandLogKind::Message => {
+            vec![format!("[{:?}] {}", message.level, message.text)]
+        }
+    }
+}
+
+fn command_log_text_lines(text: &str, first_prefix: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut iter = text.lines();
+    if let Some(first) = iter.next() {
+        lines.push(format!("{first_prefix}{first}"));
+        let continuation_prefix = " ".repeat(first_prefix.chars().count());
+        for line in iter {
+            lines.push(format!("{continuation_prefix}{line}"));
+        }
+    }
+    lines
 }
 
 fn merge_fast_forward_warning_label(current_branch_name: &str, source_label: &str) -> String {
@@ -14120,13 +14167,52 @@ mod tests {
             selected_index: 0,
             return_focus: PaneId::RepoDetail,
         });
-        recent_state.status_messages =
-            std::collections::VecDeque::from([super_lazygit_core::StatusMessage::info(
-                1,
-                "Ran fetch",
-            )]);
+        recent_state.status_messages = std::collections::VecDeque::from([
+            super_lazygit_core::StatusMessage::command_log_action(1, "Fetch remote updates"),
+            super_lazygit_core::StatusMessage::command_log_command(2, "git fetch --all", true),
+            super_lazygit_core::StatusMessage::command_log_command(
+                3,
+                "auto-forward\nmain branches",
+                false,
+            ),
+        ]);
         let mut log_app = TuiApp::new(recent_state, AppConfig::default());
-        assert!(log_app.render_to_string().contains("Ran fetch"));
+        let rendered = log_app.render_to_string();
+        assert!(rendered.contains("Fetch remote updates"));
+        assert!(rendered.contains("  git fetch --all"));
+        assert!(rendered.contains("  [internal] auto-forward"));
+        assert!(rendered.contains("             main branches"));
+    }
+
+    #[test]
+    fn compact_command_log_renders_actions_and_commands_with_upstream_shape() {
+        let repo_id = RepoId::new("/tmp/current");
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(repo_id)),
+            status_messages: std::collections::VecDeque::from([
+                super_lazygit_core::StatusMessage::command_log_action(1, "Stage file"),
+                super_lazygit_core::StatusMessage::command_log_command(
+                    2,
+                    "git add -- 'file.txt'",
+                    true,
+                ),
+                super_lazygit_core::StatusMessage::command_log_command(3, "refresh\nfiles", false),
+            ]),
+            ..Default::default()
+        };
+        let app = TuiApp::new(state, AppConfig::default());
+
+        let lines = app
+            .compact_command_log_lines(8)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(lines.iter().any(|line| line == "> Stage file"));
+        assert!(lines.iter().any(|line| line == "  $ git add -- 'file.txt'"));
+        assert!(lines.iter().any(|line| line == "  · refresh"));
+        assert!(lines.iter().any(|line| line == "    files"));
     }
 
     #[test]
