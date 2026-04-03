@@ -3,6 +3,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
+use std::fs::File;
+use std::io;
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -4003,6 +4006,62 @@ fn remove_submodule(repo_path: &Path, path: &Path) -> GitResult<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
+fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
+    let mut input = File::open(src)?;
+    let mut output = File::create(dst)?;
+    io::copy(&mut input, &mut output)?;
+    output.flush()?;
+    output.sync_all()?;
+
+    let source_metadata = fs::metadata(src)?;
+    fs::set_permissions(dst, source_metadata.permissions())?;
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
+    let src = src.components().collect::<PathBuf>();
+    let dst = dst.components().collect::<PathBuf>();
+
+    let source_metadata = fs::metadata(&src)?;
+    if !source_metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source is not a directory",
+        ));
+    }
+
+    match fs::metadata(&dst) {
+        Ok(_) => fs::remove_dir_all(&dst)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    fs::create_dir_all(&dst)?;
+    fs::set_permissions(&dst, source_metadata.permissions())?;
+
+    for entry in fs::read_dir(&src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            copy_dir(&src_path, &dst_path)?;
+            continue;
+        }
+
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        copy_file(&src_path, &dst_path)?;
+    }
+
+    Ok(())
+}
+
 fn command_failure(output: Output) -> GitError {
     process_failure("git", output)
 }
@@ -6921,6 +6980,10 @@ mod tests {
             _request: FixupBaseCommitRequest,
         ) -> GitResult<FixupBaseCommitOutcome> {
             Ok(FixupBaseCommitOutcome::default())
+        }
+
+        fn read_commit_message(&self, _repo_id: &RepoId, commit: &str) -> GitResult<String> {
+            Ok(format!("commit message for {commit}"))
         }
 
         fn run_command(&self, request: GitCommandRequest) -> GitResult<GitCommandOutcome> {
@@ -14050,5 +14113,99 @@ diff --git a/file.txt b/file.txt
         repo.write_file("notes.txt", "alpha\nbeta updated\ngamma\n")?;
         repo.commit_all("update second line")?;
         Ok(repo)
+    }
+
+    #[test]
+    fn copy_file_overwrites_syncs_and_preserves_permissions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src = dir.path().join("src.txt");
+        let dst = dir.path().join("dst.txt");
+        fs::write(&src, "copied payload\n").expect("write src");
+        fs::write(&dst, "stale\n").expect("write dst");
+
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&src).expect("src metadata").permissions();
+            permissions.set_mode(0o640);
+            fs::set_permissions(&src, permissions).expect("set src permissions");
+        }
+
+        copy_file(&src, &dst).expect("copy file");
+
+        assert_eq!(
+            fs::read_to_string(&dst).expect("read dst"),
+            "copied payload\n"
+        );
+
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&dst)
+                .expect("dst metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
+    }
+
+    #[test]
+    fn copy_dir_clobbers_destination_recurses_and_skips_symlinks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src = dir.path().join("src");
+        let nested = src.join("nested");
+        let dst = dir.path().join("dst");
+
+        fs::create_dir_all(&nested).expect("create nested src dir");
+        fs::write(src.join("root.txt"), "root\n").expect("write root src file");
+        fs::write(nested.join("child.txt"), "child\n").expect("write nested src file");
+
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&src).expect("src metadata").permissions();
+            permissions.set_mode(0o750);
+            fs::set_permissions(&src, permissions).expect("set src permissions");
+            std::os::unix::fs::symlink(src.join("root.txt"), src.join("root-link"))
+                .expect("create symlink");
+        }
+
+        fs::create_dir_all(&dst).expect("create dst dir");
+        fs::write(dst.join("obsolete.txt"), "obsolete\n").expect("write dst stale file");
+
+        copy_dir(&src, &dst).expect("copy dir");
+
+        assert_eq!(
+            fs::read_to_string(dst.join("root.txt")).expect("read copied root"),
+            "root\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dst.join("nested").join("child.txt")).expect("read copied child"),
+            "child\n"
+        );
+        assert!(!dst.join("obsolete.txt").exists());
+
+        #[cfg(unix)]
+        {
+            assert!(!dst.join("root-link").exists());
+            assert_eq!(
+                fs::metadata(&dst)
+                    .expect("dst metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o750
+            );
+        }
+    }
+
+    #[test]
+    fn copy_dir_rejects_file_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src = dir.path().join("src.txt");
+        let dst = dir.path().join("dst");
+        fs::write(&src, "content").expect("write src file");
+
+        let error = copy_dir(&src, &dst).expect_err("file source should fail");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.to_string(), "source is not a directory");
     }
 }
