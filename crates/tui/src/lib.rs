@@ -10719,6 +10719,18 @@ fn canonicalize_action_id(action_id: &str) -> String {
 }
 
 fn canonicalize_keybinding(key: &str) -> Option<String> {
+    if let Some(alias) = super_lazygit_config::normalize_keybinding_alias(key) {
+        if alias == "space" {
+            return Some(String::from("space"));
+        }
+
+        if alias.chars().count() == 1 {
+            return Some(alias);
+        }
+
+        return Some(alias);
+    }
+
     if key == " " {
         return Some(String::from("space"));
     }
@@ -20098,5 +20110,33 @@ mod tests {
 
         assert_eq!(span.style.fg, Some(Color::Red));
         assert_eq!(span.style.bg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn canonicalize_keybinding_maps_upstream_aliases_to_runtime_names() {
+        assert_eq!(canonicalize_keybinding("return").as_deref(), Some("enter"));
+        assert_eq!(canonicalize_keybinding("pgup").as_deref(), Some("pageup"));
+        assert_eq!(
+            canonicalize_keybinding("pgdown").as_deref(),
+            Some("pagedown")
+        );
+        assert_eq!(canonicalize_keybinding("del").as_deref(), Some("delete"));
+        assert_eq!(canonicalize_keybinding("ins").as_deref(), Some("insert"));
+        assert_eq!(canonicalize_keybinding("escape").as_deref(), Some("esc"));
+        assert_eq!(
+            canonicalize_keybinding("spacebar").as_deref(),
+            Some("space")
+        );
+    }
+
+    #[test]
+    fn binding_matches_key_accepts_upstream_aliases_for_canonical_terminal_keys() {
+        assert!(binding_matches_key("return", "", "enter"));
+        assert!(binding_matches_key("pgup", "", "pageup"));
+        assert!(binding_matches_key("pgdown", "", "pagedown"));
+        assert!(binding_matches_key("del", "", "delete"));
+        assert!(binding_matches_key("ins", "", "insert"));
+        assert!(binding_matches_key("escape", "", "esc"));
+        assert!(binding_matches_key("spacebar", " ", "space"));
     }
 }

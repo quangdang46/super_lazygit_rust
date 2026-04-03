@@ -955,7 +955,8 @@ impl KeybindingConfig {
 }
 
 fn is_valid_keybinding_key(key: &str) -> bool {
-    let normalized = key.trim();
+    let normalized = normalize_keybinding_alias(key);
+    let normalized = normalized.as_deref().unwrap_or_else(|| key.trim());
     if normalized.is_empty() {
         return false;
     }
@@ -986,6 +987,25 @@ fn is_valid_keybinding_key(key: &str) -> bool {
             |suffix| matches!(suffix.parse::<u8>(), Ok(value) if (1..=24).contains(&value)),
         )
         || normalized.chars().count() == 1
+}
+
+pub fn normalize_keybinding_alias(key: &str) -> Option<String> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let lowered = trimmed.to_ascii_lowercase();
+    Some(match lowered.as_str() {
+        "return" => String::from("enter"),
+        "pgup" => String::from("pageup"),
+        "pgdown" => String::from("pagedown"),
+        "del" => String::from("delete"),
+        "ins" => String::from("insert"),
+        "escape" => String::from("esc"),
+        "spacebar" => String::from("space"),
+        _ => lowered,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1593,6 +1613,56 @@ command = "nvim"
         assert!(error.to_string().contains(
             "Unrecognized key 'not-a-real-key' for keybinding override 'enter_repo_mode'"
         ));
+    }
+
+    #[test]
+    fn validate_accepts_upstream_keyname_aliases() {
+        let config = AppConfig {
+            keybindings: KeybindingConfig {
+                overrides: vec![KeybindingOverride {
+                    action: "enter_repo_mode".to_string(),
+                    keys: vec![
+                        "return".to_string(),
+                        "pgup".to_string(),
+                        "pgdown".to_string(),
+                        "del".to_string(),
+                        "ins".to_string(),
+                        "escape".to_string(),
+                        "spacebar".to_string(),
+                    ],
+                }],
+            },
+            ..AppConfig::default()
+        };
+
+        config.validate().expect("aliases should validate");
+    }
+
+    #[test]
+    fn normalize_keybinding_alias_maps_upstream_aliases_to_canonical_names() {
+        assert_eq!(
+            normalize_keybinding_alias("return").as_deref(),
+            Some("enter")
+        );
+        assert_eq!(
+            normalize_keybinding_alias("pgup").as_deref(),
+            Some("pageup")
+        );
+        assert_eq!(
+            normalize_keybinding_alias("pgdown").as_deref(),
+            Some("pagedown")
+        );
+        assert_eq!(normalize_keybinding_alias("del").as_deref(), Some("delete"));
+        assert_eq!(normalize_keybinding_alias("ins").as_deref(), Some("insert"));
+        assert_eq!(normalize_keybinding_alias("escape").as_deref(), Some("esc"));
+        assert_eq!(
+            normalize_keybinding_alias("spacebar").as_deref(),
+            Some("space")
+        );
+        assert_eq!(
+            normalize_keybinding_alias("Ctrl+X").as_deref(),
+            Some("ctrl+x")
+        );
     }
 
     #[test]
