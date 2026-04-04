@@ -71,6 +71,73 @@ pub enum PaneId {
     Modal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiContextId {
+    WorkspaceList,
+    WorkspacePreview,
+    RepoUnstaged,
+    RepoStaged,
+    RepoStatus,
+    RepoBranches,
+    RepoRemotes,
+    RepoRemoteBranches,
+    RepoTags,
+    RepoCommits,
+    RepoCompare,
+    RepoRebase,
+    RepoStash,
+    RepoReflog,
+    RepoWorktrees,
+    RepoSubmodules,
+    ModalHelp,
+    ModalConfirm,
+    ModalMenu,
+    ModalCommandPalette,
+    ModalInputPrompt,
+}
+
+impl AppState {
+    #[must_use]
+    pub fn active_context_id(&self) -> UiContextId {
+        if let Some(modal) = self.modal_stack.last() {
+            return match modal.kind {
+                ModalKind::Help => UiContextId::ModalHelp,
+                ModalKind::Confirm => UiContextId::ModalConfirm,
+                ModalKind::Menu => UiContextId::ModalMenu,
+                ModalKind::CommandPalette => UiContextId::ModalCommandPalette,
+                ModalKind::InputPrompt => UiContextId::ModalInputPrompt,
+            };
+        }
+
+        match self.focused_pane {
+            PaneId::WorkspaceList => UiContextId::WorkspaceList,
+            PaneId::WorkspacePreview => UiContextId::WorkspacePreview,
+            PaneId::RepoUnstaged => UiContextId::RepoUnstaged,
+            PaneId::RepoStaged => UiContextId::RepoStaged,
+            PaneId::RepoDetail => match self
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview)
+                .unwrap_or_default()
+            {
+                RepoSubview::Status => UiContextId::RepoStatus,
+                RepoSubview::Branches => UiContextId::RepoBranches,
+                RepoSubview::Remotes => UiContextId::RepoRemotes,
+                RepoSubview::RemoteBranches => UiContextId::RepoRemoteBranches,
+                RepoSubview::Tags => UiContextId::RepoTags,
+                RepoSubview::Commits => UiContextId::RepoCommits,
+                RepoSubview::Compare => UiContextId::RepoCompare,
+                RepoSubview::Rebase => UiContextId::RepoRebase,
+                RepoSubview::Stash => UiContextId::RepoStash,
+                RepoSubview::Reflog => UiContextId::RepoReflog,
+                RepoSubview::Worktrees => UiContextId::RepoWorktrees,
+                RepoSubview::Submodules => UiContextId::RepoSubmodules,
+            },
+            PaneId::Modal => UiContextId::ModalMenu,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScreenMode {
     #[default]
@@ -2928,13 +2995,13 @@ pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &st
 #[cfg(test)]
 mod tests {
     use super::{
-        visible_status_entries, workspace_attention_score, Author, BranchItem, CommitFilesMode,
-        EffectiveWorkingTreeState, FileStatus, FileStatusKind, GitRef, ListViewState,
-        OperationProgress, PaneId, RemoteBranchItem, RemoteSummary, RepoDetail, RepoId,
-        RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, SubmoduleItem, TagItem,
-        Timestamp, VisibleStatusEntryKind, WorkingTreeState, WorkspaceFilterMode,
-        WorkspaceSortMode, WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES,
-        DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        visible_status_entries, workspace_attention_score, AppMode, AppState, Author, BranchItem,
+        CommitFilesMode, EffectiveWorkingTreeState, FileStatus, FileStatusKind, GitRef,
+        ListViewState, Modal, ModalKind, OperationProgress, PaneId, RemoteBranchItem,
+        RemoteSummary, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
+        StatusFilterMode, SubmoduleItem, TagItem, Timestamp, UiContextId, VisibleStatusEntryKind,
+        WorkingTreeState, WorkspaceFilterMode, WorkspaceSortMode, WorkspaceState,
+        DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -3003,6 +3070,37 @@ mod tests {
             ..BranchItem::default()
         };
         assert_eq!(detached.full_ref_name(), "abc1234");
+    }
+
+    #[test]
+    fn active_context_id_prefers_top_modal_kind() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            modal_stack: vec![Modal::new(ModalKind::Confirm, "Confirm push")],
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Branches,
+                ..RepoModeState::new(RepoId::new("repo-a"))
+            }),
+            ..AppState::default()
+        };
+
+        assert_eq!(state.active_context_id(), UiContextId::ModalConfirm);
+    }
+
+    #[test]
+    fn active_context_id_maps_repo_detail_to_active_subview() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Reflog,
+                ..RepoModeState::new(RepoId::new("repo-a"))
+            }),
+            ..AppState::default()
+        };
+
+        assert_eq!(state.active_context_id(), UiContextId::RepoReflog);
     }
 
     #[test]

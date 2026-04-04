@@ -184,7 +184,7 @@
 [x] ./references/lazygit-master/pkg/gui/context/commit_files_context.go
 [x] ./references/lazygit-master/pkg/gui/context/commit_message_context.go
 [x] ./references/lazygit-master/pkg/gui/context/confirmation_context.go
-./references/lazygit-master/pkg/gui/context/context.go
+[x] ./references/lazygit-master/pkg/gui/context/context.go
 ./references/lazygit-master/pkg/gui/context/context_common.go
 ./references/lazygit-master/pkg/gui/context/dynamic_title_builder.go
 ./references/lazygit-master/pkg/gui/context/filtered_list.go
