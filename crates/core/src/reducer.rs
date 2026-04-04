@@ -48,10 +48,10 @@ fn enter_repo_mode_with_parents(
     state.workspace.search_focused = false;
     state.workspace.selected_repo_id = Some(repo_id.clone());
     push_recent_repo(state, repo_id.clone());
-    state.repo_mode = Some(RepoModeState::new_with_parent(
-        repo_id.clone(),
-        parent_repo_ids,
-    ));
+    let mut repo_mode = RepoModeState::new_with_parent(repo_id.clone(), parent_repo_ids);
+    repo_mode.status_tree_enabled = state.settings.show_file_tree;
+    repo_mode.show_root_item_in_file_tree = state.settings.show_root_item_in_file_tree;
+    state.repo_mode = Some(repo_mode);
     effects.push(Effect::LoadRepoDetail {
         repo_id,
         selected_path: None,
@@ -3243,6 +3243,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 clear_repo_subview_filter_focus(repo_mode);
                 if let Some(filter) = repo_mode.subview_filter_mut(repo_mode.active_subview) {
                     filter.focused = true;
+                    filter.history_index = -1;
                     state.focused_pane = PaneId::RepoDetail;
                     effects.push(Effect::ScheduleRender);
                 }
@@ -3252,6 +3253,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if let Some(filter) = repo_mode.subview_filter_mut(repo_mode.active_subview) {
                     if filter.focused {
+                        filter.push_history_entry();
                         filter.focused = false;
                         effects.push(Effect::ScheduleRender);
                     }
@@ -3265,6 +3267,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     let had_focus = filter.focused;
                     let had_query = !filter.query.is_empty();
                     filter.focused = false;
+                    filter.history_index = -1;
                     if had_query {
                         filter.query.clear();
                         sync_repo_subview_selection(repo_mode, active_subview);
@@ -3281,6 +3284,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     let active_subview = repo_mode.active_subview;
                     if let Some(filter) = repo_mode.subview_filter_mut(active_subview) {
                         filter.focused = true;
+                        filter.history_index = -1;
                         filter.query.push_str(&text);
                         sync_repo_subview_selection(repo_mode, active_subview);
                         effects.push(Effect::ScheduleRender);
@@ -3293,6 +3297,29 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 let active_subview = repo_mode.active_subview;
                 if let Some(filter) = repo_mode.subview_filter_mut(active_subview) {
                     if filter.query.pop().is_some() {
+                        filter.history_index = -1;
+                        sync_repo_subview_selection(repo_mode, active_subview);
+                        effects.push(Effect::ScheduleRender);
+                    }
+                }
+            }
+        }
+        Action::RecallPreviousRepoSubviewFilterHistory => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                let active_subview = repo_mode.active_subview;
+                if let Some(filter) = repo_mode.subview_filter_mut(active_subview) {
+                    if filter.focused && filter.recall_previous_history() {
+                        sync_repo_subview_selection(repo_mode, active_subview);
+                        effects.push(Effect::ScheduleRender);
+                    }
+                }
+            }
+        }
+        Action::RecallNextRepoSubviewFilterHistory => {
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                let active_subview = repo_mode.active_subview;
+                if let Some(filter) = repo_mode.subview_filter_mut(active_subview) {
+                    if filter.focused && filter.recall_next_history() {
                         sync_repo_subview_selection(repo_mode, active_subview);
                         effects.push(Effect::ScheduleRender);
                     }
@@ -11451,6 +11478,20 @@ mod tests {
     }
 
     #[test]
+    fn enter_repo_mode_uses_seeded_file_tree_preferences() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState::default();
+        state.settings.show_file_tree = false;
+        state.settings.show_root_item_in_file_tree = true;
+
+        let result = reduce(state, Event::Action(Action::EnterRepoMode { repo_id }));
+
+        let repo_mode = result.state.repo_mode.expect("repo mode");
+        assert!(!repo_mode.status_tree_enabled);
+        assert!(repo_mode.show_root_item_in_file_tree);
+    }
+
+    #[test]
     fn leave_repo_mode_returns_to_workspace() {
         let state = reduce(
             AppState::default(),
@@ -11609,7 +11650,9 @@ mod tests {
                 },
                 branches_filter: RepoSubviewFilterState {
                     query: "fea".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(repo_id)
             }),
@@ -11765,6 +11808,102 @@ mod tests {
                 .and_then(|repo_mode| repo_mode.branches_view.selected_index),
             Some(1)
         );
+    }
+
+    #[test]
+    fn repo_subview_filter_history_recall_moves_through_saved_queries() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Branches,
+                detail: Some(RepoDetail {
+                    branches: vec![
+                        crate::state::BranchItem {
+                            name: "main".to_string(),
+                            is_head: true,
+                            ..crate::state::BranchItem::default()
+                        },
+                        crate::state::BranchItem {
+                            name: "feature-alpha".to_string(),
+                            is_head: false,
+                            ..crate::state::BranchItem::default()
+                        },
+                        crate::state::BranchItem {
+                            name: "feature-beta".to_string(),
+                            is_head: false,
+                            ..crate::state::BranchItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                branches_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                },
+                branches_filter: RepoSubviewFilterState {
+                    query: "feature".to_string(),
+                    history: vec!["feature-alpha".to_string(), "main".to_string()],
+                    focused: true,
+                    history_index: -1,
+                },
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let recalled_previous = reduce(
+            state,
+            Event::Action(Action::RecallPreviousRepoSubviewFilterHistory),
+        );
+        assert_eq!(
+            recalled_previous
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.query.as_str()),
+            Some("feature-alpha")
+        );
+        assert_eq!(
+            recalled_previous
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.history_index),
+            Some(0)
+        );
+        assert_eq!(
+            recalled_previous
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.branches_view.selected_index),
+            Some(1)
+        );
+        assert_eq!(recalled_previous.effects, vec![Effect::ScheduleRender]);
+
+        let recalled_next = reduce(
+            recalled_previous.state,
+            Event::Action(Action::RecallNextRepoSubviewFilterHistory),
+        );
+        assert_eq!(
+            recalled_next
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.query.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            recalled_next
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.branches_filter.history_index),
+            Some(-1)
+        );
+        assert_eq!(recalled_next.effects, vec![Effect::ScheduleRender]);
     }
 
     #[test]
@@ -13213,7 +13352,9 @@ mod tests {
                     },
                     branches_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
+                        history: Vec::new(),
                         focused: false,
+                        history_index: -1,
                     },
                     detail: Some(RepoDetail {
                         branches: vec![
@@ -13262,7 +13403,9 @@ mod tests {
                     },
                     commits_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
+                        history: Vec::new(),
                         focused: false,
+                        history_index: -1,
                     },
                     detail: Some(RepoDetail {
                         commits: vec![
@@ -13319,7 +13462,9 @@ mod tests {
                     },
                     stash_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
+                        history: Vec::new(),
                         focused: false,
+                        history_index: -1,
                     },
                     detail: Some(RepoDetail {
                         stashes: vec![
@@ -13368,7 +13513,9 @@ mod tests {
                     },
                     worktree_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
+                        history: Vec::new(),
                         focused: false,
+                        history_index: -1,
                     },
                     detail: Some(RepoDetail {
                         worktrees: vec![
@@ -13413,7 +13560,9 @@ mod tests {
                     },
                     submodules_filter: crate::state::RepoSubviewFilterState {
                         query: "zed".to_string(),
+                        history: Vec::new(),
                         focused: false,
+                        history_index: -1,
                     },
                     detail: Some(RepoDetail {
                         submodules: vec![
@@ -13885,7 +14034,9 @@ mod tests {
                 }),
                 stash_filter: crate::state::RepoSubviewFilterState {
                     query: "stash".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(repo_id)
             }),
@@ -14209,7 +14360,9 @@ mod tests {
                 },
                 commits_filter: crate::state::RepoSubviewFilterState {
                     query: "stale".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(repo_id.clone())
             }),
@@ -18626,7 +18779,9 @@ mod tests {
                 }),
                 remote_branches_filter: crate::state::RepoSubviewFilterState {
                     query: "feature".to_string(),
+                    history: Vec::new(),
                     focused: false,
+                    history_index: -1,
                 },
                 ..crate::state::RepoModeState::new(repo_id)
             }),
@@ -18675,7 +18830,9 @@ mod tests {
                 }),
                 remotes_filter: crate::state::RepoSubviewFilterState {
                     query: "up".to_string(),
+                    history: Vec::new(),
                     focused: false,
+                    history_index: -1,
                 },
                 ..crate::state::RepoModeState::new(repo_id)
             }),
@@ -18726,7 +18883,9 @@ mod tests {
                 }),
                 tags_filter: crate::state::RepoSubviewFilterState {
                     query: "candidate".to_string(),
+                    history: Vec::new(),
                     focused: false,
+                    history_index: -1,
                 },
                 ..crate::state::RepoModeState::new(repo_id)
             }),

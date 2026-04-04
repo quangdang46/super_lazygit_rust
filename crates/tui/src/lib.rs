@@ -14,10 +14,10 @@ use super_lazygit_config::AppConfig;
 use super_lazygit_config::ScrollOffBehavior;
 use super_lazygit_core::{
     reduce, workspace_attention_score, Action, AppMode, AppState, CommitBoxMode, CommitFilesMode,
-    CommitHistoryMode, CommitSubviewMode, Diagnostics, DiagnosticsSnapshot, DiffLineKind,
-    DiffPresentation, Event, InputEvent, InputPromptOperation, KeyPress, PaneId, ReduceResult,
-    RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary, ScreenMode, StashSubviewMode,
-    StatusMessage,
+    CommitHistoryMode, CommitStatus, CommitSubviewMode, Diagnostics, DiagnosticsSnapshot,
+    DiffLineKind, DiffPresentation, EffectiveWorkingTreeState, Event, InputEvent,
+    InputPromptOperation, KeyPress, PaneId, ReduceResult, RepoDetail, RepoId, RepoModeState,
+    RepoSubview, RepoSummary, ScreenMode, StashSubviewMode, StatusMessage,
 };
 
 #[derive(Debug)]
@@ -128,6 +128,7 @@ struct WindowBounds {
 struct RepoFilteredListContext<'a> {
     filter_query: &'a str,
     filter_focused: bool,
+    show_list_footer: bool,
     is_focused: bool,
     viewport_lines: usize,
     scroll_state: ListViewportState,
@@ -255,6 +256,9 @@ impl TuiApp {
     #[must_use]
     pub fn new(mut state: AppState, config: AppConfig) -> Self {
         state.workspace.ensure_visible_selection();
+        state.settings.show_list_footer = config.gui.show_list_footer;
+        state.settings.show_file_tree = config.gui.show_file_tree;
+        state.settings.show_root_item_in_file_tree = config.gui.show_root_item_in_file_tree;
         state.background = super_lazygit_core::BackgroundSettingsSnapshot {
             auto_fetch: config.git.auto_fetch,
             auto_refresh: config.git.auto_refresh,
@@ -2312,6 +2316,24 @@ impl TuiApp {
 
     fn route_repo_key(&self, raw: &str, normalized: &str) -> Option<Action> {
         if self.repo_subview_filter_focused() {
+            if self.binding_matches_action(
+                "recall_previous_repo_subview_filter_history",
+                raw,
+                normalized,
+                &["up"],
+            ) {
+                return Some(Action::RecallPreviousRepoSubviewFilterHistory);
+            }
+
+            if self.binding_matches_action(
+                "recall_next_repo_subview_filter_history",
+                raw,
+                normalized,
+                &["down"],
+            ) {
+                return Some(Action::RecallNextRepoSubviewFilterHistory);
+            }
+
             if self.binding_matches_action("cancel_repo_subview_filter", raw, normalized, &["esc"])
             {
                 return Some(Action::CancelRepoSubviewFilter);
@@ -4969,6 +4991,7 @@ impl TuiApp {
                         filter_focused: repo_mode
                             .subview_filter(RepoSubview::Remotes)
                             .is_some_and(|filter| filter.focused),
+                        show_list_footer: self.state.settings.show_list_footer,
                         is_focused: self.state.focused_pane == PaneId::RepoDetail,
                         viewport_lines: usize::from(area.height.saturating_sub(2)),
                         scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailRemotes),
@@ -4987,6 +5010,7 @@ impl TuiApp {
                         filter_focused: repo_mode
                             .subview_filter(RepoSubview::RemoteBranches)
                             .is_some_and(|filter| filter.focused),
+                        show_list_footer: self.state.settings.show_list_footer,
                         is_focused: self.state.focused_pane == PaneId::RepoDetail,
                         viewport_lines: usize::from(area.height.saturating_sub(2)),
                         scroll_state: self
@@ -5005,6 +5029,7 @@ impl TuiApp {
                         filter_focused: repo_mode
                             .subview_filter(RepoSubview::Tags)
                             .is_some_and(|filter| filter.focused),
+                        show_list_footer: self.state.settings.show_list_footer,
                         is_focused: self.state.focused_pane == PaneId::RepoDetail,
                         viewport_lines: usize::from(area.height.saturating_sub(2)),
                         scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailTags),
@@ -5013,6 +5038,7 @@ impl TuiApp {
                 ),
                 RepoSubview::Commits => repo_commit_lines(
                     repo_mode,
+                    self.state.settings.show_list_footer,
                     usize::from(area.height.saturating_sub(2)),
                     self.repo_scroll_state(RepoListScrollTarget::DetailCommits),
                     self.repo_scroll_state(RepoListScrollTarget::DetailCommitFiles),
@@ -5043,6 +5069,7 @@ impl TuiApp {
                     repo_mode
                         .subview_filter(RepoSubview::Stash)
                         .is_some_and(|filter| filter.focused),
+                    self.state.settings.show_list_footer,
                     repo_mode.stash_subview_mode,
                     self.state.focused_pane == PaneId::RepoDetail,
                     usize::from(area.height.saturating_sub(2)),
@@ -5061,6 +5088,7 @@ impl TuiApp {
                         filter_focused: repo_mode
                             .subview_filter(RepoSubview::Reflog)
                             .is_some_and(|filter| filter.focused),
+                        show_list_footer: self.state.settings.show_list_footer,
                         is_focused: self.state.focused_pane == PaneId::RepoDetail,
                         viewport_lines: usize::from(area.height.saturating_sub(2)),
                         scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailReflog),
@@ -5078,6 +5106,7 @@ impl TuiApp {
                         filter_focused: repo_mode
                             .subview_filter(RepoSubview::Worktrees)
                             .is_some_and(|filter| filter.focused),
+                        show_list_footer: self.state.settings.show_list_footer,
                         is_focused: self.state.focused_pane == PaneId::RepoDetail,
                         viewport_lines: usize::from(area.height.saturating_sub(2)),
                         scroll_state: self.repo_scroll_state(RepoListScrollTarget::DetailWorktrees),
@@ -5095,6 +5124,7 @@ impl TuiApp {
                         filter_focused: repo_mode
                             .subview_filter(RepoSubview::Submodules)
                             .is_some_and(|filter| filter.focused),
+                        show_list_footer: self.state.settings.show_list_footer,
                         is_focused: self.state.focused_pane == PaneId::RepoDetail,
                         viewport_lines: usize::from(area.height.saturating_sub(2)),
                         scroll_state: self
@@ -7220,6 +7250,7 @@ fn repo_remote_branch_lines(
     let RepoFilteredListContext {
         filter_query,
         filter_focused,
+        show_list_footer: _,
         is_focused,
         viewport_lines,
         scroll_state,
@@ -7338,6 +7369,7 @@ fn repo_remote_lines(
     let RepoFilteredListContext {
         filter_query,
         filter_focused,
+        show_list_footer: _,
         is_focused,
         viewport_lines,
         scroll_state,
@@ -7449,6 +7481,7 @@ fn repo_tag_lines(
     let RepoFilteredListContext {
         filter_query,
         filter_focused,
+        show_list_footer: _,
         is_focused,
         viewport_lines,
         scroll_state,
@@ -7689,6 +7722,7 @@ fn repo_stash_lines(
     selected_file_index: Option<usize>,
     filter_query: &str,
     filter_focused: bool,
+    show_list_footer: bool,
     stash_subview_mode: StashSubviewMode,
     is_focused: bool,
     viewport_lines: usize,
@@ -7715,6 +7749,7 @@ fn repo_stash_lines(
             RepoFilteredListContext {
                 filter_query,
                 filter_focused,
+                show_list_footer,
                 is_focused,
                 viewport_lines,
                 scroll_state: list_scroll_state,
@@ -7740,6 +7775,7 @@ fn repo_stash_list_lines(
     let RepoFilteredListContext {
         filter_query,
         filter_focused,
+        show_list_footer: _,
         is_focused,
         viewport_lines,
         scroll_state,
@@ -7903,6 +7939,7 @@ fn repo_reflog_lines(
     let RepoFilteredListContext {
         filter_query,
         filter_focused,
+        show_list_footer,
         is_focused,
         viewport_lines,
         scroll_state,
@@ -7951,15 +7988,19 @@ fn repo_reflog_lines(
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )]),
-        Line::from(format!(
-            "Selected {}/{}",
-            visible_indices
-                .iter()
-                .position(|index| *index == selected_index)
-                .map(|index| index + 1)
-                .unwrap_or(1),
-            visible_indices.len()
-        )),
+        Line::from(if show_list_footer {
+            format!(
+                "Selected {}/{}",
+                visible_indices
+                    .iter()
+                    .position(|index| *index == selected_index)
+                    .map(|index| index + 1)
+                    .unwrap_or(1),
+                visible_indices.len()
+            )
+        } else {
+            String::new()
+        }),
         Line::from(format!(
             "{}  {}",
             selected_entry.selector,
@@ -8027,6 +8068,7 @@ fn repo_worktree_lines(
     let RepoFilteredListContext {
         filter_query,
         filter_focused,
+        show_list_footer: _,
         is_focused,
         viewport_lines,
         scroll_state,
@@ -8133,6 +8175,7 @@ fn repo_submodule_lines(
     let RepoFilteredListContext {
         filter_query,
         filter_focused,
+        show_list_footer: _,
         is_focused,
         viewport_lines,
         scroll_state,
@@ -8262,6 +8305,7 @@ fn repo_submodule_lines(
 
 fn repo_commit_lines(
     repo_mode: &RepoModeState,
+    show_list_footer: bool,
     viewport_lines: usize,
     commit_scroll_state: ListViewportState,
     commit_file_scroll_state: ListViewportState,
@@ -8339,13 +8383,17 @@ fn repo_commit_lines(
 
     let mut lines = vec![
         Line::from(vec![Span::styled(
-            format!(
-                "Selected {}/{}  {}  {}",
-                selected_position + 1,
-                visible_indices.len(),
-                selected.short_oid,
-                selected.summary
-            ),
+            if show_list_footer {
+                format!(
+                    "Selected {}/{}  {}  {}",
+                    selected_position + 1,
+                    visible_indices.len(),
+                    selected.short_oid,
+                    selected.summary
+                )
+            } else {
+                format!("{}  {}", selected.short_oid, selected.summary)
+            },
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -8390,31 +8438,35 @@ fn repo_commit_lines(
         header_lines,
         0,
     );
-    lines.extend(
-        visible_indices
-            .iter()
-            .skip(window_start)
-            .take(window_len)
-            .map(|index| {
-                let commit = &detail.commits[*index];
-                let prefix = if *index == selected_index { ">" } else { " " };
-                let row = if repo_mode.commit_history_mode.is_graph() {
-                    detail
-                        .commit_graph_lines
-                        .get(*index)
-                        .cloned()
-                        .unwrap_or_else(|| format!("{} {}", commit.short_oid, commit.summary))
-                } else {
-                    format!("{} {}", commit.short_oid, commit.summary)
-                };
-                let style = if *index == selected_index {
-                    selected_line_style(Style::default().fg(theme.foreground), true, theme)
-                } else {
-                    Style::default().fg(theme.foreground)
-                };
-                Line::from(Span::styled(format!("{prefix} {row}"), style))
-            }),
-    );
+    for (visible_position, index) in visible_indices
+        .iter()
+        .enumerate()
+        .skip(window_start)
+        .take(window_len)
+    {
+        let commit = &detail.commits[*index];
+        if let Some(header) =
+            commit_history_section_header(detail, &visible_indices, visible_position)
+        {
+            lines.push(Line::from(header.to_string()));
+        }
+        let prefix = if *index == selected_index { ">" } else { " " };
+        let row = if repo_mode.commit_history_mode.is_graph() {
+            detail
+                .commit_graph_lines
+                .get(*index)
+                .cloned()
+                .unwrap_or_else(|| format!("{} {}", commit.short_oid, commit.summary))
+        } else {
+            format!("{} {}", commit.short_oid, commit.summary)
+        };
+        let style = if *index == selected_index {
+            selected_line_style(Style::default().fg(theme.foreground), true, theme)
+        } else {
+            Style::default().fg(theme.foreground)
+        };
+        lines.push(Line::from(Span::styled(format!("{prefix} {row}"), style)));
+    }
 
     if selected.changed_files.is_empty() {
         lines.push(Line::from("Files: (no changed files reported)"));
@@ -8821,6 +8873,51 @@ fn repo_commit_context_line(
         line.push_str(&rendered);
     }
     line
+}
+
+fn commit_history_section_header(
+    detail: &RepoDetail,
+    visible_indices: &[usize],
+    visible_position: usize,
+) -> Option<&'static str> {
+    let index = *visible_indices.get(visible_position)?;
+    let commit = detail.commits.get(index)?;
+    let previous = visible_position
+        .checked_sub(1)
+        .and_then(|prev| visible_indices.get(prev))
+        .and_then(|prev_index| detail.commits.get(*prev_index));
+
+    if detail.working_tree_state.can_show_todos() {
+        let current_is_todo = commit.is_todo()
+            || matches!(
+                commit.status,
+                CommitStatus::CherryPickingOrReverting | CommitStatus::Conflicted
+            );
+        let previous_is_todo = previous.is_some_and(|previous| {
+            previous.is_todo()
+                || matches!(
+                    previous.status,
+                    CommitStatus::CherryPickingOrReverting | CommitStatus::Conflicted
+                )
+        });
+
+        if current_is_todo && !previous_is_todo {
+            return Some(match detail.working_tree_state.effective() {
+                EffectiveWorkingTreeState::Rebasing => "--- Pending Rebase Todos ---",
+                EffectiveWorkingTreeState::CherryPicking => "--- Pending Cherry Picks ---",
+                EffectiveWorkingTreeState::Reverting => "--- Pending Reverts ---",
+                EffectiveWorkingTreeState::None | EffectiveWorkingTreeState::Merging => {
+                    "--- Pending Todos ---"
+                }
+            });
+        }
+
+        if !current_is_todo && previous_is_todo {
+            return Some("--- Commits ---");
+        }
+    }
+
+    None
 }
 
 fn copied_commit_line(repo_mode: &RepoModeState, theme: Theme) -> Option<Line<'static>> {
@@ -12270,7 +12367,9 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 status_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "tracked".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -12299,6 +12398,61 @@ mod tests {
                 .as_ref()
                 .map(|repo_mode| repo_mode.status_filter.focused),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn route_repository_filter_arrow_keys_recall_history_before_list_navigation() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                status_filter: super_lazygit_core::RepoSubviewFilterState {
+                    query: "tracked".to_string(),
+                    history: vec!["first".to_string(), "second".to_string()],
+                    focused: true,
+                    history_index: -1,
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let previous = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "up".to_string(),
+        })));
+        assert_eq!(
+            previous
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.status_filter.query.as_str()),
+            Some("first")
+        );
+
+        let next = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "down".to_string(),
+        })));
+        assert_eq!(
+            next.state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.status_filter.query.as_str()),
+            Some("")
         );
     }
 
@@ -18730,6 +18884,76 @@ mod tests {
     }
 
     #[test]
+    fn render_repo_shell_shows_local_commit_todo_section_headers() {
+        let mut detail = sample_repo_detail();
+        detail.working_tree_state = super_lazygit_core::WorkingTreeState {
+            rebasing: true,
+            ..Default::default()
+        };
+        detail.commits = vec![
+            super_lazygit_core::CommitItem {
+                oid: "todo-1".to_string(),
+                short_oid: "todo-1".to_string(),
+                summary: "pick first".to_string(),
+                todo_action: super_lazygit_core::CommitTodoAction::Pick,
+                ..Default::default()
+            },
+            super_lazygit_core::CommitItem {
+                oid: "todo-2".to_string(),
+                short_oid: "todo-2".to_string(),
+                summary: "fixup second".to_string(),
+                status: super_lazygit_core::CommitStatus::Conflicted,
+                ..Default::default()
+            },
+            super_lazygit_core::CommitItem {
+                oid: "real-1".to_string(),
+                short_oid: "real-1".to_string(),
+                summary: "actual commit".to_string(),
+                ..Default::default()
+            },
+        ];
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(detail),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.resize(140, 24);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("--- Pending Rebase Todos ---"));
+        assert!(rendered.contains("--- Commits ---"));
+        assert!(rendered.contains("todo-1 pick first"));
+        assert!(rendered.contains("real-1 actual commit"));
+    }
+
+    #[test]
     fn render_repo_shell_shows_rebase_view() {
         let mut detail = sample_repo_detail();
         detail.merge_state = super_lazygit_core::MergeState::RebaseInProgress;
@@ -18925,7 +19149,9 @@ mod tests {
                 },
                 branches_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "fea".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -18973,7 +19199,9 @@ mod tests {
                 },
                 remotes_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "up".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19034,7 +19262,9 @@ mod tests {
                 },
                 remote_branches_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "fea".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19223,7 +19453,9 @@ mod tests {
                 },
                 tags_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "v1".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19412,6 +19644,99 @@ mod tests {
         assert!(rendered.contains("Limits: no working tree undo"));
         assert!(rendered.contains("HEAD@{0}: checkout: moving from feature to main"));
         assert!(rendered.contains("HEAD@{1}: commit: add repo-mode stash flows"));
+    }
+
+    #[test]
+    fn render_repo_shell_hides_reflog_selection_footer_when_disabled() {
+        let mut config = AppConfig::default();
+        config.gui.show_list_footer = false;
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Reflog,
+                detail: Some(sample_repo_detail()),
+                reflog_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, config);
+        app.resize(140, 18);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Reflog"));
+        assert!(!rendered.contains("Selected 2/2"));
+        assert!(rendered.contains("HEAD@{1}: commit: add repo-mode stash flows"));
+    }
+
+    #[test]
+    fn render_repo_shell_hides_commit_selection_footer_when_disabled() {
+        let mut config = AppConfig::default();
+        config.gui.show_list_footer = false;
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            settings: super_lazygit_core::SettingsSnapshot {
+                show_help_footer: true,
+                ..Default::default()
+            },
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![RepoId::new("repo-1")],
+                selected_repo_id: Some(RepoId::new("repo-1")),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                comparison_base: Some(ComparisonTarget::Commit("abcdef1234567890".to_string())),
+                comparison_source: Some(RepoSubview::Commits),
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+        state.workspace.repo_summaries.insert(
+            RepoId::new("repo-1"),
+            RepoSummary {
+                repo_id: RepoId::new("repo-1"),
+                display_name: "repo-1".to_string(),
+                display_path: "/tmp/repo-1".to_string(),
+                branch: Some("main".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut app = TuiApp::new(state, config);
+        app.resize(160, 20);
+
+        let rendered = app.render_to_string();
+
+        assert!(rendered.contains("Detail: Commits"));
+        assert!(!rendered.contains("Selected 1/2"));
+        assert!(rendered.contains("abcdef1 add lib"));
     }
 
     #[test]
@@ -19761,7 +20086,9 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 worktree_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "qxz".to_string(),
+                    history: Vec::new(),
                     focused: true,
+                    history_index: -1,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),

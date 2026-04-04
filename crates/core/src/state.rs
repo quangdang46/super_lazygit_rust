@@ -618,6 +618,9 @@ pub struct SettingsSnapshot {
     pub keymap_name: String,
     pub confirm_destructive: bool,
     pub show_help_footer: bool,
+    pub show_list_footer: bool,
+    pub show_file_tree: bool,
+    pub show_root_item_in_file_tree: bool,
     pub screen_mode: ScreenMode,
 }
 
@@ -939,6 +942,7 @@ pub struct RepoModeState {
     pub status_filter: RepoSubviewFilterState,
     pub status_filter_mode: StatusFilterMode,
     pub status_tree_enabled: bool,
+    pub show_root_item_in_file_tree: bool,
     pub collapsed_status_dirs: BTreeSet<PathBuf>,
     pub commit_box: CommitBoxState,
     pub branches_view: ListViewState,
@@ -1010,6 +1014,7 @@ impl RepoModeState {
             status_filter: RepoSubviewFilterState::default(),
             status_filter_mode: StatusFilterMode::default(),
             status_tree_enabled: true,
+            show_root_item_in_file_tree: false,
             collapsed_status_dirs: BTreeSet::default(),
             commit_box: CommitBoxState::default(),
             branches_view: ListViewState::default(),
@@ -1212,8 +1217,11 @@ impl StatusFilterMode {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoSubviewFilterState {
     pub query: String,
+    pub history: Vec<String>,
     #[serde(skip)]
     pub focused: bool,
+    #[serde(skip)]
+    pub history_index: isize,
 }
 
 impl RepoSubviewFilterState {
@@ -1221,6 +1229,39 @@ impl RepoSubviewFilterState {
     pub fn active_query(&self) -> Option<String> {
         let normalized = normalize_search_text(&self.query);
         (!normalized.is_empty()).then_some(normalized)
+    }
+
+    pub fn push_history_entry(&mut self) {
+        let Some(query) = self.active_query() else {
+            return;
+        };
+        self.history.insert(0, query);
+        self.history_index = -1;
+    }
+
+    pub fn recall_previous_history(&mut self) -> bool {
+        let next_index = self.history_index + 1;
+        let Some(next_query) = self.history.get(next_index as usize).cloned() else {
+            return false;
+        };
+        self.history_index = next_index;
+        self.query = next_query;
+        true
+    }
+
+    pub fn recall_next_history(&mut self) -> bool {
+        if self.history_index < 0 {
+            return false;
+        }
+
+        let next_index = self.history_index - 1;
+        self.history_index = next_index;
+        if next_index < 0 {
+            self.query.clear();
+        } else if let Some(next_query) = self.history.get(next_index as usize).cloned() {
+            self.query = next_query;
+        }
+        true
     }
 }
 
@@ -1532,6 +1573,11 @@ impl FileStatus {
     }
 
     #[must_use]
+    pub fn has_staged_or_tracked_changes(&self) -> bool {
+        self.has_staged_changes() || self.tracked()
+    }
+
+    #[must_use]
     pub fn has_unstaged_changes(&self) -> bool {
         self.unstaged_kind.is_some()
     }
@@ -1680,9 +1726,36 @@ pub fn visible_status_entries(repo_mode: &RepoModeState, pane: PaneId) -> Vec<Vi
             .collect();
     }
 
+    let tree = build_status_tree(filtered_files);
     let mut entries = Vec::new();
-    build_status_tree(filtered_files).append_entries(0, pane, repo_mode, &mut entries);
+
+    if repo_mode.show_root_item_in_file_tree && should_show_status_root_item(&tree) {
+        let collapsed = repo_mode.collapsed_status_dirs.contains(Path::new("."));
+        entries.push(VisibleStatusEntry {
+            path: PathBuf::from("."),
+            kind: tree.aggregate_kind(pane),
+            depth: 0,
+            label: ".".to_string(),
+            entry_kind: VisibleStatusEntryKind::Directory { collapsed },
+        });
+
+        if !collapsed {
+            tree.append_entries(1, pane, repo_mode, &mut entries);
+        }
+
+        return entries;
+    }
+
+    tree.append_entries(0, pane, repo_mode, &mut entries);
     entries
+}
+
+fn should_show_status_root_item(tree: &StatusTreeNode<'_>) -> bool {
+    if tree.directories.is_empty() && tree.files.is_empty() {
+        return false;
+    }
+
+    !(tree.directories.is_empty() && tree.files.len() == 1)
 }
 
 fn flat_status_sort_key(item: &FileStatus) -> u8 {
@@ -3687,6 +3760,85 @@ mod tests {
     }
 
     #[test]
+    fn visible_status_entries_show_root_item_when_enabled() {
+        let mut repo_mode = status_repo_mode();
+        repo_mode.show_root_item_in_file_tree = true;
+
+        let entries = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.path.display().to_string(),
+                    entry.depth,
+                    entry.entry_kind,
+                    entry.label,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            entries,
+            vec![
+                (
+                    ".".to_string(),
+                    0,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    ".".to_string(),
+                ),
+                (
+                    "docs".to_string(),
+                    1,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "docs".to_string(),
+                ),
+                (
+                    "docs/README.md".to_string(),
+                    2,
+                    VisibleStatusEntryKind::File,
+                    "README.md".to_string(),
+                ),
+                (
+                    "src".to_string(),
+                    1,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "src".to_string(),
+                ),
+                (
+                    "src/ui".to_string(),
+                    2,
+                    VisibleStatusEntryKind::Directory { collapsed: false },
+                    "ui".to_string(),
+                ),
+                (
+                    "src/ui/lib.rs".to_string(),
+                    3,
+                    VisibleStatusEntryKind::File,
+                    "lib.rs".to_string(),
+                ),
+                (
+                    "src/ui/mod.rs".to_string(),
+                    3,
+                    VisibleStatusEntryKind::File,
+                    "mod.rs".to_string(),
+                ),
+            ]
+        );
+
+        repo_mode.collapsed_status_dirs.insert(PathBuf::from("."));
+        let collapsed = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
+            .into_iter()
+            .map(|entry| (entry.path.display().to_string(), entry.entry_kind))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collapsed,
+            vec![(
+                ".".to_string(),
+                VisibleStatusEntryKind::Directory { collapsed: true },
+            )]
+        );
+    }
+
+    #[test]
     fn visible_status_entries_apply_status_mode_and_query_filter() {
         let mut repo_mode = status_repo_mode();
         repo_mode.status_filter_mode = StatusFilterMode::UntrackedOnly;
@@ -3860,7 +4012,27 @@ mod tests {
         assert!(renamed.is_rename());
         assert!(renamed.matches_file(&same_file));
         assert!(renamed.has_staged_changes());
+        assert!(renamed.has_staged_or_tracked_changes());
         assert!(!renamed.has_unstaged_changes());
+
+        let tracked_without_staged_changes = FileStatus {
+            path: PathBuf::from("src/lib.rs"),
+            short_status: " M".to_string(),
+            unstaged_kind: Some(FileStatusKind::Modified),
+            ..FileStatus::default()
+        };
+        let untracked_without_staged_changes = FileStatus {
+            path: PathBuf::from("README.new"),
+            short_status: "??".to_string(),
+            unstaged_kind: Some(FileStatusKind::Untracked),
+            ..FileStatus::default()
+        };
+
+        assert!(tracked_without_staged_changes.tracked());
+        assert!(tracked_without_staged_changes.has_unstaged_changes());
+        assert!(tracked_without_staged_changes.has_staged_or_tracked_changes());
+        assert!(!untracked_without_staged_changes.tracked());
+        assert!(!untracked_without_staged_changes.has_staged_or_tracked_changes());
 
         let derived = FileStatus::derived_status_fields("AM");
         assert!(derived.has_staged_changes);
