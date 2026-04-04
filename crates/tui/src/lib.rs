@@ -5814,9 +5814,11 @@ impl TuiApp {
                     .commit_graph_lines
                     .get(index)
                     .cloned()
-                    .unwrap_or_else(|| format!("{} {}", commit.short_oid, commit.summary))
+                    .unwrap_or_else(|| {
+                        format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
+                    })
             } else {
-                format!("{} {}", commit.short_oid, commit.summary)
+                format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
             };
             lines.push(Line::from(format!("{marker} {row}")));
         }
@@ -11751,6 +11753,8 @@ mod tests {
                 CommitItem {
                     oid: "abcdef1234567890".to_string(),
                     short_oid: "abcdef1".to_string(),
+                    author_name: "Jesse Duffield".to_string(),
+                    author_email: "jesse@example.com".to_string(),
                     summary: "add lib".to_string(),
                     changed_files: vec![CommitFileItem {
                         path: PathBuf::from("src/lib.rs"),
@@ -11792,6 +11796,8 @@ mod tests {
                 CommitItem {
                     oid: "1234567890abcdef".to_string(),
                     short_oid: "1234567".to_string(),
+                    author_name: "六书六書".to_string(),
+                    author_email: "han@example.com".to_string(),
                     summary: "second".to_string(),
                     changed_files: vec![CommitFileItem {
                         path: PathBuf::from("notes.md"),
