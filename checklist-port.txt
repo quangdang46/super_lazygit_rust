@@ -186,7 +186,7 @@
 [x] ./references/lazygit-master/pkg/gui/context/confirmation_context.go
 [x] ./references/lazygit-master/pkg/gui/context/context.go
 [x] ./references/lazygit-master/pkg/gui/context/context_common.go
-./references/lazygit-master/pkg/gui/context/dynamic_title_builder.go
+[x] ./references/lazygit-master/pkg/gui/context/dynamic_title_builder.go
 ./references/lazygit-master/pkg/gui/context/filtered_list.go
 ./references/lazygit-master/pkg/gui/context/filtered_list_view_model.go
 ./references/lazygit-master/pkg/gui/context/history_trait.go

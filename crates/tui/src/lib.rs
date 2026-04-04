@@ -5103,10 +5103,7 @@ impl TuiApp {
                     },
                 ),
             };
-            (
-                format!("Detail: {}", repo_subview_label(repo_mode.active_subview)),
-                lines,
-            )
+            (repo_detail_title(repo_mode), lines)
         } else {
             (
                 "Detail".to_string(),
@@ -11092,6 +11089,22 @@ fn repo_subview_label(subview: RepoSubview) -> &'static str {
         RepoSubview::Reflog => "Reflog",
         RepoSubview::Worktrees => "Worktrees",
         RepoSubview::Submodules => "Submodules",
+    }
+}
+
+fn repo_detail_title(repo_mode: &RepoModeState) -> String {
+    match repo_mode.active_subview {
+        RepoSubview::RemoteBranches => {
+            if let Some(branch) = selected_remote_branch(
+                repo_mode.detail.as_ref(),
+                repo_mode.remote_branches_view.selected_index,
+            ) {
+                format!("Detail: Remote Branches for {}", branch.remote_name)
+            } else {
+                "Detail: Remote Branches".to_string()
+            }
+        }
+        _ => format!("Detail: {}", repo_subview_label(repo_mode.active_subview)),
     }
 }
 
@@ -19098,6 +19111,23 @@ mod tests {
                 super_lazygit_core::RemoteBranchSortMode::Name,
             ),
             vec![1, 0]
+        );
+    }
+
+    #[test]
+    fn repo_detail_title_uses_remote_name_for_remote_branches() {
+        let repo_mode = RepoModeState {
+            active_subview: RepoSubview::RemoteBranches,
+            detail: Some(sample_repo_detail()),
+            remote_branches_view: super_lazygit_core::ListViewState {
+                selected_index: Some(1),
+            },
+            ..RepoModeState::new(RepoId::new("repo-1"))
+        };
+
+        assert_eq!(
+            repo_detail_title(&repo_mode),
+            "Detail: Remote Branches for origin"
         );
     }
 
