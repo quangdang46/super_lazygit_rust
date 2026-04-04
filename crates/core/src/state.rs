@@ -1161,6 +1161,7 @@ impl RepoSubviewFilterState {
 pub struct CommitBoxState {
     pub focused: bool,
     pub mode: CommitBoxMode,
+    pub preserved_on_close: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

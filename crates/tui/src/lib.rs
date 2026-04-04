@@ -17936,6 +17936,7 @@ mod tests {
                 commit_box: super_lazygit_core::CommitBoxState {
                     focused: true,
                     mode: CommitBoxMode::Commit,
+                    preserved_on_close: false,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -20060,6 +20061,7 @@ mod tests {
                 commit_box: super_lazygit_core::CommitBoxState {
                     focused: true,
                     mode: CommitBoxMode::Commit,
+                    preserved_on_close: false,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -20134,6 +20136,7 @@ mod tests {
                 commit_box: super_lazygit_core::CommitBoxState {
                     focused: true,
                     mode: CommitBoxMode::CommitNoVerify,
+                    preserved_on_close: false,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),

@@ -294,7 +294,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_history_ref = Some(branch_ref);
                 repo_mode.pending_commit_selection_oid = None;
                 repo_mode.diff_scroll = 0;
-                close_commit_box(repo_mode);
+                close_commit_box(repo_mode, false);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
             }
             state.focused_pane = PaneId::RepoDetail;
@@ -316,7 +316,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.remote_branches_filter.query = remote_name;
                 repo_mode.remote_branches_filter.focused = false;
                 repo_mode.diff_scroll = 0;
-                close_commit_box(repo_mode);
+                close_commit_box(repo_mode, false);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::RemoteBranches);
             }
             state.focused_pane = PaneId::RepoDetail;
@@ -340,7 +340,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_history_ref = Some(branch_ref);
                 repo_mode.pending_commit_selection_oid = None;
                 repo_mode.diff_scroll = 0;
-                close_commit_box(repo_mode);
+                close_commit_box(repo_mode, false);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
             }
             state.focused_pane = PaneId::RepoDetail;
@@ -365,7 +365,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_history_ref = Some(tag_ref);
                 repo_mode.pending_commit_selection_oid = None;
                 repo_mode.diff_scroll = 0;
-                close_commit_box(repo_mode);
+                close_commit_box(repo_mode, false);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
             }
             state.focused_pane = PaneId::RepoDetail;
@@ -389,7 +389,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_history_ref = None;
                 repo_mode.pending_commit_selection_oid = None;
                 repo_mode.diff_scroll = 0;
-                close_commit_box(repo_mode);
+                close_commit_box(repo_mode, false);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
             }
             state.focused_pane = PaneId::RepoDetail;
@@ -425,7 +425,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commits_filter = crate::state::RepoSubviewFilterState::default();
                 repo_mode.commit_files_filter = crate::state::RepoSubviewFilterState::default();
                 repo_mode.diff_scroll = 0;
-                close_commit_box(repo_mode);
+                close_commit_box(repo_mode, false);
                 sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
             }
             state.focused_pane = PaneId::RepoDetail;
@@ -2195,13 +2195,14 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 repo_mode.commit_box.focused = true;
                 repo_mode.commit_box.mode = mode;
+                repo_mode.commit_box.preserved_on_close = false;
                 state.focused_pane = PaneId::RepoStaged;
                 effects.push(Effect::ScheduleRender);
             }
         }
         Action::CancelCommitBox => {
             if let Some(repo_mode) = state.repo_mode.as_mut() {
-                close_commit_box(repo_mode);
+                close_commit_box(repo_mode, true);
                 effects.push(Effect::ScheduleRender);
             }
         }
@@ -3328,7 +3329,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     subview,
                     crate::state::RepoSubview::Status | crate::state::RepoSubview::Compare
                 ) {
-                    close_commit_box(repo_mode);
+                    close_commit_box(repo_mode, false);
                 }
                 sync_repo_subview_selection(repo_mode, subview);
                 if matches!(subview, crate::state::RepoSubview::Rebase) {
@@ -3507,7 +3508,7 @@ fn reduce_worker_event(state: &mut AppState, event: WorkerEvent, effects: &mut V
                     if rebase_in_progress {
                         repo_mode.active_subview = crate::state::RepoSubview::Rebase;
                         repo_mode.diff_scroll = 0;
-                        close_commit_box(repo_mode);
+                        close_commit_box(repo_mode, false);
                         state.focused_pane = PaneId::RepoDetail;
                     } else if repo_mode.active_subview == crate::state::RepoSubview::Rebase {
                         repo_mode.active_subview = crate::state::RepoSubview::Commits;
@@ -4218,8 +4219,19 @@ fn selected_hunk_change_lines(
     )
 }
 
-fn close_commit_box(repo_mode: &mut RepoModeState) {
+fn close_commit_box(repo_mode: &mut RepoModeState, preserve_draft: bool) {
     repo_mode.commit_box.focused = false;
+    repo_mode.commit_box.preserved_on_close = preserve_draft;
+    if !preserve_draft {
+        if let Some(detail) = repo_mode.detail.as_mut() {
+            detail.commit_input.clear();
+        }
+    }
+}
+
+fn clear_preserved_commit_box_draft(repo_mode: &mut RepoModeState) {
+    repo_mode.commit_box.focused = false;
+    repo_mode.commit_box.preserved_on_close = false;
     if let Some(detail) = repo_mode.detail.as_mut() {
         detail.commit_input.clear();
     }
@@ -4462,7 +4474,7 @@ fn submit_commit_box(state: &mut AppState) -> Option<GitCommandRequest> {
     };
 
     if let Some(repo_mode) = state.repo_mode.as_mut() {
-        close_commit_box(repo_mode);
+        clear_preserved_commit_box_draft(repo_mode);
     }
     let summary = match mode {
         CommitBoxMode::Commit => "Commit staged changes",
@@ -4485,6 +4497,10 @@ fn commit_with_editor_job(state: &mut AppState) -> Option<GitCommandRequest> {
     if staged_count == 0 {
         push_warning(state, "Stage at least one file before committing.");
         return None;
+    }
+
+    if let Some(repo_mode) = state.repo_mode.as_mut() {
+        clear_preserved_commit_box_draft(repo_mode);
     }
 
     let job = git_job(repo_id, GitCommand::CommitStagedWithEditor);
@@ -5592,7 +5608,7 @@ fn maybe_continue_pending_remote_flow(
                         Some(PendingRemoteFlow::AwaitBranchCheckoutCompletion);
                     repo_mode.active_subview = crate::state::RepoSubview::Branches;
                     repo_mode.diff_scroll = 0;
-                    close_commit_box(repo_mode);
+                    close_commit_box(repo_mode, false);
                     sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Branches);
                 }
                 state.focused_pane = PaneId::RepoDetail;
@@ -8775,7 +8791,7 @@ fn begin_fixup_base_commit_selection(
         repo_mode.active_subview = crate::state::RepoSubview::Commits;
         repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
         repo_mode.diff_scroll = 0;
-        close_commit_box(repo_mode);
+        close_commit_box(repo_mode, false);
         sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
 
         if stage_all {
@@ -10053,7 +10069,7 @@ fn toggle_comparison_selection(state: &mut AppState, effects: &mut Vec<Effect>) 
             repo_mode.comparison_source = Some(source);
             repo_mode.active_subview = crate::state::RepoSubview::Compare;
             repo_mode.diff_scroll = 0;
-            close_commit_box(repo_mode);
+            close_commit_box(repo_mode, false);
             state.focused_pane = PaneId::RepoDetail;
             effects.push(load_comparison_diff_effect(repo_mode));
             effects.push(Effect::ScheduleRender);
@@ -19707,6 +19723,7 @@ mod tests {
             Some(crate::state::CommitBoxState {
                 focused: true,
                 mode: CommitBoxMode::Amend,
+                preserved_on_close: false,
             })
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
@@ -19725,6 +19742,7 @@ mod tests {
                 commit_box: crate::state::CommitBoxState {
                     focused: true,
                     mode: CommitBoxMode::Commit,
+                    preserved_on_close: false,
                 },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
@@ -19784,6 +19802,7 @@ mod tests {
                 commit_box: crate::state::CommitBoxState {
                     focused: true,
                     mode: CommitBoxMode::Commit,
+                    preserved_on_close: false,
                 },
                 ..crate::state::RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19834,6 +19853,7 @@ mod tests {
                 commit_box: crate::state::CommitBoxState {
                     focused: true,
                     mode: CommitBoxMode::Amend,
+                    preserved_on_close: false,
                 },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
@@ -19898,6 +19918,7 @@ mod tests {
                 commit_box: crate::state::CommitBoxState {
                     focused: true,
                     mode: CommitBoxMode::CommitNoVerify,
+                    preserved_on_close: false,
                 },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
@@ -19927,6 +19948,80 @@ mod tests {
                 job_id,
                 summary: "Commit staged changes without hooks".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn cancel_commit_box_preserves_draft_and_reopen_keeps_it() {
+        let repo_id = RepoId::new("repo-1");
+        let mut detail = repo_detail_with_file_tree();
+        detail.commit_input = "draft commit message".to_string();
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoStaged,
+            repo_mode: Some(crate::state::RepoModeState {
+                detail: Some(detail),
+                commit_box: crate::state::CommitBoxState {
+                    focused: true,
+                    mode: CommitBoxMode::Commit,
+                    preserved_on_close: false,
+                },
+                ..crate::state::RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let canceled = reduce(state, Event::Action(Action::CancelCommitBox));
+
+        assert_eq!(
+            canceled
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box),
+            Some(crate::state::CommitBoxState {
+                focused: false,
+                mode: CommitBoxMode::Commit,
+                preserved_on_close: true,
+            })
+        );
+        assert_eq!(
+            canceled
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref())
+                .map(|detail| detail.commit_input.as_str()),
+            Some("draft commit message")
+        );
+
+        let reopened = reduce(
+            canceled.state,
+            Event::Action(Action::OpenCommitBox {
+                mode: CommitBoxMode::Commit,
+            }),
+        );
+
+        assert_eq!(
+            reopened
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_box),
+            Some(crate::state::CommitBoxState {
+                focused: true,
+                mode: CommitBoxMode::Commit,
+                preserved_on_close: false,
+            })
+        );
+        assert_eq!(
+            reopened
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.detail.as_ref())
+                .map(|detail| detail.commit_input.as_str()),
+            Some("draft commit message")
         );
     }
 
