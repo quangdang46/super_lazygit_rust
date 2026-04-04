@@ -6,6 +6,7 @@ use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::Write;
+use std::io::{BufRead, BufReader};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -41,6 +42,8 @@ const INVALID_COMMIT_INDEX_MESSAGE: &str = "invalid commit index";
 const NO_CHANGED_FILES_MESSAGE: &str = "No changed files";
 const NO_BASE_COMMITS_FOUND_MESSAGE: &str = "No base commits found";
 const ENTIRE_FILE_MESSAGE: &str = "Entire file";
+const CONFLICT_START: &str = "<<<<<<< ";
+const CONFLICT_END: &str = ">>>>>>> ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GitCommandBuilder {
@@ -4441,9 +4444,44 @@ fn read_status_snapshot(
     let mut parsed = parse_status(&status);
     let file_diffs = get_file_diffs(repo_path)?;
     enrich_status_with_numstat(&mut parsed.file_tree, &file_diffs);
+    enrich_status_with_inline_merge_conflicts(repo_path, &mut parsed.file_tree);
     mark_worktree_entries(repo_path, &mut parsed.file_tree, &read_worktrees(repo_path));
     parsed.first_path = parsed.file_tree.first().map(|item| item.path.clone());
     Ok(parsed)
+}
+
+fn enrich_status_with_inline_merge_conflicts(repo_path: &Path, file_tree: &mut [FileStatus]) {
+    for item in file_tree {
+        if item.kind != FileStatusKind::Conflicted {
+            continue;
+        }
+
+        item.inline_merge_conflicts = Some(file_has_conflict_markers(&repo_path.join(&item.path)));
+    }
+}
+
+fn file_has_conflict_markers(path: &Path) -> bool {
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) => return false,
+            Ok(_) => {
+                if line.starts_with(CONFLICT_START.as_bytes())
+                    || line.starts_with(CONFLICT_END.as_bytes())
+                {
+                    return true;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
 }
 
 fn parse_status(status: &str) -> ParsedStatus {
@@ -8804,6 +8842,26 @@ index 9ce8efb33..0632e41b0 100644
             .file_tree
             .iter()
             .any(|item| item.kind == FileStatusKind::Conflicted));
+        assert!(detail
+            .file_tree
+            .iter()
+            .find(|item| item.path == Path::new("conflict.txt"))
+            .is_some_and(|item| item.inline_merge_conflicts == Some(true)));
+    }
+
+    #[test]
+    fn file_has_conflict_markers_detects_inline_markers() {
+        let repo = temp_repo().expect("fixture repo");
+        repo.write_file(
+            "markers.txt",
+            "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n",
+        )
+        .expect("write marker fixture");
+        repo.write_file("clean.txt", "resolved\nno markers remain\n")
+            .expect("write clean fixture");
+
+        assert!(file_has_conflict_markers(&repo.path().join("markers.txt")));
+        assert!(!file_has_conflict_markers(&repo.path().join("clean.txt")));
     }
 
     #[test]
