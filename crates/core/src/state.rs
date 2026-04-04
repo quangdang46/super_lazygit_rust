@@ -1527,6 +1527,7 @@ pub struct FileStatus {
     pub staged_kind: Option<FileStatusKind>,
     pub unstaged_kind: Option<FileStatusKind>,
     pub short_status: String,
+    pub inline_merge_conflicts: Option<bool>,
     pub display_string: String,
     pub lines_added: u32,
     pub lines_deleted: u32,
@@ -1599,7 +1600,8 @@ impl FileStatus {
 
     #[must_use]
     pub fn has_inline_merge_conflicts(&self) -> bool {
-        matches!(self.short_status.as_str(), "UU" | "AA")
+        self.inline_merge_conflicts
+            .unwrap_or(matches!(self.short_status.as_str(), "UU" | "AA"))
     }
 
     #[must_use]
@@ -1784,6 +1786,21 @@ struct StatusTreeNode<'a> {
     files: Vec<&'a FileStatus>,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusTreeFlatKind {
+    Directory,
+    File,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatusTreeFlatEntry {
+    path: PathBuf,
+    visual_depth: usize,
+    kind: StatusTreeFlatKind,
+}
+
 impl<'a> StatusTreeNode<'a> {
     fn root() -> Self {
         Self {
@@ -1841,19 +1858,12 @@ impl<'a> StatusTreeNode<'a> {
     fn compress(&mut self) {
         self.compress_children();
 
-        while self.files.is_empty()
-            && self.directories.len() == 1
-            && !self.directories[0].is_leaf_dir()
-        {
+        while self.files.is_empty() && self.directories.len() == 1 {
             let child = self.directories.remove(0);
             self.path = child.path;
             self.directories = child.directories;
             self.files = child.files;
         }
-    }
-
-    fn is_leaf_dir(&self) -> bool {
-        self.directories.is_empty()
     }
 
     fn aggregate_kind(&self, pane: PaneId) -> Option<FileStatusKind> {
@@ -1914,6 +1924,69 @@ impl<'a> StatusTreeNode<'a> {
                 });
             }
         }
+    }
+
+    #[cfg(test)]
+    fn flatten_visible(
+        &self,
+        collapsed_dirs: &BTreeSet<PathBuf>,
+        depth: usize,
+        entries: &mut Vec<StatusTreeFlatEntry>,
+    ) {
+        for directory in &self.directories {
+            entries.push(StatusTreeFlatEntry {
+                path: directory.path.clone(),
+                visual_depth: depth,
+                kind: StatusTreeFlatKind::Directory,
+            });
+            if !collapsed_dirs.contains(directory.path.as_path()) {
+                directory.flatten_visible(collapsed_dirs, depth + 1, entries);
+            }
+        }
+
+        for item in &self.files {
+            entries.push(StatusTreeFlatEntry {
+                path: item.path.clone(),
+                visual_depth: depth,
+                kind: StatusTreeFlatKind::File,
+            });
+        }
+    }
+
+    #[cfg(test)]
+    fn visible_entries(
+        &self,
+        collapsed_dirs: &BTreeSet<PathBuf>,
+        show_root_item: bool,
+    ) -> Vec<StatusTreeFlatEntry> {
+        let mut entries = Vec::new();
+        if show_root_item && should_show_status_root_item(self) {
+            entries.push(StatusTreeFlatEntry {
+                path: PathBuf::from("."),
+                visual_depth: 0,
+                kind: StatusTreeFlatKind::Directory,
+            });
+
+            if !collapsed_dirs.contains(Path::new(".")) {
+                self.flatten_visible(collapsed_dirs, 1, &mut entries);
+            }
+            return entries;
+        }
+
+        self.flatten_visible(collapsed_dirs, 0, &mut entries);
+        entries
+    }
+
+    #[cfg(test)]
+    fn get_visual_depth_at_index(
+        &self,
+        index: usize,
+        collapsed_dirs: &BTreeSet<PathBuf>,
+        show_root_item: bool,
+    ) -> Option<usize> {
+        self.visible_entries(collapsed_dirs, show_root_item)
+            .get(index)
+            .map(|entry| entry.visual_depth)
     }
 }
 
@@ -3076,7 +3149,7 @@ mod tests {
         WorkingTreeState, WorkspaceFilterMode, WorkspaceSortMode, WorkspaceState,
         DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
     fn summary(repo_id: &str, display_name: &str) -> RepoSummary {
@@ -3712,33 +3785,29 @@ mod tests {
                     "README.md".to_string(),
                 ),
                 (
-                    "src".to_string(),
+                    "src/ui".to_string(),
                     0,
                     VisibleStatusEntryKind::Directory { collapsed: false },
-                    "src".to_string(),
-                ),
-                (
                     "src/ui".to_string(),
-                    1,
-                    VisibleStatusEntryKind::Directory { collapsed: false },
-                    "ui".to_string(),
                 ),
                 (
                     "src/ui/lib.rs".to_string(),
-                    2,
+                    1,
                     VisibleStatusEntryKind::File,
                     "lib.rs".to_string(),
                 ),
                 (
                     "src/ui/mod.rs".to_string(),
-                    2,
+                    1,
                     VisibleStatusEntryKind::File,
                     "mod.rs".to_string(),
                 ),
             ]
         );
 
-        repo_mode.collapsed_status_dirs.insert(PathBuf::from("src"));
+        repo_mode
+            .collapsed_status_dirs
+            .insert(PathBuf::from("src/ui"));
         let collapsed = visible_status_entries(&repo_mode, PaneId::RepoUnstaged)
             .into_iter()
             .map(|entry| (entry.path.display().to_string(), entry.entry_kind))
@@ -3752,7 +3821,7 @@ mod tests {
                 ),
                 ("docs/README.md".to_string(), VisibleStatusEntryKind::File),
                 (
-                    "src".to_string(),
+                    "src/ui".to_string(),
                     VisibleStatusEntryKind::Directory { collapsed: true },
                 ),
             ]
@@ -3798,26 +3867,20 @@ mod tests {
                     "README.md".to_string(),
                 ),
                 (
-                    "src".to_string(),
+                    "src/ui".to_string(),
                     1,
                     VisibleStatusEntryKind::Directory { collapsed: false },
-                    "src".to_string(),
-                ),
-                (
                     "src/ui".to_string(),
-                    2,
-                    VisibleStatusEntryKind::Directory { collapsed: false },
-                    "ui".to_string(),
                 ),
                 (
                     "src/ui/lib.rs".to_string(),
-                    3,
+                    2,
                     VisibleStatusEntryKind::File,
                     "lib.rs".to_string(),
                 ),
                 (
                     "src/ui/mod.rs".to_string(),
-                    3,
+                    2,
                     VisibleStatusEntryKind::File,
                     "mod.rs".to_string(),
                 ),
@@ -3861,7 +3924,6 @@ mod tests {
         assert_eq!(
             queried,
             vec![
-                "src".to_string(),
                 "src/ui".to_string(),
                 "src/ui/lib.rs".to_string(),
                 "src/ui/mod.rs".to_string(),
@@ -3900,20 +3962,14 @@ mod tests {
             entries,
             vec![
                 (
-                    "src".to_string(),
+                    "src/ui".to_string(),
                     0,
                     VisibleStatusEntryKind::Directory { collapsed: false },
-                    "src".to_string(),
-                ),
-                (
                     "src/ui".to_string(),
-                    1,
-                    VisibleStatusEntryKind::Directory { collapsed: false },
-                    "ui".to_string(),
                 ),
                 (
                     "src/ui/lib.rs".to_string(),
-                    2,
+                    1,
                     VisibleStatusEntryKind::File,
                     "lib.rs".to_string(),
                 ),
@@ -3992,6 +4048,196 @@ mod tests {
                 "a2".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn status_tree_node_get_visual_depth_at_index_matches_lazygit_cases() {
+        struct Scenario {
+            name: &'static str,
+            repo_mode: RepoModeState,
+            expected_depths: Vec<usize>,
+        }
+
+        let scenarios = vec![
+            Scenario {
+                name: "flat files with root item",
+                repo_mode: RepoModeState {
+                    show_root_item_in_file_tree: true,
+                    detail: Some(RepoDetail {
+                        file_tree: vec![
+                            FileStatus {
+                                path: PathBuf::from("a"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("b"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                        ],
+                        ..RepoDetail::default()
+                    }),
+                    ..RepoModeState::new(RepoId::new("repo-a"))
+                },
+                expected_depths: vec![0, 1, 1],
+            },
+            Scenario {
+                name: "flat files without root item",
+                repo_mode: RepoModeState {
+                    detail: Some(RepoDetail {
+                        file_tree: vec![
+                            FileStatus {
+                                path: PathBuf::from("a"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("b"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                        ],
+                        ..RepoDetail::default()
+                    }),
+                    ..RepoModeState::new(RepoId::new("repo-a"))
+                },
+                expected_depths: vec![0, 0],
+            },
+            Scenario {
+                name: "nested directories with root item",
+                repo_mode: RepoModeState {
+                    show_root_item_in_file_tree: true,
+                    detail: Some(RepoDetail {
+                        file_tree: vec![
+                            FileStatus {
+                                path: PathBuf::from("dir/a"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("dir/b"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("c"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                        ],
+                        ..RepoDetail::default()
+                    }),
+                    ..RepoModeState::new(RepoId::new("repo-a"))
+                },
+                expected_depths: vec![0, 1, 2, 2, 1],
+            },
+            Scenario {
+                name: "compressed paths with root item",
+                repo_mode: RepoModeState {
+                    show_root_item_in_file_tree: true,
+                    detail: Some(RepoDetail {
+                        file_tree: vec![
+                            FileStatus {
+                                path: PathBuf::from("dir1/dir3/a"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("dir2/dir4/b"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                        ],
+                        ..RepoDetail::default()
+                    }),
+                    ..RepoModeState::new(RepoId::new("repo-a"))
+                },
+                expected_depths: vec![0, 1, 2, 1, 2],
+            },
+            Scenario {
+                name: "compressed paths without root item",
+                repo_mode: RepoModeState {
+                    detail: Some(RepoDetail {
+                        file_tree: vec![
+                            FileStatus {
+                                path: PathBuf::from("dir1/dir3/a"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("dir2/dir4/b"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                        ],
+                        ..RepoDetail::default()
+                    }),
+                    ..RepoModeState::new(RepoId::new("repo-a"))
+                },
+                expected_depths: vec![0, 1, 0, 1],
+            },
+            Scenario {
+                name: "collapsed directory hides children",
+                repo_mode: RepoModeState {
+                    show_root_item_in_file_tree: true,
+                    collapsed_status_dirs: BTreeSet::from([PathBuf::from("dir")]),
+                    detail: Some(RepoDetail {
+                        file_tree: vec![
+                            FileStatus {
+                                path: PathBuf::from("dir/a"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("dir/b"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                            FileStatus {
+                                path: PathBuf::from("c"),
+                                unstaged_kind: Some(FileStatusKind::Modified),
+                                ..FileStatus::default()
+                            },
+                        ],
+                        ..RepoDetail::default()
+                    }),
+                    ..RepoModeState::new(RepoId::new("repo-a"))
+                },
+                expected_depths: vec![0, 1, 1],
+            },
+        ];
+
+        for scenario in scenarios {
+            let detail = scenario.repo_mode.detail.as_ref().expect("detail");
+            let files = detail.file_tree.iter().collect::<Vec<_>>();
+            let tree = super::build_status_tree(files);
+            for (index, expected_depth) in scenario.expected_depths.iter().enumerate() {
+                let actual_depth = tree
+                    .get_visual_depth_at_index(
+                        index,
+                        &scenario.repo_mode.collapsed_status_dirs,
+                        scenario.repo_mode.show_root_item_in_file_tree,
+                    )
+                    .expect("depth in range");
+                assert_eq!(
+                    actual_depth, *expected_depth,
+                    "{} index {} depth mismatch",
+                    scenario.name, index
+                );
+            }
+
+            assert_eq!(
+                tree.get_visual_depth_at_index(
+                    scenario.expected_depths.len(),
+                    &scenario.repo_mode.collapsed_status_dirs,
+                    scenario.repo_mode.show_root_item_in_file_tree,
+                ),
+                None,
+                "{} expected out-of-range depth to be None",
+                scenario.name
+            );
+        }
     }
 
     #[test]
