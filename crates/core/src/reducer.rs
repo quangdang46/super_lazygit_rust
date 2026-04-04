@@ -4662,10 +4662,17 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
     let pending = state.pending_confirmation.take()?;
     state.modal_stack.pop();
     if state.modal_stack.is_empty() {
-        state.focused_pane = match state.mode {
-            AppMode::Workspace => PaneId::WorkspaceList,
-            AppMode::Repository => PaneId::RepoUnstaged,
-        };
+        let return_context = state
+            .return_context_stack
+            .pop()
+            .unwrap_or(ReturnContext::new(
+                pending.return_focus,
+                state
+                    .repo_mode
+                    .as_ref()
+                    .map(|repo_mode| repo_mode.active_subview),
+            ));
+        restore_return_context(state, return_context);
     }
 
     let (command, summary) = match pending.operation {
@@ -17585,6 +17592,43 @@ mod tests {
                 command: GitCommand::PushCurrentBranch,
             })]
         );
+    }
+
+    #[test]
+    fn confirm_pending_operation_restores_return_context_focus() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Confirm, "Confirm push")],
+            pending_confirmation: Some(crate::state::PendingConfirmation {
+                repo_id: repo_id.clone(),
+                operation: ConfirmableOperation::Push,
+                return_focus: PaneId::RepoDetail,
+            }),
+            return_context_stack: vec![ReturnContext::new(
+                PaneId::RepoDetail,
+                Some(RepoSubview::Commits),
+            )],
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Branches,
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..Default::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::ConfirmPendingOperation));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Commits)
+        );
+        assert!(result.state.return_context_stack.is_empty());
     }
 
     #[test]
