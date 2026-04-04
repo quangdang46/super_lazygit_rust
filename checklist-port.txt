@@ -181,7 +181,7 @@
 [x] ./references/lazygit-master/pkg/gui/context.go
 [x] ./references/lazygit-master/pkg/gui/context/base_context.go
 [x] ./references/lazygit-master/pkg/gui/context/branches_context.go
-./references/lazygit-master/pkg/gui/context/commit_files_context.go
+[x] ./references/lazygit-master/pkg/gui/context/commit_files_context.go
 ./references/lazygit-master/pkg/gui/context/commit_message_context.go
 ./references/lazygit-master/pkg/gui/context/confirmation_context.go
 ./references/lazygit-master/pkg/gui/context/context.go
