@@ -361,22 +361,36 @@ impl ServiceDefinition {
     ) -> Result<String, HostingServiceError> {
         for regex_str in self.regex_strings {
             let regex = Regex::new(regex_str).expect("service regexes are valid");
-            let Some(captures) = regex.captures(remote_url) else {
+            let Some(mut args) = find_named_matches(&regex, remote_url) else {
                 continue;
             };
 
-            let mut args = BTreeMap::new();
-            for name in regex.capture_names().flatten() {
-                if let Some(value) = captures.name(name) {
-                    args.insert(name.to_string(), value.as_str().to_string());
-                }
-            }
             args.insert("webDomain".to_string(), web_domain.to_string());
             return Ok(resolve_template(self.repo_url_template, &args));
         }
 
         Err(HostingServiceError::RemoteUrlParseFailed)
     }
+}
+
+fn find_named_matches(regex: &Regex, input: &str) -> Option<BTreeMap<String, String>> {
+    let captures = regex.captures(input)?;
+    let mut results = BTreeMap::new();
+
+    for (index, value) in captures.iter().enumerate().skip(1) {
+        let key = regex
+            .capture_names()
+            .nth(index)
+            .flatten()
+            .unwrap_or("")
+            .to_string();
+        results.insert(
+            key,
+            value.map_or_else(String::new, |capture| capture.as_str().to_string()),
+        );
+    }
+
+    Some(results)
 }
 
 impl Service {
@@ -412,7 +426,11 @@ fn url_encode_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{commit_browser_url_for_remote, pull_request_url_for_remote, HostingServiceError};
+    use super::{
+        commit_browser_url_for_remote, find_named_matches, pull_request_url_for_remote,
+        HostingServiceError,
+    };
+    use regex::Regex;
     use std::collections::BTreeMap;
 
     struct PullRequestScenario<'a> {
@@ -745,5 +763,37 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, HostingServiceError::UnsupportedGitService);
         assert!(logged_errors.is_empty());
+    }
+
+    #[test]
+    fn find_named_matches_matches_upstream_regexp_cases() {
+        let scenarios = [
+            (
+                Regex::new(r"^(?P<name>\w+)").unwrap(),
+                "hello world",
+                Some(BTreeMap::from([(
+                    String::from("name"),
+                    String::from("hello"),
+                )])),
+            ),
+            (
+                Regex::new(r"^https?://.*/(?P<owner>.*)/(?P<repo>.*?)(\.git)?$").unwrap(),
+                "https://my_username@bitbucket.org/johndoe/social_network.git",
+                Some(BTreeMap::from([
+                    (String::new(), String::from(".git")),
+                    (String::from("owner"), String::from("johndoe")),
+                    (String::from("repo"), String::from("social_network")),
+                ])),
+            ),
+            (
+                Regex::new(r"(?P<owner>hello) world").unwrap(),
+                "yo world",
+                None,
+            ),
+        ];
+
+        for (regex, input, expected) in scenarios {
+            assert_eq!(find_named_matches(&regex, input), expected, "{input}");
+        }
     }
 }
