@@ -11,3 +11,4 @@ publish = false
 regex = "1.11"
 serde.workspace = true
 thiserror.workspace = true
+unicode-width = "0.2"

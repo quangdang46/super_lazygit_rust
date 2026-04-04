@@ -3,6 +3,7 @@ pub mod diagnostics;
 pub mod effect;
 pub mod event;
 mod hosting_service;
+pub mod lines;
 pub mod reducer;
 pub mod state;
 
@@ -18,5 +19,6 @@ pub use effect::{
 pub use event::{
     Event, InputEvent, KeyPress, TimerEvent, WatcherEvent as AppWatcherEvent, WorkerEvent,
 };
+pub use lines::*;
 pub use reducer::{reduce, ReduceResult};
 pub use state::*;
