@@ -6981,6 +6981,48 @@ fn truncate_cell(value: &str, width: usize) -> String {
     truncated
 }
 
+fn author_initials(author_name: &str) -> String {
+    if author_name.is_empty() {
+        return String::new();
+    }
+
+    let split = author_name.split_whitespace().collect::<Vec<_>>();
+    if split.len() == 1 {
+        return author_name.chars().take(2).collect::<String>();
+    }
+
+    let left = split[0].chars().take(1).collect::<String>();
+    let right = split[1].chars().take(1).collect::<String>();
+    format!("{left}{right}")
+}
+
+fn author_with_length(author_name: &str, length: usize) -> String {
+    if length < 2 {
+        return String::new();
+    }
+    if length == 2 {
+        return author_initials(author_name);
+    }
+
+    let count = author_name.chars().count();
+    if count <= length {
+        return author_name.to_string();
+    }
+
+    let mut truncated = author_name.chars().take(length - 1).collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn format_commit_row(short_oid: &str, author_name: &str, summary: &str) -> String {
+    let author = author_with_length(author_name, 10);
+    if author.is_empty() {
+        format!("{short_oid} {summary}")
+    } else {
+        format!("{short_oid} {author} {summary}")
+    }
+}
+
 fn workspace_preview_lines(summary: &RepoSummary) -> Vec<Line<'static>> {
     let remote = match (
         summary.remote_summary.remote_name.as_deref(),
@@ -8456,9 +8498,11 @@ fn repo_commit_lines(
                 .commit_graph_lines
                 .get(*index)
                 .cloned()
-                .unwrap_or_else(|| format!("{} {}", commit.short_oid, commit.summary))
+                .unwrap_or_else(|| {
+                    format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
+                })
         } else {
-            format!("{} {}", commit.short_oid, commit.summary)
+            format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
         };
         let style = if *index == selected_index {
             selected_line_style(Style::default().fg(theme.foreground), true, theme)
@@ -9095,7 +9139,18 @@ fn repo_diff_lines(
     let header_lines = 3;
     let visible_capacity = viewport_lines.saturating_sub(header_lines).max(1);
     let max_scroll = detail.diff.lines.len().saturating_sub(visible_capacity);
-    let scroll = scroll.min(max_scroll);
+    let scroll = repo_mode
+        .map(|repo_mode| {
+            calculate_patch_focus_origin(
+                &detail.diff,
+                repo_mode.diff_scroll,
+                visible_capacity,
+                repo_mode.diff_line_cursor,
+                repo_mode.diff_line_anchor,
+            )
+        })
+        .unwrap_or(scroll)
+        .min(max_scroll);
     let end = (scroll + visible_capacity).min(detail.diff.lines.len());
 
     let mut lines = vec![
@@ -9161,6 +9216,64 @@ fn repo_diff_lines(
             }),
     );
     lines
+}
+
+fn calculate_patch_focus_origin(
+    diff: &super_lazygit_core::DiffModel,
+    current_origin: usize,
+    buffer_height: usize,
+    cursor: Option<usize>,
+    anchor: Option<usize>,
+) -> usize {
+    if buffer_height == 0 || diff.lines.is_empty() {
+        return 0;
+    }
+
+    let num_lines = diff.lines.len();
+    let selected_hunk = diff.selected_hunk.and_then(|index| diff.hunks.get(index));
+    let (need_to_see_idx, want_to_see_idx) = match (selected_hunk, cursor, anchor) {
+        (_, Some(cursor), Some(anchor)) if anchor != cursor => (cursor, anchor),
+        (_, Some(cursor), _) => (cursor, cursor),
+        (Some(hunk), _, _) => (hunk.start_line_index, hunk.end_line_index.saturating_sub(1)),
+        _ => return current_origin.min(num_lines.saturating_sub(1)),
+    };
+
+    calculate_new_origin_with_needed_and_wanted_idx(
+        current_origin,
+        buffer_height,
+        num_lines,
+        need_to_see_idx,
+        want_to_see_idx,
+    )
+}
+
+fn calculate_new_origin_with_needed_and_wanted_idx(
+    current_origin: usize,
+    buffer_height: usize,
+    num_lines: usize,
+    need_to_see_idx: usize,
+    want_to_see_idx: usize,
+) -> usize {
+    let mut origin = current_origin;
+    if need_to_see_idx < current_origin || need_to_see_idx >= current_origin + buffer_height {
+        origin = need_to_see_idx
+            .saturating_sub(buffer_height / 2)
+            .min(num_lines.saturating_sub(buffer_height));
+    }
+
+    let bottom = origin + buffer_height;
+
+    if want_to_see_idx < origin {
+        let required_change = origin - want_to_see_idx;
+        let allowed_change = bottom.saturating_sub(need_to_see_idx);
+        origin.saturating_sub(required_change.min(allowed_change))
+    } else if want_to_see_idx >= bottom {
+        let required_change = want_to_see_idx + 1 - bottom;
+        let allowed_change = need_to_see_idx.saturating_sub(origin);
+        origin + required_change.min(allowed_change)
+    } else {
+        origin
+    }
 }
 
 fn file_status_kind_label(kind: super_lazygit_core::FileStatusKind) -> &'static str {
@@ -18189,6 +18302,8 @@ mod tests {
             .iter()
             .any(|line| line.contains("Line select: J/K cursor")));
         assert!(rendered_lines.contains(&"@@ -1 +1 @@".to_string()));
+        assert!(rendered_lines.contains(&"-old line".to_string()));
+        assert!(rendered_lines.contains(&"+new line".to_string()));
 
         let scroll_down = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "down".to_string(),
@@ -18268,6 +18383,86 @@ mod tests {
                     new_lines: 1,
                 }]
         )));
+    }
+
+    #[test]
+    fn repo_diff_lines_balances_cursor_and_anchor_visibility() {
+        let mut detail = sample_repo_detail();
+        detail.diff.lines = vec![
+            DiffLine {
+                kind: DiffLineKind::Meta,
+                content: "diff --git a/src/ui/lib.rs b/src/ui/lib.rs".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Meta,
+                content: "index 1111111..2222222 100644".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::HunkHeader,
+                content: "@@ -1,6 +1,6 @@".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Removal,
+                content: "-line 1".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Addition,
+                content: "+line 1".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Context,
+                content: " shared a".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Removal,
+                content: "-line 2".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Addition,
+                content: "+line 2".to_string(),
+            },
+        ];
+        detail.diff.hunks = vec![super_lazygit_core::DiffHunk {
+            header: "@@ -1,6 +1,6 @@".to_string(),
+            selection: super_lazygit_core::SelectedHunk {
+                old_start: 1,
+                old_lines: 6,
+                new_start: 1,
+                new_lines: 6,
+            },
+            start_line_index: 2,
+            end_line_index: 8,
+        }];
+        detail.diff.selected_hunk = Some(0);
+        let repo_mode = RepoModeState {
+            detail: Some(detail),
+            diff_scroll: 6,
+            diff_line_cursor: Some(7),
+            diff_line_anchor: Some(3),
+            ..RepoModeState::new(RepoId::new("repo-1"))
+        };
+
+        let visible_lines = repo_diff_lines(
+            Some(&repo_mode),
+            repo_mode.detail.as_ref(),
+            repo_mode.diff_scroll,
+            7,
+            Theme::from_config(&AppConfig::default()),
+        );
+        let rendered_lines = visible_lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert!(rendered_lines.iter().any(|line| line == "-line 1"));
+        assert!(rendered_lines.iter().any(|line| line == "-line 2"));
+        assert!(!rendered_lines
+            .iter()
+            .any(|line| line == "diff --git a/src/ui/lib.rs b/src/ui/lib.rs"));
+    }
+
+    #[test]
+    fn calculate_patch_focus_origin_balances_hunk_bounds() {
+        let diff = sample_repo_detail().diff;
+
+        assert_eq!(calculate_patch_focus_origin(&diff, 3, 3, None, None), 2);
     }
 
     #[test]
@@ -18597,7 +18792,7 @@ mod tests {
         assert!(rendered.contains("Selected 1/2"));
         assert!(rendered.contains("Compare base: abcdef1234567890"));
         assert!(rendered.contains("State: idle"));
-        assert!(rendered.contains("> abcdef1 add lib"));
+        assert!(rendered.contains("> abcdef1 Jesse Duf… add lib"));
         assert!(rendered.contains("n branch"));
         assert!(rendered.contains("T tag"));
         assert!(rendered.contains("A amend"));
@@ -18618,6 +18813,23 @@ mod tests {
         assert!(help.contains("t revert"));
         assert!(help.contains("S soft"));
         assert!(rendered.contains("A src/lib.rs"));
+    }
+
+    #[test]
+    fn author_with_length_matches_upstream_cases() {
+        let scenarios = vec![
+            ("Jesse Duffield", 0, ""),
+            ("Jesse Duffield", 1, ""),
+            ("Jesse Duffield", 2, "JD"),
+            ("Jesse Duffield", 3, "Je…"),
+            ("Jesse Duffield", 10, "Jesse Duf…"),
+            ("Jesse Duffield", 14, "Jesse Duffield"),
+            ("六书六書", 2, "六书"),
+        ];
+
+        for (author, length, expected) in scenarios {
+            assert_eq!(author_with_length(author, length), expected);
+        }
     }
 
     #[test]
