@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+use crate::lines::split_lines;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2704,6 +2705,320 @@ pub enum MergeState {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MergeConflictSelection {
+    #[default]
+    Top,
+    Middle,
+    Bottom,
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeConflict {
+    pub start: usize,
+    pub ancestor: Option<usize>,
+    pub target: usize,
+    pub end: usize,
+}
+
+impl MergeConflict {
+    #[must_use]
+    pub const fn has_ancestor(&self) -> bool {
+        self.ancestor.is_some()
+    }
+
+    #[must_use]
+    pub fn is_marker_line(&self, index: usize) -> bool {
+        index == self.start
+            || self.ancestor.is_some_and(|ancestor| ancestor == index)
+            || index == self.target
+            || index == self.end
+    }
+}
+
+impl MergeConflictSelection {
+    #[must_use]
+    pub fn bounds(self, conflict: &MergeConflict) -> (usize, usize) {
+        match self {
+            Self::Top => {
+                if let Some(ancestor) = conflict.ancestor {
+                    (conflict.start, ancestor)
+                } else {
+                    (conflict.start, conflict.target)
+                }
+            }
+            Self::Middle => (conflict.ancestor.unwrap_or(conflict.start), conflict.target),
+            Self::Bottom => (conflict.target, conflict.end),
+            Self::All => (conflict.start, conflict.end),
+        }
+    }
+
+    #[must_use]
+    pub fn selected(self, conflict: &MergeConflict, index: usize) -> bool {
+        let (start, end) = self.bounds(conflict);
+        start < index && index < end
+    }
+
+    #[must_use]
+    pub fn is_index_to_keep(self, conflict: &MergeConflict, index: usize) -> bool {
+        if index < conflict.start || conflict.end < index {
+            return true;
+        }
+        if conflict.is_marker_line(index) {
+            return false;
+        }
+        self.selected(conflict, index)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeConflictSessionState {
+    pub path: String,
+    pub contents: Vec<String>,
+    pub conflicts: Vec<MergeConflict>,
+    pub conflict_index: usize,
+    pub selection_index: usize,
+}
+
+impl MergeConflictSessionState {
+    #[must_use]
+    pub fn active(&self) -> bool {
+        !self.path.is_empty()
+    }
+
+    #[must_use]
+    pub fn get_content(&self) -> String {
+        self.contents.last().cloned().unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn get_path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn set_content(&mut self, content: String, path: String) {
+        if content == self.get_content() && path == self.path {
+            return;
+        }
+        self.path = path;
+        self.contents.clear();
+        self.push_content(content);
+    }
+
+    pub fn push_content(&mut self, content: String) {
+        self.contents.push(content.clone());
+        self.set_conflicts(find_merge_conflicts(&content));
+    }
+
+    pub fn undo(&mut self) -> bool {
+        if self.contents.len() <= 1 {
+            return false;
+        }
+        self.contents.pop();
+        self.set_conflicts(find_merge_conflicts(&self.get_content()));
+        true
+    }
+
+    pub fn reset(&mut self) {
+        self.contents.clear();
+        self.path.clear();
+        self.conflicts.clear();
+        self.conflict_index = 0;
+    }
+
+    pub fn reset_conflict_selection(&mut self) {
+        self.conflict_index = 0;
+    }
+
+    #[must_use]
+    pub fn no_conflicts(&self) -> bool {
+        self.conflicts.is_empty()
+    }
+
+    #[must_use]
+    pub fn all_conflicts_resolved(&self) -> bool {
+        self.conflicts.is_empty()
+    }
+
+    pub fn select_next_conflict_hunk(&mut self) {
+        self.set_selection_index(self.selection_index.saturating_add(1));
+    }
+
+    pub fn select_prev_conflict_hunk(&mut self) {
+        self.set_selection_index(self.selection_index.saturating_sub(1));
+    }
+
+    pub fn select_next_conflict(&mut self) {
+        self.set_conflict_index(self.conflict_index.saturating_add(1));
+    }
+
+    pub fn select_prev_conflict(&mut self) {
+        self.set_conflict_index(self.conflict_index.saturating_sub(1));
+    }
+
+    #[must_use]
+    pub fn selection(&self) -> MergeConflictSelection {
+        self.available_selections()
+            .get(self.selection_index)
+            .copied()
+            .unwrap_or(MergeConflictSelection::Top)
+    }
+
+    #[must_use]
+    pub fn get_conflict_middle(&self) -> usize {
+        self.current_conflict()
+            .map(|conflict| conflict.target)
+            .unwrap_or(0)
+    }
+
+    #[must_use]
+    pub fn get_selected_line(&self) -> usize {
+        let Some(conflict) = self.current_conflict() else {
+            return 1;
+        };
+        let (start, _) = self.selection().bounds(conflict);
+        start + 1
+    }
+
+    #[must_use]
+    pub fn get_selected_range(&self) -> (usize, usize) {
+        let Some(conflict) = self.current_conflict() else {
+            return (0, 0);
+        };
+        self.selection().bounds(conflict)
+    }
+
+    #[must_use]
+    pub fn plain_render_selected(&self) -> String {
+        let (start, end) = self.get_selected_range();
+        let content_lines = split_lines(&self.get_content());
+        if content_lines.is_empty() || start > end || end >= content_lines.len() {
+            return String::new();
+        }
+        content_lines[start..=end].join("\n")
+    }
+
+    pub fn content_after_conflict_resolve(
+        &self,
+        selection: MergeConflictSelection,
+    ) -> Option<String> {
+        let conflict = self.current_conflict()?;
+        let rendered = split_lines(&self.get_content())
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, line)| selection.is_index_to_keep(conflict, index).then_some(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(rendered)
+    }
+
+    fn current_conflict(&self) -> Option<&MergeConflict> {
+        self.conflicts.get(self.conflict_index)
+    }
+
+    fn available_selections(&self) -> Vec<MergeConflictSelection> {
+        let Some(conflict) = self.current_conflict() else {
+            return Vec::new();
+        };
+        if conflict.has_ancestor() {
+            vec![
+                MergeConflictSelection::Top,
+                MergeConflictSelection::Middle,
+                MergeConflictSelection::Bottom,
+            ]
+        } else {
+            vec![MergeConflictSelection::Top, MergeConflictSelection::Bottom]
+        }
+    }
+
+    fn set_conflict_index(&mut self, index: usize) {
+        if self.conflicts.is_empty() {
+            self.conflict_index = 0;
+        } else {
+            self.conflict_index = index.min(self.conflicts.len() - 1);
+        }
+        self.set_selection_index(self.selection_index);
+    }
+
+    fn set_selection_index(&mut self, index: usize) {
+        let selections = self.available_selections();
+        if !selections.is_empty() {
+            self.selection_index = index.min(selections.len() - 1);
+        }
+    }
+
+    fn set_conflicts(&mut self, conflicts: Vec<MergeConflict>) {
+        self.conflicts = conflicts;
+        self.set_conflict_index(self.conflict_index);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MergeConflictLineType {
+    Start,
+    Ancestor,
+    Target,
+    End,
+    NotMarker,
+}
+
+#[must_use]
+pub fn find_merge_conflicts(content: &str) -> Vec<MergeConflict> {
+    let mut conflicts = Vec::new();
+    if content.is_empty() {
+        return conflicts;
+    }
+
+    let mut new_conflict: Option<MergeConflict> = None;
+    for (index, line) in split_lines(content).into_iter().enumerate() {
+        match determine_merge_conflict_line_type(&line) {
+            MergeConflictLineType::Start => {
+                new_conflict = Some(MergeConflict {
+                    start: index,
+                    ancestor: None,
+                    target: index,
+                    end: index,
+                });
+            }
+            MergeConflictLineType::Ancestor => {
+                if let Some(conflict) = new_conflict.as_mut() {
+                    conflict.ancestor = Some(index);
+                }
+            }
+            MergeConflictLineType::Target => {
+                if let Some(conflict) = new_conflict.as_mut() {
+                    conflict.target = index;
+                }
+            }
+            MergeConflictLineType::End => {
+                if let Some(mut conflict) = new_conflict.take() {
+                    conflict.end = index;
+                    conflicts.push(conflict);
+                }
+            }
+            MergeConflictLineType::NotMarker => {}
+        }
+    }
+
+    conflicts
+}
+
+fn determine_merge_conflict_line_type(line: &str) -> MergeConflictLineType {
+    let trimmed_line = line.strip_prefix("++").unwrap_or(line);
+    if trimmed_line.starts_with("<<<<<<< ") {
+        MergeConflictLineType::Start
+    } else if trimmed_line.starts_with("||||||| ") {
+        MergeConflictLineType::Ancestor
+    } else if trimmed_line == "=======" {
+        MergeConflictLineType::Target
+    } else if trimmed_line.starts_with(">>>>>>> ") {
+        MergeConflictLineType::End
+    } else {
+        MergeConflictLineType::NotMarker
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MergeVariant {
     #[default]
     Regular,
@@ -3141,13 +3456,14 @@ pub fn submodule_matches_filter(submodule: &SubmoduleItem, normalized_query: &st
 #[cfg(test)]
 mod tests {
     use super::{
-        visible_status_entries, workspace_attention_score, AppMode, AppState, Author, BranchItem,
-        CommitFilesMode, EffectiveWorkingTreeState, FileStatus, FileStatusKind, GitRef,
-        ListViewState, Modal, ModalKind, OperationProgress, PaneId, RemoteBranchItem,
-        RemoteSummary, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSummary,
-        StatusFilterMode, SubmoduleItem, TagItem, Timestamp, UiContextId, VisibleStatusEntryKind,
-        WorkingTreeState, WorkspaceFilterMode, WorkspaceSortMode, WorkspaceState,
-        DEFAULT_DIFF_CONTEXT_LINES, DEFAULT_RENAME_SIMILARITY_THRESHOLD,
+        find_merge_conflicts, visible_status_entries, workspace_attention_score, AppMode, AppState,
+        Author, BranchItem, CommitFilesMode, EffectiveWorkingTreeState, FileStatus, FileStatusKind,
+        GitRef, ListViewState, MergeConflict, MergeConflictSelection, MergeConflictSessionState,
+        Modal, ModalKind, OperationProgress, PaneId, RemoteBranchItem, RemoteSummary, RepoDetail,
+        RepoId, RepoModeState, RepoSubview, RepoSummary, StatusFilterMode, SubmoduleItem, TagItem,
+        Timestamp, UiContextId, VisibleStatusEntryKind, WorkingTreeState, WorkspaceFilterMode,
+        WorkspaceSortMode, WorkspaceState, DEFAULT_DIFF_CONTEXT_LINES,
+        DEFAULT_RENAME_SIMILARITY_THRESHOLD,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
@@ -4318,6 +4634,81 @@ mod tests {
         assert!(uu.has_merge_conflicts());
         assert!(uu.has_inline_merge_conflicts());
         assert_eq!(uu.merge_state_description(), None);
+    }
+
+    #[test]
+    fn find_merge_conflicts_matches_upstream_cases() {
+        let content = "++<<<<<<< HEAD\nfoo\n++=======\nbar\n++>>>>>>> branch\n\n<<<<<<< HEAD\nfoo\n||||||| ancestor\nbar\n=======\nbaz\n>>>>>>> branch\n";
+
+        assert_eq!(
+            find_merge_conflicts(content),
+            vec![
+                MergeConflict {
+                    start: 0,
+                    ancestor: None,
+                    target: 2,
+                    end: 4,
+                },
+                MergeConflict {
+                    start: 6,
+                    ancestor: Some(8),
+                    target: 10,
+                    end: 12,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_conflict_session_selection_and_content_stack_match_upstream_semantics() {
+        let mut state = MergeConflictSessionState::default();
+        let content = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n";
+        state.set_content(content.to_string(), "conflict.txt".to_string());
+
+        assert!(state.active());
+        assert_eq!(state.get_path(), "conflict.txt");
+        assert_eq!(state.conflicts.len(), 1);
+        assert_eq!(state.selection(), MergeConflictSelection::Top);
+        assert_eq!(state.get_selected_line(), 1);
+        assert_eq!(state.get_selected_range(), (0, 2));
+        assert_eq!(state.plain_render_selected(), "<<<<<<< HEAD\nours\n=======");
+
+        state.select_next_conflict_hunk();
+        assert_eq!(state.selection(), MergeConflictSelection::Bottom);
+        assert_eq!(state.get_selected_range(), (2, 4));
+        assert_eq!(
+            state.content_after_conflict_resolve(state.selection()),
+            Some("theirs".to_string())
+        );
+
+        state.push_content("resolved\n".to_string());
+        assert!(state.all_conflicts_resolved());
+        assert!(state.undo());
+        assert!(!state.all_conflicts_resolved());
+        assert_eq!(state.get_content(), content.to_string());
+    }
+
+    #[test]
+    fn merge_conflict_session_clamps_selection_and_resets_like_upstream() {
+        let mut state = MergeConflictSessionState::default();
+        let content =
+            "<<<<<<< HEAD\nours\n||||||| ancestor\nbase\n=======\ntheirs\n>>>>>>> branch\n";
+        state.set_content(content.to_string(), "conflict.txt".to_string());
+
+        state.select_next_conflict_hunk();
+        state.select_next_conflict_hunk();
+        state.select_next_conflict_hunk();
+        assert_eq!(state.selection(), MergeConflictSelection::Bottom);
+        assert_eq!(state.get_conflict_middle(), 4);
+
+        state.reset_conflict_selection();
+        assert_eq!(state.conflict_index, 0);
+        assert_eq!(state.selection(), MergeConflictSelection::Bottom);
+
+        state.reset();
+        assert!(!state.active());
+        assert!(state.contents.is_empty());
+        assert!(state.conflicts.is_empty());
     }
 
     #[test]
