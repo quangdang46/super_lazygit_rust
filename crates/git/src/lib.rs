@@ -15,13 +15,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super_lazygit_core::state::GitFlowBranchType;
 use super_lazygit_core::{
-    Author, BisectState, BranchItem, CommitDivergence, CommitFileItem, CommitHistoryMode,
-    CommitItem, CommitStatus, CommitTodoAction, ComparisonTarget, Diagnostics, DiagnosticsSnapshot,
-    DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus, FileStatusKind,
-    GitCommand, GitCommandRequest, HeadKind, MergeFastForwardPreference, MergeState, MergeVariant,
-    PatchApplicationMode, RebaseKind, RebaseStartMode, RebaseState, ReflogItem, RemoteBranchItem,
-    RemoteItem, RemoteSummary, RepoDetail, RepoId, RepoSummary, ResetMode, SelectedHunk, StashItem,
-    StashMode, SubmoduleItem, TagItem, Timestamp, WatcherFreshness, WorkingTreeState, WorktreeItem,
+    normalize_linefeeds, Author, BisectState, BranchItem, CommitDivergence, CommitFileItem,
+    CommitHistoryMode, CommitItem, CommitStatus, CommitTodoAction, ComparisonTarget, Diagnostics,
+    DiagnosticsSnapshot, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffPresentation, FileStatus,
+    FileStatusKind, GitCommand, GitCommandRequest, HeadKind, MergeFastForwardPreference,
+    MergeState, MergeVariant, PatchApplicationMode, RebaseKind, RebaseStartMode, RebaseState,
+    ReflogItem, RemoteBranchItem, RemoteItem, RemoteSummary, RepoDetail, RepoId, RepoSummary,
+    ResetMode, SelectedHunk, StashItem, StashMode, SubmoduleItem, TagItem, Timestamp,
+    WatcherFreshness, WorkingTreeState, WorktreeItem,
 };
 use thiserror::Error;
 
@@ -2988,7 +2989,7 @@ fn get_commit_message_from_history(repo_path: &Path, value: usize) -> GitResult<
 
 #[allow(dead_code)]
 fn strings_normalize_commit_message(message: &str) -> String {
-    strings_trim_lines(message).replace("\r\n", "\n")
+    normalize_linefeeds(&strings_trim_lines(message))
 }
 
 #[allow(dead_code)]
@@ -11119,6 +11120,22 @@ index 9ce8efb33..0632e41b0 100644
             GitError::OperationFailed {
                 message: INVALID_COMMIT_INDEX_MESSAGE.to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn strings_normalize_commit_message_matches_lazygit_linefeed_rules() {
+        assert_eq!(
+            strings_normalize_commit_message("\r\nfirst\r\nsecond\r\n"),
+            "first\nsecond"
+        );
+        assert_eq!(
+            strings_normalize_commit_message("\rfirst\rsecond\r"),
+            "firstsecond"
+        );
+        assert_eq!(
+            strings_normalize_commit_message("  one\r\ntwo\rthree  \n"),
+            "one\ntwothree"
         );
     }
 
