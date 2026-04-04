@@ -12,6 +12,7 @@ pub struct AppState {
     pub pending_confirmation: Option<PendingConfirmation>,
     pub pending_input_prompt: Option<PendingInputPrompt>,
     pub pending_menu: Option<PendingMenu>,
+    pub return_context_stack: Vec<ReturnContext>,
     pub status_messages: VecDeque<StatusMessage>,
     pub notifications: VecDeque<Notification>,
     pub background_jobs: BTreeMap<JobId, BackgroundJob>,
@@ -136,6 +137,7 @@ pub enum ModalKind {
 pub struct PendingConfirmation {
     pub repo_id: RepoId,
     pub operation: ConfirmableOperation,
+    pub return_focus: PaneId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -325,6 +327,19 @@ pub struct PendingInputPrompt {
     pub operation: InputPromptOperation,
     pub value: String,
     pub return_focus: PaneId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReturnContext {
+    pub pane: PaneId,
+    pub repo_subview: Option<RepoSubview>,
+}
+
+impl ReturnContext {
+    #[must_use]
+    pub const fn new(pane: PaneId, repo_subview: Option<RepoSubview>) -> Self {
+        Self { pane, repo_subview }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

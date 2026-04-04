@@ -178,7 +178,7 @@
 ./references/lazygit-master/pkg/fakes/log.go
 [x] ./references/lazygit-master/pkg/gui/background.go
 [x] ./references/lazygit-master/pkg/gui/command_log_panel.go
-./references/lazygit-master/pkg/gui/context.go
+[x] ./references/lazygit-master/pkg/gui/context.go
 ./references/lazygit-master/pkg/gui/context/base_context.go
 ./references/lazygit-master/pkg/gui/context/branches_context.go
 ./references/lazygit-master/pkg/gui/context/commit_files_context.go

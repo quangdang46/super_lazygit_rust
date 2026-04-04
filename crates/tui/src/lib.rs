@@ -117,6 +117,14 @@ struct ListViewportMetrics {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct WindowBounds {
+    viewport_lines: usize,
+    header_lines: usize,
+    footer_lines: usize,
+    len: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct RepoFilteredListContext<'a> {
     filter_query: &'a str,
     filter_focused: bool,
@@ -724,13 +732,15 @@ impl TuiApp {
         let next_offset = match self.config.gui.scroll_off_behavior {
             ScrollOffBehavior::Margin => compute_margin_window_start(
                 current_offset,
-                metrics.viewport_lines,
-                metrics.header_lines,
-                metrics.footer_lines,
+                WindowBounds {
+                    viewport_lines: metrics.viewport_lines,
+                    header_lines: metrics.header_lines,
+                    footer_lines: metrics.footer_lines,
+                    len: metrics.len,
+                },
                 self.config.gui.scroll_off_margin,
                 before_selected,
                 after_selected,
-                metrics.len,
             ),
             ScrollOffBehavior::Jump => compute_jump_window_start(
                 metrics.selected_position,
@@ -6477,18 +6487,16 @@ fn calculate_lines_to_scroll_down(
 
 fn compute_margin_window_start(
     viewport_start: usize,
-    viewport_lines: usize,
-    header_lines: usize,
-    footer_lines: usize,
+    bounds: WindowBounds,
     scroll_off_margin: usize,
     line_idx_before: usize,
     line_idx_after: usize,
-    len: usize,
 ) -> usize {
-    let viewport_height = viewport_lines
-        .saturating_sub(header_lines.saturating_add(footer_lines))
+    let viewport_height = bounds
+        .viewport_lines
+        .saturating_sub(bounds.header_lines.saturating_add(bounds.footer_lines))
         .max(1);
-    let max_start = len.saturating_sub(viewport_height);
+    let max_start = bounds.len.saturating_sub(viewport_height);
     if line_idx_after < line_idx_before {
         viewport_start
             .saturating_sub(calculate_lines_to_scroll_up(
@@ -12512,16 +12520,63 @@ mod tests {
     #[test]
     fn margin_window_start_scrolls_only_when_selection_enters_margin() {
         assert_eq!(
-            compute_margin_window_start(10, 10, 0, 0, 3, 14, 13, 100),
+            compute_margin_window_start(
+                10,
+                WindowBounds {
+                    viewport_lines: 10,
+                    header_lines: 0,
+                    footer_lines: 0,
+                    len: 100,
+                },
+                3,
+                14,
+                13,
+            ),
             10
         );
-        assert_eq!(compute_margin_window_start(10, 10, 0, 0, 3, 13, 12, 100), 9);
         assert_eq!(
-            compute_margin_window_start(10, 10, 0, 0, 3, 16, 17, 100),
+            compute_margin_window_start(
+                10,
+                WindowBounds {
+                    viewport_lines: 10,
+                    header_lines: 0,
+                    footer_lines: 0,
+                    len: 100,
+                },
+                3,
+                13,
+                12,
+            ),
+            9
+        );
+        assert_eq!(
+            compute_margin_window_start(
+                10,
+                WindowBounds {
+                    viewport_lines: 10,
+                    header_lines: 0,
+                    footer_lines: 0,
+                    len: 100,
+                },
+                3,
+                16,
+                17,
+            ),
             11
         );
         assert_eq!(
-            compute_margin_window_start(10, 10, 0, 0, 3, 18, 19, 100),
+            compute_margin_window_start(
+                10,
+                WindowBounds {
+                    viewport_lines: 10,
+                    header_lines: 0,
+                    footer_lines: 0,
+                    len: 100,
+                },
+                3,
+                18,
+                19,
+            ),
             13
         );
     }
@@ -14485,6 +14540,7 @@ mod tests {
             pending_confirmation: Some(super_lazygit_core::PendingConfirmation {
                 repo_id: RepoId::new("repo-1"),
                 operation: super_lazygit_core::ConfirmableOperation::Pull,
+                return_focus: PaneId::RepoUnstaged,
             }),
             ..Default::default()
         };
@@ -16589,6 +16645,7 @@ mod tests {
             pending_confirmation: Some(super_lazygit_core::PendingConfirmation {
                 repo_id: RepoId::new("repo-1"),
                 operation: super_lazygit_core::ConfirmableOperation::Fetch,
+                return_focus: PaneId::RepoUnstaged,
             }),
             mode: AppMode::Repository,
             repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),

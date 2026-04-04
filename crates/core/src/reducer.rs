@@ -11,7 +11,7 @@ use crate::state::{
     DiffLineKind, DiffPresentation, InputPromptOperation, JobId, MenuOperation,
     MergeFastForwardPreference, MergeState, MergeVariant, MessageLevel, Notification,
     OperationProgress, PaneId, PendingInputPrompt, PendingMenu, PendingRemoteFlow, RepoModeState,
-    ResetMode, ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
+    ResetMode, ReturnContext, ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
     MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
     RENAME_SIMILARITY_THRESHOLD_STEP,
 };
@@ -1465,6 +1465,9 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         }
         Action::OpenModal { kind, title } => {
             state
+                .return_context_stack
+                .push(current_return_context(state));
+            state
                 .modal_stack
                 .push(crate::state::Modal::new(kind, title));
             state.focused_pane = PaneId::Modal;
@@ -1475,7 +1478,6 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::CloseTopModal => {
-            let mut modal_return_focus = None;
             if state
                 .modal_stack
                 .last()
@@ -1488,24 +1490,32 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 .last()
                 .is_some_and(|modal| matches!(modal.kind, crate::state::ModalKind::InputPrompt))
             {
-                modal_return_focus = state
-                    .pending_input_prompt
-                    .take()
-                    .map(|prompt| prompt.return_focus);
+                state.pending_input_prompt = None;
             }
             if state
                 .modal_stack
                 .last()
                 .is_some_and(|modal| matches!(modal.kind, crate::state::ModalKind::Menu))
             {
-                modal_return_focus = state.pending_menu.take().map(|menu| menu.return_focus);
+                state.pending_menu = None;
             }
             state.modal_stack.pop();
             if state.modal_stack.is_empty() {
-                state.focused_pane = modal_return_focus.unwrap_or(match state.mode {
-                    AppMode::Workspace => PaneId::WorkspaceList,
-                    AppMode::Repository => PaneId::RepoUnstaged,
-                });
+                let return_context =
+                    state
+                        .return_context_stack
+                        .pop()
+                        .unwrap_or(ReturnContext::new(
+                            match state.mode {
+                                AppMode::Workspace => PaneId::WorkspaceList,
+                                AppMode::Repository => PaneId::RepoUnstaged,
+                            },
+                            state
+                                .repo_mode
+                                .as_ref()
+                                .map(|repo_mode| repo_mode.active_subview),
+                        ));
+                restore_return_context(state, return_context);
             }
             effects.push(Effect::ScheduleRender);
         }
@@ -4488,7 +4498,14 @@ fn open_confirmation_modal(
     operation: ConfirmableOperation,
 ) {
     let title = confirmation_title(&operation);
-    state.pending_confirmation = Some(crate::state::PendingConfirmation { repo_id, operation });
+    state
+        .return_context_stack
+        .push(current_return_context(state));
+    state.pending_confirmation = Some(crate::state::PendingConfirmation {
+        repo_id,
+        operation,
+        return_focus: state.focused_pane,
+    });
     state.modal_stack.push(crate::state::Modal::new(
         crate::state::ModalKind::Confirm,
         title,
@@ -4889,12 +4906,14 @@ fn open_input_prompt(
 ) {
     let title = input_prompt_title(&operation);
     let value = input_prompt_initial_value(&operation);
-    let return_focus = state.focused_pane;
+    state
+        .return_context_stack
+        .push(current_return_context(state));
     state.pending_input_prompt = Some(PendingInputPrompt {
         repo_id,
         operation,
         value,
-        return_focus,
+        return_focus: state.focused_pane,
     });
     state.modal_stack.push(crate::state::Modal::new(
         crate::state::ModalKind::InputPrompt,
@@ -4905,12 +4924,14 @@ fn open_input_prompt(
 
 fn open_menu(state: &mut AppState, repo_id: crate::state::RepoId, operation: MenuOperation) {
     let title = menu_title(operation);
-    let return_focus = state.focused_pane;
+    state
+        .return_context_stack
+        .push(current_return_context(state));
     state.pending_menu = Some(PendingMenu {
         repo_id,
         operation,
         selected_index: 0,
-        return_focus,
+        return_focus: state.focused_pane,
     });
     state.modal_stack.push(crate::state::Modal::new(
         crate::state::ModalKind::Menu,
@@ -5677,6 +5698,27 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::BulkSubmoduleOptions => bulk_submodule_menu_entries().len(),
         MenuOperation::RecentRepos => recent_repo_menu_repo_ids(state).len(),
         MenuOperation::CommandLog => state.status_messages.len(),
+    }
+}
+
+fn current_return_context(state: &AppState) -> ReturnContext {
+    ReturnContext::new(
+        state.focused_pane,
+        state
+            .repo_mode
+            .as_ref()
+            .map(|repo_mode| repo_mode.active_subview),
+    )
+}
+
+fn restore_return_context(state: &mut AppState, return_context: ReturnContext) {
+    state.focused_pane = return_context.pane;
+    if let (Some(repo_mode), Some(subview)) =
+        (state.repo_mode.as_mut(), return_context.repo_subview)
+    {
+        clear_repo_subview_filter_focus(repo_mode);
+        repo_mode.active_subview = subview;
+        sync_repo_subview_selection(repo_mode, subview);
     }
 }
 
@@ -10462,8 +10504,8 @@ mod tests {
         InputPromptOperation, JobId, MenuOperation, MergeFastForwardPreference, MergeState,
         MergeVariant, MessageLevel, ModalKind, OperationProgress, PaneId, RebaseKind, RebaseState,
         ReflogItem, RepoDetail, RepoId, RepoModeState, RepoSubview, RepoSubviewFilterState,
-        RepoSummary, ScanStatus, SelectedHunk, StashItem, StashMode, SubmoduleItem, Timestamp,
-        WatcherHealth, WorkspaceFilterMode, WorktreeItem,
+        RepoSummary, ReturnContext, ScanStatus, SelectedHunk, StashItem, StashMode, SubmoduleItem,
+        Timestamp, WatcherHealth, WorkspaceFilterMode, WorktreeItem,
     };
 
     use super::{
@@ -14692,7 +14734,7 @@ mod tests {
                 repo_id,
                 InputPromptOperation::CreateWorktree,
                 String::new(),
-                PaneId::RepoDetail
+                PaneId::RepoDetail,
             ))
         );
     }
@@ -14736,7 +14778,7 @@ mod tests {
                     mode: StashMode::Tracked,
                 },
                 String::new(),
-                PaneId::RepoUnstaged
+                PaneId::RepoUnstaged,
             ))
         );
     }
@@ -15145,7 +15187,46 @@ mod tests {
                 menu.selected_index,
                 menu.return_focus,
             )),
-            Some((repo_id, MenuOperation::BisectOptions, 0, PaneId::RepoDetail))
+            Some((repo_id, MenuOperation::BisectOptions, 0, PaneId::RepoDetail,))
+        );
+    }
+
+    #[test]
+    fn close_top_modal_restores_repo_subview_with_return_context() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Diffing options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::DiffOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id)
+            }),
+            return_context_stack: vec![ReturnContext::new(
+                PaneId::RepoDetail,
+                Some(RepoSubview::RemoteBranches),
+            )],
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CloseTopModal));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::RemoteBranches)
         );
     }
 
@@ -15388,7 +15469,7 @@ mod tests {
                 menu.selected_index,
                 menu.return_focus,
             )),
-            Some((repo_id, MenuOperation::PatchOptions, 0, PaneId::RepoDetail))
+            Some((repo_id, MenuOperation::PatchOptions, 0, PaneId::RepoDetail,))
         );
     }
 
@@ -17460,6 +17541,7 @@ mod tests {
             pending_confirmation: Some(crate::state::PendingConfirmation {
                 repo_id: repo_id.clone(),
                 operation: ConfirmableOperation::Push,
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17504,6 +17586,7 @@ mod tests {
                 operation: ConfirmableOperation::DropStash {
                     stash_ref: "stash@{0}".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17550,6 +17633,7 @@ mod tests {
                 operation: ConfirmableOperation::PopStash {
                     stash_ref: "stash@{0}".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17597,6 +17681,7 @@ mod tests {
                     target: "HEAD@{1}".to_string(),
                     summary: "HEAD@{1}: commit: prior".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17644,6 +17729,7 @@ mod tests {
                     commit: "older".to_string(),
                     summary: "old1234 older commit".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17684,6 +17770,7 @@ mod tests {
                     summary: "old1234 older commit".to_string(),
                     keep_message: true,
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17725,6 +17812,7 @@ mod tests {
                     summary: "old1234 older commit".to_string(),
                     adjacent_summary: "head HEAD".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17766,6 +17854,7 @@ mod tests {
                     summary: "head HEAD".to_string(),
                     adjacent_summary: "old1234 older commit".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17806,6 +17895,7 @@ mod tests {
                     commit: "1234567890abcdef".to_string(),
                     summary: "1234567 second".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17854,6 +17944,7 @@ mod tests {
                     commit: "1234567890abcdef".to_string(),
                     summary: "1234567 second".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17890,6 +17981,7 @@ mod tests {
                     commit: "1234567890abcdef".to_string(),
                     summary: "1234567 second".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17923,6 +18015,7 @@ mod tests {
             pending_confirmation: Some(crate::state::PendingConfirmation {
                 repo_id: repo_id.clone(),
                 operation: ConfirmableOperation::NukeWorkingTree,
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
@@ -17963,6 +18056,7 @@ mod tests {
             pending_confirmation: Some(crate::state::PendingConfirmation {
                 repo_id: RepoId::new("repo-1"),
                 operation: ConfirmableOperation::Fetch,
+                return_focus: PaneId::WorkspaceList,
             }),
             ..Default::default()
         };
@@ -22361,6 +22455,7 @@ mod tests {
                     commit: "older".to_string(),
                     summary: "old1234 older commit".to_string(),
                 },
+                return_focus: PaneId::RepoUnstaged,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..Default::default()
