@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -212,6 +212,29 @@ impl WorkspaceRegistry {
     }
 }
 
+pub fn for_each_line_in_file(
+    path: impl AsRef<Path>,
+    callback: impl FnMut(String, usize),
+) -> io::Result<()> {
+    let file = fs::File::open(path)?;
+    for_each_line_in_stream(file, callback);
+    Ok(())
+}
+
+pub fn for_each_line_in_stream(reader: impl Read, mut callback: impl FnMut(String, usize)) {
+    let mut buffered_reader = BufReader::new(reader);
+    for index in 0usize.. {
+        let mut line = String::new();
+        let bytes_read = buffered_reader
+            .read_line(&mut line)
+            .expect("reading in-memory line stream should not fail");
+        if bytes_read == 0 {
+            break;
+        }
+        callback(line, index);
+    }
+}
+
 fn normalize_path(path: &Path) -> PathBuf {
     path.canonicalize()
         .unwrap_or_else(|_| normalize_pathbuf(path.to_path_buf()))
@@ -247,6 +270,8 @@ fn mark_workspace_stale(workspace: &mut WorkspaceState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::io::Cursor;
 
     use tempfile::TempDir;
 
@@ -407,5 +432,52 @@ mod tests {
 
         let mut hydrated = WorkspaceRegistry::new(registry.root().cloned());
         assert!(hydrated.load_cache().is_none());
+    }
+
+    #[test]
+    fn for_each_line_in_stream_matches_upstream_cases() {
+        let scenarios = [
+            ("", Vec::<String>::new()),
+            ("abc\n", vec!["abc\n".to_string()]),
+            ("abc", vec!["abc".to_string()]),
+            ("abc\ndef\n", vec!["abc\n".to_string(), "def\n".to_string()]),
+            (
+                "abc\n\ndef\n",
+                vec!["abc\n".to_string(), "\n".to_string(), "def\n".to_string()],
+            ),
+            (
+                "abc\ndef\nghi",
+                vec!["abc\n".to_string(), "def\n".to_string(), "ghi".to_string()],
+            ),
+        ];
+
+        for (input, expected_lines) in scenarios {
+            let mut lines = Vec::new();
+            let mut indices = Vec::new();
+            for_each_line_in_stream(Cursor::new(input), |line, index| {
+                lines.push(line);
+                indices.push(index);
+            });
+            assert_eq!(lines, expected_lines);
+            assert_eq!(indices, (0..expected_lines.len()).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn for_each_line_in_file_preserves_newlines_and_indices() {
+        let root = tempfile::tempdir().expect("workspace root");
+        let path = root.path().join("lines.txt");
+        fs::write(&path, "abc\n\ndef\n").expect("write fixture");
+
+        let mut lines = Vec::new();
+        let mut indices = Vec::new();
+        for_each_line_in_file(&path, |line, index| {
+            lines.push(line);
+            indices.push(index);
+        })
+        .expect("read file");
+
+        assert_eq!(lines, vec!["abc\n", "\n", "def\n"]);
+        assert_eq!(indices, vec![0, 1, 2]);
     }
 }
