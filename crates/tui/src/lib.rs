@@ -10988,18 +10988,6 @@ fn canonicalize_action_id(action_id: &str) -> String {
 }
 
 fn canonicalize_keybinding(key: &str) -> Option<String> {
-    if let Some(alias) = super_lazygit_config::normalize_keybinding_alias(key) {
-        if alias == "space" {
-            return Some(String::from("space"));
-        }
-
-        if alias.chars().count() == 1 {
-            return Some(alias);
-        }
-
-        return Some(alias);
-    }
-
     if key == " " {
         return Some(String::from("space"));
     }
@@ -11015,6 +11003,14 @@ fn canonicalize_keybinding(key: &str) -> Option<String> {
 
     if trimmed.chars().count() == 1 {
         return Some(trimmed.to_string());
+    }
+
+    if let Some(alias) = super_lazygit_config::normalize_keybinding_alias(trimmed) {
+        if alias == "space" {
+            return Some(String::from("space"));
+        }
+
+        return Some(alias);
     }
 
     Some(trimmed.to_ascii_lowercase())
@@ -18365,15 +18361,6 @@ mod tests {
         let moved = anchored_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "J".to_string(),
         })));
-        dbg!(
-            &moved.effects,
-            &moved.state.repo_mode.as_ref().map(|repo_mode| (
-                repo_mode.active_subview,
-                repo_mode.diff_line_cursor,
-                repo_mode.diff_line_anchor,
-                repo_mode.diff_scroll,
-            ))
-        );
         assert_eq!(
             moved
                 .state
@@ -18480,6 +18467,89 @@ mod tests {
         let diff = sample_repo_detail().diff;
 
         assert_eq!(calculate_patch_focus_origin(&diff, 3, 3, None, None), 2);
+    }
+
+    #[test]
+    fn calculate_new_origin_with_needed_and_wanted_idx_matches_upstream_line_cases() {
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(250, 100, 500, 210, 210),
+            160
+        );
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(50, 100, 500, 10, 10),
+            0
+        );
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(0, 100, 500, 150, 150),
+            100
+        );
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(0, 100, 200, 199, 199),
+            100
+        );
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(0, 100, 500, 50, 50),
+            0
+        );
+    }
+
+    #[test]
+    fn calculate_new_origin_with_needed_and_wanted_idx_matches_upstream_range_cases() {
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(0, 100, 500, 150, 40),
+            50
+        );
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(0, 100, 500, 40, 150),
+            40
+        );
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(50, 100, 500, 40, 150),
+            40
+        );
+    }
+
+    #[test]
+    fn calculate_new_origin_with_needed_and_wanted_idx_matches_upstream_hunk_case() {
+        assert_eq!(
+            calculate_new_origin_with_needed_and_wanted_idx(50, 100, 500, 40, 200),
+            40
+        );
+    }
+
+    #[test]
+    fn calculate_patch_focus_origin_matches_upstream_range_focus_cases() {
+        let mut detail = sample_repo_detail();
+        detail.diff.lines = (0..500)
+            .map(|index| DiffLine {
+                kind: if (40..=150).contains(&index) {
+                    DiffLineKind::Addition
+                } else {
+                    DiffLineKind::Context
+                },
+                content: format!("line {index}"),
+            })
+            .collect();
+        detail.diff.hunks = vec![super_lazygit_core::DiffHunk {
+            header: "@@ range @@".to_string(),
+            selection: super_lazygit_core::SelectedHunk::default(),
+            start_line_index: 40,
+            end_line_index: 151,
+        }];
+        detail.diff.selected_hunk = Some(0);
+
+        assert_eq!(
+            calculate_patch_focus_origin(&detail.diff, 0, 100, Some(150), Some(40)),
+            50
+        );
+        assert_eq!(
+            calculate_patch_focus_origin(&detail.diff, 0, 100, Some(40), Some(150)),
+            40
+        );
+        assert_eq!(
+            calculate_patch_focus_origin(&detail.diff, 50, 100, Some(40), Some(150)),
+            40
+        );
     }
 
     #[test]
@@ -20936,5 +21006,12 @@ mod tests {
         assert!(binding_matches_key("ins", "", "insert"));
         assert!(binding_matches_key("escape", "", "esc"));
         assert!(binding_matches_key("spacebar", " ", "space"));
+    }
+
+    #[test]
+    fn binding_matches_key_preserves_uppercase_single_char_bindings() {
+        assert!(binding_matches_key("J", "J", "j"));
+        assert!(!binding_matches_key("J", "j", "j"));
+        assert!(binding_matches_key("j", "j", "j"));
     }
 }
