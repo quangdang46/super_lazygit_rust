@@ -443,6 +443,37 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(load_repo_detail_effect(state, repo_id));
             effects.push(Effect::ScheduleRender);
         }
+        Action::OpenSelectedSubCommits => {
+            let Some((repo_id, commit_oid)) = state.repo_mode.as_ref().and_then(|repo_mode| {
+                selected_commit_item(repo_mode)
+                    .map(|commit| (repo_mode.current_repo_id.clone(), commit.oid.clone()))
+            }) else {
+                push_warning(state, "Select a commit before opening nested commits.");
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+
+            if let Some(repo_mode) = state.repo_mode.as_mut() {
+                clear_repo_subview_filter_focus(repo_mode);
+                repo_mode.active_subview = crate::state::RepoSubview::Commits;
+                repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::SubHistory;
+                repo_mode.commit_history_mode = CommitHistoryMode::SubHistory;
+                repo_mode.sub_commit_parent_ref = Some(commit_oid.clone());
+                repo_mode.sub_commit_divergence_ref = None;
+                repo_mode.sub_commit_show_branch_heads = false;
+                repo_mode.sub_commit_limit = true;
+                repo_mode.commit_history_ref = Some(commit_oid);
+                repo_mode.pending_commit_selection_oid = None;
+                repo_mode.commits_filter = crate::state::RepoSubviewFilterState::default();
+                repo_mode.commit_files_filter = crate::state::RepoSubviewFilterState::default();
+                repo_mode.diff_scroll = 0;
+                close_commit_box(repo_mode, false);
+                sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
+            }
+            state.focused_pane = PaneId::RepoDetail;
+            effects.push(load_repo_detail_effect(state, repo_id));
+            effects.push(Effect::ScheduleRender);
+        }
         Action::CopySelectedReflogCommitHash => {
             let Some((repo_id, value)) = state.repo_mode.as_ref().and_then(|repo_mode| {
                 selected_reflog_entry(repo_mode).and_then(|(_, entry)| {
@@ -514,6 +545,10 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 match repo_mode.commit_subview_mode {
                     crate::state::CommitSubviewMode::History => {
+                        push_warning(state, "Open nested commits first.");
+                        effects.push(Effect::ScheduleRender);
+                    }
+                    crate::state::CommitSubviewMode::SubHistory => {
                         if selected_commit_item(repo_mode).is_some() {
                             repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::Files;
                             repo_mode.commit_files_mode = CommitFilesMode::List;
@@ -558,6 +593,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::CloseSelectedCommitFiles => {
+            let mut reload_repo_id = None;
             if let Some(repo_mode) = state.repo_mode.as_mut() {
                 if repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::Files {
                     match repo_mode.commit_files_mode {
@@ -566,7 +602,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                         }
                         CommitFilesMode::List => {
                             repo_mode.commit_subview_mode =
-                                crate::state::CommitSubviewMode::History;
+                                crate::state::CommitSubviewMode::SubHistory;
                             repo_mode.commit_files_mode = CommitFilesMode::List;
                         }
                     }
@@ -577,6 +613,23 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     state.focused_pane = PaneId::RepoDetail;
                     effects.push(Effect::ScheduleRender);
                 }
+                if repo_mode.commit_subview_mode == crate::state::CommitSubviewMode::SubHistory {
+                    reload_repo_id = Some(repo_mode.current_repo_id.clone());
+                    repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+                    repo_mode.commit_history_mode = CommitHistoryMode::Linear;
+                    repo_mode.commit_history_ref = None;
+                    repo_mode.sub_commit_parent_ref = None;
+                    repo_mode.sub_commit_divergence_ref = None;
+                    repo_mode.sub_commit_show_branch_heads = false;
+                    repo_mode.sub_commit_limit = true;
+                    repo_mode.commits_filter = crate::state::RepoSubviewFilterState::default();
+                    repo_mode.diff_scroll = 0;
+                    state.focused_pane = PaneId::RepoDetail;
+                }
+            }
+            if let Some(repo_id) = reload_repo_id {
+                effects.push(load_repo_detail_effect(state, repo_id));
+                effects.push(Effect::ScheduleRender);
             }
         }
         Action::OpenSelectedStashFiles => {
@@ -3936,7 +3989,8 @@ fn activate_repo_subview_selection(state: &mut AppState, effects: &mut Vec<Effec
         }
         crate::state::RepoSubview::Commits => {
             let action = match repo_mode.commit_subview_mode {
-                crate::state::CommitSubviewMode::History => Action::OpenSelectedCommitFiles,
+                crate::state::CommitSubviewMode::History => Action::OpenSelectedSubCommits,
+                crate::state::CommitSubviewMode::SubHistory => Action::OpenSelectedCommitFiles,
                 crate::state::CommitSubviewMode::Files => match repo_mode.commit_files_mode {
                     CommitFilesMode::List => Action::OpenSelectedCommitFiles,
                     CommitFilesMode::Diff => Action::CloseSelectedCommitFiles,
@@ -4034,7 +4088,7 @@ fn step_commit_selection(repo_mode: &mut RepoModeState, step: isize) -> bool {
     }
 
     let changed = match repo_mode.commit_subview_mode {
-        crate::state::CommitSubviewMode::History => {
+        crate::state::CommitSubviewMode::History | crate::state::CommitSubviewMode::SubHistory => {
             let visible_indices = filtered_commit_indices(repo_mode);
             step_filtered_selection(
                 &mut repo_mode.commits_view.selected_index,
@@ -6865,6 +6919,7 @@ fn filter_menu_subject(repo_mode: &RepoModeState) -> &'static str {
         crate::state::RepoSubview::Tags => "tag list",
         crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
             crate::state::CommitSubviewMode::History => "commit history",
+            crate::state::CommitSubviewMode::SubHistory => "nested commit history",
             crate::state::CommitSubviewMode::Files => "commit-file list",
         },
         crate::state::RepoSubview::Stash => "stash list",
@@ -8206,7 +8261,8 @@ fn sync_repo_subview_selection(repo_mode: &mut RepoModeState, subview: crate::st
         crate::state::RepoSubview::RemoteBranches => sync_remote_branch_selection(repo_mode),
         crate::state::RepoSubview::Tags => sync_tag_selection(repo_mode),
         crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
-            crate::state::CommitSubviewMode::History => sync_commit_selection(repo_mode),
+            crate::state::CommitSubviewMode::History
+            | crate::state::CommitSubviewMode::SubHistory => sync_commit_selection(repo_mode),
             crate::state::CommitSubviewMode::Files => sync_commit_file_selection(repo_mode),
         },
         crate::state::RepoSubview::Stash => match repo_mode.stash_subview_mode {
@@ -8835,6 +8891,11 @@ fn begin_fixup_base_commit_selection(
         clear_repo_subview_filter_focus(repo_mode);
         repo_mode.active_subview = crate::state::RepoSubview::Commits;
         repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
+        repo_mode.commit_history_mode = CommitHistoryMode::Linear;
+        repo_mode.sub_commit_parent_ref = None;
+        repo_mode.sub_commit_divergence_ref = None;
+        repo_mode.sub_commit_show_branch_heads = false;
+        repo_mode.sub_commit_limit = true;
         repo_mode.diff_scroll = 0;
         close_commit_box(repo_mode, false);
         sync_repo_subview_selection(repo_mode, crate::state::RepoSubview::Commits);
@@ -9507,7 +9568,8 @@ fn select_repo_detail_item_at(repo_mode: &mut RepoModeState, index: usize) -> bo
             )
         }
         crate::state::RepoSubview::Commits => match repo_mode.commit_subview_mode {
-            crate::state::CommitSubviewMode::History => {
+            crate::state::CommitSubviewMode::History
+            | crate::state::CommitSubviewMode::SubHistory => {
                 let visible_indices = filtered_commit_indices(repo_mode);
                 select_filtered_visible_index(
                     &mut repo_mode.commits_view.selected_index,
@@ -9707,7 +9769,7 @@ fn select_commit_edge(repo_mode: &mut RepoModeState, select_last: bool) -> bool 
     }
 
     let changed = match repo_mode.commit_subview_mode {
-        crate::state::CommitSubviewMode::History => {
+        crate::state::CommitSubviewMode::History | crate::state::CommitSubviewMode::SubHistory => {
             let visible_indices = filtered_commit_indices(repo_mode);
             select_filtered_edge(
                 &mut repo_mode.commits_view.selected_index,
@@ -14487,6 +14549,63 @@ mod tests {
                 Effect::ScheduleRender,
             ]
         );
+    }
+
+    #[test]
+    fn open_selected_sub_commits_switches_to_nested_history_and_loads_parent_ref() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::History,
+                commit_history_mode: CommitHistoryMode::Linear,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "feature commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedSubCommits));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result.state.repo_mode.as_ref().map(|repo_mode| (
+                repo_mode.commit_subview_mode,
+                repo_mode.commit_history_mode,
+                repo_mode.commit_history_ref.as_deref(),
+                repo_mode.sub_commit_parent_ref.as_deref(),
+                repo_mode.sub_commit_limit,
+            )),
+            Some((
+                crate::state::CommitSubviewMode::SubHistory,
+                CommitHistoryMode::SubHistory,
+                Some("abcdef1234567890"),
+                Some("abcdef1234567890"),
+                true,
+            ))
+        );
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::LoadRepoDetail { repo_id: actual_repo_id, commit_ref, commit_history_mode, .. }, Effect::ScheduleRender]
+                if actual_repo_id == &repo_id
+                    && commit_ref.as_deref() == Some("abcdef1234567890")
+                    && *commit_history_mode == CommitHistoryMode::SubHistory
+        ));
     }
 
     #[test]
@@ -22822,6 +22941,43 @@ mod tests {
             Some((
                 crate::state::CommitSubviewMode::History,
                 crate::state::CommitFilesMode::List
+            ))
+        );
+    }
+
+    #[test]
+    fn close_selected_commit_files_from_sub_history_returns_to_parent_history() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::SubHistory,
+                commit_history_mode: CommitHistoryMode::SubHistory,
+                commit_history_ref: Some("abcdef1234567890".to_string()),
+                sub_commit_parent_ref: Some("abcdef1234567890".to_string()),
+                detail: Some(RepoDetail::default()),
+                ..RepoModeState::new(repo_id)
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CloseSelectedCommitFiles));
+
+        assert_eq!(
+            result.state.repo_mode.as_ref().map(|repo_mode| (
+                repo_mode.commit_subview_mode,
+                repo_mode.commit_history_mode,
+                repo_mode.commit_history_ref.as_deref(),
+                repo_mode.sub_commit_parent_ref.as_deref(),
+            )),
+            Some((
+                crate::state::CommitSubviewMode::History,
+                CommitHistoryMode::Linear,
+                None,
+                None,
             ))
         );
     }

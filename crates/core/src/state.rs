@@ -1025,6 +1025,10 @@ pub struct RepoModeState {
     pub commits_filter: RepoSubviewFilterState,
     pub commit_files_filter: RepoSubviewFilterState,
     pub commit_history_ref: Option<String>,
+    pub sub_commit_parent_ref: Option<String>,
+    pub sub_commit_divergence_ref: Option<String>,
+    pub sub_commit_show_branch_heads: bool,
+    pub sub_commit_limit: bool,
     pub pending_commit_selection_oid: Option<String>,
     pub pending_remote_flow: Option<PendingRemoteFlow>,
     pub stash_filter: RepoSubviewFilterState,
@@ -1097,6 +1101,10 @@ impl RepoModeState {
             commits_filter: RepoSubviewFilterState::default(),
             commit_files_filter: RepoSubviewFilterState::default(),
             commit_history_ref: None,
+            sub_commit_parent_ref: None,
+            sub_commit_divergence_ref: None,
+            sub_commit_show_branch_heads: false,
+            sub_commit_limit: true,
             pending_commit_selection_oid: None,
             pending_remote_flow: None,
             stash_filter: RepoSubviewFilterState::default(),
@@ -1125,6 +1133,7 @@ impl RepoModeState {
             RepoSubview::Tags => Some(&self.tags_filter),
             RepoSubview::Commits => Some(match self.commit_subview_mode {
                 CommitSubviewMode::History => &self.commits_filter,
+                CommitSubviewMode::SubHistory => &self.commits_filter,
                 CommitSubviewMode::Files => &self.commit_files_filter,
             }),
             RepoSubview::Stash => match self.stash_subview_mode {
@@ -1150,6 +1159,7 @@ impl RepoModeState {
             RepoSubview::Tags => Some(&mut self.tags_filter),
             RepoSubview::Commits => Some(match self.commit_subview_mode {
                 CommitSubviewMode::History => &mut self.commits_filter,
+                CommitSubviewMode::SubHistory => &mut self.commits_filter,
                 CommitSubviewMode::Files => &mut self.commit_files_filter,
             }),
             RepoSubview::Stash => match self.stash_subview_mode {
@@ -1168,6 +1178,7 @@ impl RepoModeState {
 pub enum CommitSubviewMode {
     #[default]
     History,
+    SubHistory,
     Files,
 }
 
@@ -1193,6 +1204,7 @@ pub enum CommitHistoryMode {
         reverse: bool,
     },
     Reflog,
+    SubHistory,
 }
 
 impl CommitHistoryMode {

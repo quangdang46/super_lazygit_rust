@@ -56,6 +56,7 @@ pub enum Action {
     OpenAllBranchGraph {
         reverse: bool,
     },
+    OpenSelectedSubCommits,
     OpenSelectedCommitFiles,
     CloseSelectedCommitFiles,
     OpenSelectedStashFiles,

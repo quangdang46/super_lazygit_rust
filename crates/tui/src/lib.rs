@@ -1892,7 +1892,7 @@ impl TuiApp {
                 Some((header_lines, window_start, window_len))
             }
             RepoSubview::Commits => match repo_mode.commit_subview_mode {
-                CommitSubviewMode::History => {
+                CommitSubviewMode::History | CommitSubviewMode::SubHistory => {
                     let visible_indices =
                         visible_commit_indices(detail, repo_mode.commits_filter.query.as_str());
                     if visible_indices.is_empty() {
@@ -3571,14 +3571,15 @@ impl TuiApp {
                                 return Some(Action::SelectPreviousCommit);
                             }
 
-                            if repo_mode.commit_subview_mode == CommitSubviewMode::History
-                                && self.binding_matches_action(
-                                    "open_selected_commit_files",
-                                    raw,
-                                    normalized,
-                                    &["enter"],
-                                )
-                            {
+                            if matches!(
+                                repo_mode.commit_subview_mode,
+                                CommitSubviewMode::History | CommitSubviewMode::SubHistory
+                            ) && self.binding_matches_action(
+                                "open_selected_commit_files",
+                                raw,
+                                normalized,
+                                &["enter"],
+                            ) {
                                 return Some(Action::OpenSelectedCommitFiles);
                             }
 
@@ -3606,8 +3607,9 @@ impl TuiApp {
                                 return Some(Action::CloseSelectedCommitFiles);
                             }
 
-                            if repo_mode.commit_subview_mode == CommitSubviewMode::Files
-                                && repo_mode.commit_files_mode == CommitFilesMode::List
+                            if ((repo_mode.commit_subview_mode == CommitSubviewMode::Files
+                                && repo_mode.commit_files_mode == CommitFilesMode::List)
+                                || repo_mode.commit_subview_mode == CommitSubviewMode::SubHistory)
                                 && self.binding_matches_action(
                                     "close_selected_commit_files",
                                     raw,
@@ -8488,9 +8490,24 @@ fn repo_commit_lines(
             visible_indices.len(),
             detail.commits.len(),
         )),
-        Line::from("Actions: Enter files  Space checkout  n branch  T tag  b bisect  i rebase"),
-        Line::from("         A amend  f fixup menu  F fixup  g apply-fixups  s squash  d drop"),
-        Line::from("         Ctrl+K/Ctrl+J move  r reword  R reword editor  y copy menu  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"),
+        Line::from(match repo_mode.commit_history_mode {
+            CommitHistoryMode::SubHistory => {
+                "Actions: Enter files  Left/backspace parent history  Space checkout  n branch  T tag"
+            }
+            _ => "Actions: Enter files  Space checkout  n branch  T tag  b bisect  i rebase",
+        }),
+        Line::from(match repo_mode.commit_history_mode {
+            CommitHistoryMode::SubHistory => {
+                "         y copy menu  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu"
+            }
+            _ => "         A amend  f fixup menu  F fixup  g apply-fixups  s squash  d drop",
+        }),
+        Line::from(match repo_mode.commit_history_mode {
+            CommitHistoryMode::SubHistory => {
+                "         Ctrl+O copy hash  o browser  / filter  w worktrees"
+            }
+            _ => "         Ctrl+K/Ctrl+J move  r reword  R reword editor  y copy menu  C copy  V paste copied  t revert  S soft  M mixed  H hard  m menu",
+        }),
         Line::from("History:"),
     ];
 
@@ -8931,6 +8948,9 @@ fn repo_commit_context_line(
 ) -> String {
     let mut line = if commit_history_mode == CommitHistoryMode::Reflog {
         "Context: Enter files. Ctrl+O copy hash. y copy menu. o browser. 3 current branch. n branch. T tag. C cherry-pick. t revert. S/M/H reset. 0 main. / filter. w worktrees."
+            .to_string()
+    } else if commit_history_mode == CommitHistoryMode::SubHistory {
+        "Context: Enter files. Left/backspace returns to parent history. Ctrl+O copy hash. y copy menu. o browser. n branch. T tag. C cherry-pick. t revert. S/M/H reset. 0 main. / filter. w worktrees."
             .to_string()
     } else if commit_history_mode != CommitHistoryMode::Linear || commit_history_ref.is_some() {
         "Context: Enter files. Ctrl+O copy hash. a amend attrs. y copy menu. o browser. 3 current branch. Ctrl+L log menu. 0 main. / filter. w worktrees."
@@ -10166,6 +10186,10 @@ fn repo_footer_hint_text(state: &AppState) -> String {
                     "enter files  checkout: <space>  n branch  T tag  y copy  ?".to_string()
                 }
             }
+            CommitSubviewMode::SubHistory => {
+                "enter files  backspace parent history  checkout: <space>  n branch  T tag  y copy  ?"
+                    .to_string()
+            }
             CommitSubviewMode::Files => match repo_mode.commit_files_mode {
                 CommitFilesMode::List => {
                     "Diff: enter  Checkout: <space>  Open: e  Copy path: y  Keybindings: ?"
@@ -10546,6 +10570,7 @@ fn filter_menu_subject(repo_mode: &RepoModeState) -> &'static str {
         RepoSubview::Tags => "tag list",
         RepoSubview::Commits => match repo_mode.commit_subview_mode {
             CommitSubviewMode::History => "commit history",
+            CommitSubviewMode::SubHistory => "nested commit history",
             CommitSubviewMode::Files => "commit-file list",
         },
         RepoSubview::Stash => "stash list",
@@ -11455,6 +11480,8 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Commits {
                     if repo_mode.commit_history_mode == CommitHistoryMode::Reflog {
                         "Reflog commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  y copy menu  o browser  C cherry-pick  t revert  3 current branch  n branch  T tag  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    } else if repo_mode.commit_history_mode == CommitHistoryMode::SubHistory {
+                        "Sub-commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Backspace parent history  Space checkout  Ctrl+O copy hash  y copy menu  o browser  C copy  V paste copied  t revert  n branch  T tag  S soft reset  M mixed reset  H hard reset  Ctrl+S filter menu  W/Ctrl+E diff menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                     } else {
                         "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  c set fixup msg  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  r reword  R reword editor  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                     }
@@ -17996,6 +18023,57 @@ mod tests {
                 summary: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn repo_mode_sub_history_routes_file_entry_and_parent_history_back() {
+        let mut detail = sample_repo_detail();
+        detail.file_tree.clear();
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: CommitSubviewMode::SubHistory,
+                commit_history_mode: CommitHistoryMode::SubHistory,
+                commit_history_ref: Some("abcdef1234567890".to_string()),
+                sub_commit_parent_ref: Some("abcdef1234567890".to_string()),
+                detail: Some(detail),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(0),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut open_app = TuiApp::new(state.clone(), AppConfig::default());
+        let open = open_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "enter".to_string(),
+        })));
+        assert_eq!(
+            open.state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.commit_subview_mode),
+            Some(CommitSubviewMode::Files)
+        );
+
+        let mut back_app = TuiApp::new(state, AppConfig::default());
+        let back = back_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "backspace".to_string(),
+        })));
+        assert_eq!(
+            back.state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| (repo_mode.commit_subview_mode, repo_mode.commit_history_mode)),
+            Some((CommitSubviewMode::History, CommitHistoryMode::Linear))
+        );
+        let help = repo_help_text(&back.state);
+        assert!(help.contains("Commits pane"));
+        assert!(help.contains("Enter files"));
     }
 
     #[test]

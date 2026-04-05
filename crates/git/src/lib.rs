@@ -5553,7 +5553,41 @@ fn read_commits(
         CommitHistoryMode::Linear => read_linear_commits(repo_path, commit_ref),
         CommitHistoryMode::Graph { reverse } => read_graph_commits(repo_path, reverse),
         CommitHistoryMode::Reflog => read_reflog_commit_history(repo_path),
+        CommitHistoryMode::SubHistory => read_sub_history_commits(repo_path, commit_ref),
     }
+}
+
+fn read_sub_history_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHistoryResult {
+    let Some(commit_ref) = commit_ref.filter(|commit_ref| !commit_ref.is_empty()) else {
+        return CommitHistoryResult::default();
+    };
+
+    let args = vec![
+        OsString::from("log"),
+        OsString::from("--no-show-signature"),
+        OsString::from(format!("--format={COMMIT_HISTORY_PRETTY_FORMAT}")),
+        OsString::from("-n"),
+        OsString::from("64"),
+        OsString::from(commit_ref),
+        OsString::from("--"),
+        OsString::from("."),
+    ];
+
+    git_stdout(repo_path, args)
+        .map(|output| {
+            output
+                .lines()
+                .filter_map(|line| {
+                    extract_commit_from_line(line, false)
+                        .map(|parsed| hydrate_commit_item(repo_path, parsed))
+                })
+                .collect::<Vec<_>>()
+        })
+        .map(|commits| CommitHistoryResult {
+            commits,
+            graph_lines: Vec::new(),
+        })
+        .unwrap_or_default()
 }
 
 fn read_linear_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHistoryResult {
@@ -10087,6 +10121,33 @@ index 9ce8efb33..0632e41b0 100644
             vec!["parent1".to_string(), "parent2".to_string()]
         );
         assert_eq!(parsed.divergence, CommitDivergence::Left);
+    }
+
+    #[test]
+    fn cli_backend_reads_sub_history_for_selected_commit_ref() {
+        let repo = history_preview_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+        let head = repo
+            .rev_parse("HEAD")
+            .expect("resolve head")
+            .trim()
+            .to_string();
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: Some(head.clone()),
+                commit_history_mode: CommitHistoryMode::SubHistory,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert!(!detail.commits.is_empty());
+        assert_eq!(detail.commits[0].oid, head);
     }
 
     #[test]
