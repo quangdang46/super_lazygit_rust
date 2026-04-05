@@ -203,7 +203,7 @@
 [x] ./references/lazygit-master/pkg/gui/context/prompt_context.go
 ./references/lazygit-master/pkg/gui/context/reflog_commits_context.go
 [x] ./references/lazygit-master/pkg/gui/context/remote_branches_context.go
-./references/lazygit-master/pkg/gui/context/remotes_context.go
+[x] ./references/lazygit-master/pkg/gui/context/remotes_context.go
 ./references/lazygit-master/pkg/gui/context/search_trait.go
 ./references/lazygit-master/pkg/gui/context/setup.go
 ./references/lazygit-master/pkg/gui/context/simple_context.go
