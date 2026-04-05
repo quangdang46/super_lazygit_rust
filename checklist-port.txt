@@ -207,7 +207,7 @@
 [x] ./references/lazygit-master/pkg/gui/context/search_trait.go
 [x] ./references/lazygit-master/pkg/gui/context/setup.go
 [x] ./references/lazygit-master/pkg/gui/context/simple_context.go
-./references/lazygit-master/pkg/gui/context/stash_context.go
+[x] ./references/lazygit-master/pkg/gui/context/stash_context.go
 ./references/lazygit-master/pkg/gui/context/sub_commits_context.go
 ./references/lazygit-master/pkg/gui/context/submodules_context.go
 ./references/lazygit-master/pkg/gui/context/suggestions_context.go
