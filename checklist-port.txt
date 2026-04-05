@@ -213,7 +213,7 @@
 [x] ./references/lazygit-master/pkg/gui/context/suggestions_context.go
 ./references/lazygit-master/pkg/gui/context/tags_context.go
 ./references/lazygit-master/pkg/gui/context/traits/list_cursor.go
-./references/lazygit-master/pkg/gui/context/view_trait.go
+[x] ./references/lazygit-master/pkg/gui/context/view_trait.go
 ./references/lazygit-master/pkg/gui/context/working_tree_context.go
 ./references/lazygit-master/pkg/gui/context/worktrees_context.go
 ./references/lazygit-master/pkg/gui/context_config.go
