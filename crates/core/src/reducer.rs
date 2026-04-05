@@ -134,9 +134,20 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             state.workspace.search_focused = false;
             if !state.workspace.search_query.is_empty() {
                 state.workspace.search_query.clear();
+                state.workspace.search_match_index = 0;
                 state.workspace.ensure_visible_selection();
             }
             effects.push(Effect::ScheduleRender);
+        }
+        Action::SelectNextWorkspaceSearchMatch => {
+            if state.workspace.select_next_search_match().is_some() {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
+        Action::SelectPreviousWorkspaceSearchMatch => {
+            if state.workspace.select_previous_search_match().is_some() {
+                effects.push(Effect::ScheduleRender);
+            }
         }
         Action::AppendWorkspaceSearch { text } => {
             if !text.is_empty() {

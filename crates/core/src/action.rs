@@ -17,6 +17,8 @@ pub enum Action {
     FocusWorkspaceSearch,
     BlurWorkspaceSearch,
     CancelWorkspaceSearch,
+    SelectNextWorkspaceSearchMatch,
+    SelectPreviousWorkspaceSearchMatch,
     AppendWorkspaceSearch {
         text: String,
     },
@@ -290,6 +292,8 @@ pub enum Action {
     FocusRepoSubviewFilter,
     BlurRepoSubviewFilter,
     CancelRepoSubviewFilter,
+    RecallPreviousRepoSubviewFilterHistory,
+    RecallNextRepoSubviewFilterHistory,
     AppendRepoSubviewFilter {
         text: String,
     },
