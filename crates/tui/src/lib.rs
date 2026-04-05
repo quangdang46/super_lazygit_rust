@@ -2235,6 +2235,24 @@ impl TuiApp {
                 return Some(Action::CancelWorkspaceSearch);
             }
 
+            if self.binding_matches_action(
+                "next_workspace_search_match",
+                raw,
+                normalized,
+                &["n", "down"],
+            ) {
+                return Some(Action::SelectNextWorkspaceSearchMatch);
+            }
+
+            if self.binding_matches_action(
+                "previous_workspace_search_match",
+                raw,
+                normalized,
+                &["N", "up"],
+            ) {
+                return Some(Action::SelectPreviousWorkspaceSearchMatch);
+            }
+
             if self.binding_matches_action("blur_workspace_search", raw, normalized, &["enter"]) {
                 return Some(Action::BlurWorkspaceSearch);
             }
@@ -11488,6 +11506,38 @@ fn workspace_status_line(state: &AppState, visible_count: usize, theme: Theme) -
         truncate_cell(&state.workspace.search_query, 18)
     };
 
+    let search_status = if state.workspace.search_query.is_empty() {
+        format!(
+            "search={}{}",
+            search,
+            if state.workspace.search_focused {
+                "*"
+            } else {
+                ""
+            }
+        )
+    } else if let Some((index, total)) = state.workspace.current_search_match_position() {
+        format!(
+            "search=/{search}  match={}/{}  keys=n/N/enter{}",
+            index + 1,
+            total,
+            if state.workspace.search_focused {
+                "  (focused)"
+            } else {
+                ""
+            }
+        )
+    } else {
+        format!(
+            "search=/{search}  no matches  keys=enter{}",
+            if state.workspace.search_focused {
+                "  (focused)"
+            } else {
+                ""
+            }
+        )
+    };
+
     Line::from(vec![
         Span::styled(
             format!(
@@ -11509,18 +11559,7 @@ fn workspace_status_line(state: &AppState, visible_count: usize, theme: Theme) -
             Style::default().fg(theme.foreground),
         ),
         Span::raw("  "),
-        Span::styled(
-            format!(
-                "search={}{}",
-                search,
-                if state.workspace.search_focused {
-                    "*"
-                } else {
-                    ""
-                }
-            ),
-            Style::default().fg(theme.foreground),
-        ),
+        Span::styled(search_status, Style::default().fg(theme.foreground)),
         Span::raw("  "),
         Span::styled(
             format!(
@@ -13030,6 +13069,54 @@ mod tests {
         assert_eq!(
             rebase_app.selected_repo_side_tab(RepoSidePanel::Commits),
             RepoSidePanelTab::Subview(RepoSubview::Rebase)
+        );
+    }
+
+    #[test]
+    fn repo_side_panel_tab_inventory_matches_setup_context_registration() {
+        assert_eq!(
+            repo_side_panel_tabs(RepoSidePanel::Files)
+                .iter()
+                .map(|tab| tab.target)
+                .collect::<Vec<_>>(),
+            vec![
+                RepoSidePanelTab::Subview(RepoSubview::Status),
+                RepoSidePanelTab::Subview(RepoSubview::Worktrees),
+                RepoSidePanelTab::Subview(RepoSubview::Submodules),
+            ]
+        );
+        assert_eq!(
+            repo_side_panel_tabs(RepoSidePanel::Branches)
+                .iter()
+                .map(|tab| tab.target)
+                .collect::<Vec<_>>(),
+            vec![
+                RepoSidePanelTab::Subview(RepoSubview::Branches),
+                RepoSidePanelTab::Subview(RepoSubview::Remotes),
+                RepoSidePanelTab::Subview(RepoSubview::Tags),
+            ]
+        );
+        assert_eq!(
+            repo_side_panel_tabs(RepoSidePanel::Commits)
+                .iter()
+                .map(|tab| tab.target)
+                .collect::<Vec<_>>(),
+            vec![
+                RepoSidePanelTab::Subview(RepoSubview::Commits),
+                RepoSidePanelTab::Subview(RepoSubview::Compare),
+                RepoSidePanelTab::Subview(RepoSubview::Rebase),
+                RepoSidePanelTab::Subview(RepoSubview::Reflog),
+            ]
+        );
+        assert_eq!(
+            repo_side_panel_tabs(RepoSidePanel::Stash)
+                .iter()
+                .map(|tab| tab.target)
+                .collect::<Vec<_>>(),
+            vec![
+                RepoSidePanelTab::Subview(RepoSubview::Stash),
+                RepoSidePanelTab::CommandLog,
+            ]
         );
     }
 
@@ -14800,6 +14887,99 @@ mod tests {
             sort.state.workspace.sort_mode,
             super_lazygit_core::WorkspaceSortMode::Name
         );
+    }
+
+    #[test]
+    fn workspace_search_routes_next_and_previous_match_keys() {
+        let repo_alpha = RepoId::new("/tmp/repo-alpha");
+        let repo_beta = RepoId::new("/tmp/repo-beta");
+        let repo_gamma = RepoId::new("/tmp/repo-gamma");
+        let state = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![
+                    repo_alpha.clone(),
+                    repo_beta.clone(),
+                    repo_gamma.clone(),
+                ],
+                repo_summaries: std::collections::BTreeMap::from([
+                    (
+                        repo_alpha.clone(),
+                        workspace_repo_summary(&repo_alpha.0, "alpha"),
+                    ),
+                    (
+                        repo_beta.clone(),
+                        workspace_repo_summary(&repo_beta.0, "beta"),
+                    ),
+                    (
+                        repo_gamma.clone(),
+                        workspace_repo_summary(&repo_gamma.0, "alphabet soup"),
+                    ),
+                ]),
+                selected_repo_id: Some(repo_alpha.clone()),
+                search_query: "alp".to_string(),
+                search_focused: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+
+        let next = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "n".to_string(),
+        })));
+        assert_eq!(
+            next.state.workspace.selected_repo_id,
+            Some(repo_gamma.clone())
+        );
+
+        let previous = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "N".to_string(),
+        })));
+        assert_eq!(previous.state.workspace.selected_repo_id, Some(repo_alpha));
+    }
+
+    #[test]
+    fn workspace_status_line_renders_search_match_position_and_no_match_state() {
+        let repo_id = RepoId::new("/tmp/repo-alpha");
+        let theme = Theme::from_config(&AppConfig::default());
+        let matching = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                selected_repo_id: Some(repo_id.clone()),
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "alpha"),
+                )]),
+                search_query: "alp".to_string(),
+                search_focused: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let matching_text = workspace_status_line(&matching, 1, theme)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(matching_text.contains("search=/alp  match=1/1  keys=n/N/enter  (focused)"));
+
+        let no_match = AppState {
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                selected_repo_id: Some(repo_id),
+                repo_summaries: std::collections::BTreeMap::new(),
+                search_query: "zzz".to_string(),
+                search_focused: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let no_match_text = workspace_status_line(&no_match, 0, theme)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(no_match_text.contains("search=/zzz  no matches  keys=enter  (focused)"));
     }
 
     #[test]

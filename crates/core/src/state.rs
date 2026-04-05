@@ -650,6 +650,7 @@ pub struct WorkspaceState {
     pub sort_mode: WorkspaceSortMode,
     pub filter_mode: WorkspaceFilterMode,
     pub search_query: String,
+    pub search_match_index: usize,
     #[serde(skip)]
     pub search_focused: bool,
     pub preview_mode: PreviewMode,
@@ -696,19 +697,75 @@ impl WorkspaceState {
         let visible_repo_ids = self.visible_repo_ids();
         if visible_repo_ids.is_empty() {
             self.selected_repo_id = None;
+            self.search_match_index = 0;
             return None;
         }
 
-        if self
-            .selected_repo_id
-            .as_ref()
-            .is_some_and(|selected| visible_repo_ids.iter().any(|repo_id| repo_id == selected))
-        {
-            return self.selected_repo_id.clone();
+        if let Some(selected) = self.selected_repo_id.as_ref() {
+            if let Some(index) = visible_repo_ids
+                .iter()
+                .position(|repo_id| repo_id == selected)
+            {
+                self.search_match_index = index;
+                return self.selected_repo_id.clone();
+            }
         }
 
         let next_repo = visible_repo_ids[0].clone();
         self.selected_repo_id = Some(next_repo.clone());
+        self.search_match_index = 0;
+        Some(next_repo)
+    }
+
+    #[must_use]
+    pub fn search_match_count(&self) -> usize {
+        self.visible_repo_ids().len()
+    }
+
+    #[must_use]
+    pub fn current_search_match_position(&self) -> Option<(usize, usize)> {
+        let visible_repo_ids = self.visible_repo_ids();
+        if visible_repo_ids.is_empty() {
+            return None;
+        }
+
+        let selected = self.selected_repo_id.as_ref()?;
+        let index = visible_repo_ids
+            .iter()
+            .position(|repo_id| repo_id == selected)?;
+        Some((index, visible_repo_ids.len()))
+    }
+
+    pub fn select_next_search_match(&mut self) -> Option<RepoId> {
+        self.select_search_match_with_step(1)
+    }
+
+    pub fn select_previous_search_match(&mut self) -> Option<RepoId> {
+        self.select_search_match_with_step(-1)
+    }
+
+    fn select_search_match_with_step(&mut self, step: isize) -> Option<RepoId> {
+        let visible_repo_ids = self.visible_repo_ids();
+        if visible_repo_ids.is_empty() {
+            self.selected_repo_id = None;
+            self.search_match_index = 0;
+            return None;
+        }
+
+        let len = visible_repo_ids.len() as isize;
+        let current_index = self
+            .selected_repo_id
+            .as_ref()
+            .and_then(|selected| {
+                visible_repo_ids
+                    .iter()
+                    .position(|candidate| candidate == selected)
+            })
+            .unwrap_or_else(|| self.search_match_index.min(visible_repo_ids.len() - 1));
+        let next_index = (current_index as isize + step).rem_euclid(len) as usize;
+        let next_repo = visible_repo_ids[next_index].clone();
+        self.selected_repo_id = Some(next_repo.clone());
+        self.search_match_index = next_index;
         Some(next_repo)
     }
 
@@ -762,6 +819,7 @@ impl WorkspaceState {
         let visible_repo_ids = self.visible_repo_ids();
         if visible_repo_ids.is_empty() {
             self.selected_repo_id = None;
+            self.search_match_index = 0;
             return None;
         }
 
@@ -780,6 +838,7 @@ impl WorkspaceState {
         };
         let next_repo = visible_repo_ids[next_index].clone();
         self.selected_repo_id = Some(next_repo.clone());
+        self.search_match_index = next_index;
         Some(next_repo)
     }
 }
@@ -3627,6 +3686,44 @@ mod tests {
     }
 
     #[test]
+    fn active_context_id_maps_setup_owned_modal_and_auxiliary_surfaces() {
+        let prompt_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![Modal::new(ModalKind::InputPrompt, "Prompt")],
+            ..AppState::default()
+        };
+        assert_eq!(
+            prompt_state.active_context_id(),
+            UiContextId::ModalInputPrompt
+        );
+
+        let command_log_state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                active_subview: RepoSubview::Stash,
+                ..RepoModeState::new(RepoId::new("repo-a"))
+            }),
+            ..AppState::default()
+        };
+        assert_eq!(
+            command_log_state.active_context_id(),
+            UiContextId::RepoStash
+        );
+
+        let workspace_state = AppState {
+            mode: AppMode::Workspace,
+            focused_pane: PaneId::WorkspaceList,
+            ..AppState::default()
+        };
+        assert_eq!(
+            workspace_state.active_context_id(),
+            UiContextId::WorkspaceList
+        );
+    }
+
+    #[test]
     fn submodule_item_helpers_match_upstream_submodule_config_semantics() {
         let nested = SubmoduleItem {
             name: "vendor/child-module".to_string(),
@@ -4078,7 +4175,10 @@ mod tests {
 
     #[test]
     fn list_view_selection_wraps_with_step() {
-        let mut view = ListViewState { selected_index: Some(0), selection_anchor: None };
+        let mut view = ListViewState {
+            selected_index: Some(0),
+            selection_anchor: None,
+        };
 
         let previous = view.select_with_step(3, -1);
         assert_eq!(previous, Some(2));
@@ -4858,6 +4958,32 @@ mod tests {
 
         assert_eq!(selected, Some(repo_a.clone()));
         assert_eq!(workspace.selected_repo_id, Some(repo_a));
+    }
+
+    #[test]
+    fn workspace_search_match_navigation_cycles_visible_results() {
+        let repo_a = RepoId::new("/tmp/repo-alpha");
+        let repo_b = RepoId::new("/tmp/repo-beta");
+        let repo_c = RepoId::new("/tmp/repo-gamma");
+        let workspace = WorkspaceState {
+            discovered_repo_ids: vec![repo_a.clone(), repo_b.clone(), repo_c.clone()],
+            repo_summaries: BTreeMap::from([
+                (repo_a.clone(), summary(&repo_a.0, "alpha")),
+                (repo_b.clone(), summary(&repo_b.0, "beta")),
+                (repo_c.clone(), summary(&repo_c.0, "alphabet soup")),
+            ]),
+            selected_repo_id: Some(repo_a.clone()),
+            search_query: "alp".to_string(),
+            ..WorkspaceState::default()
+        };
+
+        let mut workspace = workspace;
+        assert_eq!(workspace.current_search_match_position(), Some((0, 2)));
+        assert_eq!(workspace.select_next_search_match(), Some(repo_c.clone()));
+        assert_eq!(workspace.current_search_match_position(), Some((1, 2)));
+        assert_eq!(workspace.select_next_search_match(), Some(repo_a.clone()));
+        assert_eq!(workspace.select_previous_search_match(), Some(repo_c));
+        assert_eq!(workspace.current_search_match_position(), Some((1, 2)));
     }
 
     #[test]

@@ -205,7 +205,7 @@
 [x] ./references/lazygit-master/pkg/gui/context/remote_branches_context.go
 [x] ./references/lazygit-master/pkg/gui/context/remotes_context.go
 ./references/lazygit-master/pkg/gui/context/search_trait.go
-./references/lazygit-master/pkg/gui/context/setup.go
+[x] ./references/lazygit-master/pkg/gui/context/setup.go
 ./references/lazygit-master/pkg/gui/context/simple_context.go
 ./references/lazygit-master/pkg/gui/context/stash_context.go
 ./references/lazygit-master/pkg/gui/context/sub_commits_context.go
