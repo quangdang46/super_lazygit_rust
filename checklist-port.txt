@@ -215,7 +215,7 @@
 ./references/lazygit-master/pkg/gui/context/traits/list_cursor.go
 [x] ./references/lazygit-master/pkg/gui/context/view_trait.go
 [x] ./references/lazygit-master/pkg/gui/context/working_tree_context.go
-./references/lazygit-master/pkg/gui/context/worktrees_context.go
+[x] ./references/lazygit-master/pkg/gui/context/worktrees_context.go
 ./references/lazygit-master/pkg/gui/context_config.go
 ./references/lazygit-master/pkg/gui/controllers.go
 ./references/lazygit-master/pkg/gui/controllers/attach.go
