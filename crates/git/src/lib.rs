@@ -2594,6 +2594,16 @@ fn read_diff_model(
     selected_path: Option<PathBuf>,
     options: DiffReadOptions,
 ) -> GitResult<DiffModel> {
+    if comparison_target.is_none() && compare_with.is_none() {
+        if let Some(conflict_model) = read_inline_merge_conflict_diff_model(
+            repo_path,
+            selected_path.clone(),
+            options.presentation,
+        )? {
+            return Ok(conflict_model);
+        }
+    }
+
     let diff_text = read_diff_text(
         repo_path,
         comparison_target,
@@ -2606,6 +2616,39 @@ fn read_diff_model(
         options.presentation,
         &diff_text,
     ))
+}
+
+fn read_inline_merge_conflict_diff_model(
+    repo_path: &Path,
+    selected_path: Option<PathBuf>,
+    presentation: DiffPresentation,
+) -> GitResult<Option<DiffModel>> {
+    let Some(selected_path) = selected_path else {
+        return Ok(None);
+    };
+    if presentation == DiffPresentation::Comparison {
+        return Ok(None);
+    }
+
+    let absolute_path = repo_path.join(&selected_path);
+    if !file_has_conflict_markers(&absolute_path) {
+        return Ok(None);
+    }
+
+    let content = normalize_linefeeds(&fs::read_to_string(&absolute_path).map_err(|error| {
+        GitError::OperationFailed {
+            message: format!(
+                "failed to read conflicted file {}: {error}",
+                selected_path.display()
+            ),
+        }
+    })?);
+
+    Ok(Some(parse_inline_merge_conflict_diff_model(
+        selected_path,
+        presentation,
+        &content,
+    )))
 }
 
 fn read_diff_text(
@@ -2710,6 +2753,139 @@ fn parse_diff_model(
         selected_hunk: (!hunks.is_empty()).then_some(0),
         hunk_count: hunks.len(),
         hunks,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MergeConflictRange {
+    start: usize,
+    ancestor: Option<usize>,
+    target: usize,
+    end: usize,
+}
+
+fn parse_inline_merge_conflict_diff_model(
+    selected_path: PathBuf,
+    presentation: DiffPresentation,
+    content: &str,
+) -> DiffModel {
+    let lines = content
+        .lines()
+        .map(|line| DiffLine {
+            kind: inline_merge_conflict_line_kind(line),
+            content: line.to_string(),
+        })
+        .collect::<Vec<_>>();
+    let conflicts = find_inline_merge_conflicts(content);
+    let hunks = conflicts
+        .into_iter()
+        .map(|conflict| {
+            let (start, end) = inline_merge_conflict_default_bounds(conflict);
+            DiffHunk {
+                header: format!("merge conflict lines {}-{}", start + 1, end + 1),
+                selection: SelectedHunk {
+                    old_start: (start + 1) as u32,
+                    old_lines: (end.saturating_sub(start) + 1) as u32,
+                    new_start: (start + 1) as u32,
+                    new_lines: (end.saturating_sub(start) + 1) as u32,
+                },
+                start_line_index: start,
+                end_line_index: end + 1,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    DiffModel {
+        selected_path: Some(selected_path),
+        presentation,
+        selected_hunk: (!hunks.is_empty()).then_some(0),
+        hunk_count: hunks.len(),
+        hunks,
+        lines,
+    }
+}
+
+fn inline_merge_conflict_line_kind(line: &str) -> DiffLineKind {
+    match determine_inline_merge_conflict_line_type(line) {
+        InlineMergeConflictLineType::Start
+        | InlineMergeConflictLineType::Ancestor
+        | InlineMergeConflictLineType::Target
+        | InlineMergeConflictLineType::End => DiffLineKind::Meta,
+        InlineMergeConflictLineType::NotMarker => DiffLineKind::Context,
+    }
+}
+
+fn find_inline_merge_conflicts(content: &str) -> Vec<MergeConflictRange> {
+    let mut conflicts = Vec::new();
+    let mut current_start: Option<usize> = None;
+    let mut current_ancestor: Option<usize> = None;
+    let mut current_target: Option<usize> = None;
+
+    for (index, line) in content.lines().enumerate() {
+        match determine_inline_merge_conflict_line_type(line) {
+            InlineMergeConflictLineType::Start => {
+                current_start = Some(index);
+                current_ancestor = None;
+                current_target = None;
+            }
+            InlineMergeConflictLineType::Ancestor => {
+                if current_start.is_some() {
+                    current_ancestor = Some(index);
+                }
+            }
+            InlineMergeConflictLineType::Target => {
+                if current_start.is_some() {
+                    current_target = Some(index);
+                }
+            }
+            InlineMergeConflictLineType::End => {
+                if let (Some(start), Some(target)) = (current_start, current_target) {
+                    conflicts.push(MergeConflictRange {
+                        start,
+                        ancestor: current_ancestor,
+                        target,
+                        end: index,
+                    });
+                }
+                current_start = None;
+                current_ancestor = None;
+                current_target = None;
+            }
+            InlineMergeConflictLineType::NotMarker => {}
+        }
+    }
+
+    conflicts
+}
+
+fn inline_merge_conflict_default_bounds(conflict: MergeConflictRange) -> (usize, usize) {
+    match conflict.ancestor {
+        Some(ancestor) => (conflict.start, ancestor),
+        None => (conflict.start, conflict.target),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlineMergeConflictLineType {
+    Start,
+    Ancestor,
+    Target,
+    End,
+    NotMarker,
+}
+
+fn determine_inline_merge_conflict_line_type(line: &str) -> InlineMergeConflictLineType {
+    let trimmed_line = line.strip_prefix("++").unwrap_or(line);
+    if trimmed_line.starts_with(CONFLICT_START) {
+        InlineMergeConflictLineType::Start
+    } else if trimmed_line.starts_with("||||||| ") {
+        InlineMergeConflictLineType::Ancestor
+    } else if trimmed_line == "=======" {
+        InlineMergeConflictLineType::Target
+    } else if trimmed_line.starts_with(CONFLICT_END) {
+        InlineMergeConflictLineType::End
+    } else {
+        InlineMergeConflictLineType::NotMarker
     }
 }
 
@@ -8847,6 +9023,53 @@ index 9ce8efb33..0632e41b0 100644
             .iter()
             .find(|item| item.path == Path::new("conflict.txt"))
             .is_some_and(|item| item.inline_merge_conflicts == Some(true)));
+    }
+
+    #[test]
+    fn cli_backend_reads_inline_merge_conflict_detail_for_selected_file() {
+        let repo = conflicted_repo().expect("fixture repo");
+        let backend = CliGitBackend;
+
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: Some(PathBuf::from("conflict.txt")),
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail should load");
+
+        assert_eq!(
+            detail.diff.selected_path.as_deref(),
+            Some(Path::new("conflict.txt"))
+        );
+        assert_eq!(detail.diff.hunk_count, 1);
+        assert_eq!(detail.diff.selected_hunk, Some(0));
+        assert!(detail
+            .diff
+            .lines
+            .iter()
+            .any(|line| line.content.starts_with("<<<<<<< ") && line.kind == DiffLineKind::Meta));
+        assert!(detail
+            .diff
+            .lines
+            .iter()
+            .any(|line| line.content == "=======" && line.kind == DiffLineKind::Meta));
+        assert!(detail
+            .diff
+            .lines
+            .iter()
+            .any(|line| line.content.starts_with(">>>>>>> ") && line.kind == DiffLineKind::Meta));
+
+        let selected = detail.diff.hunks.first().expect("conflict hunk exists");
+        assert_eq!(selected.start_line_index, 0);
+        assert_eq!(selected.end_line_index, 3);
+        assert_eq!(selected.selection.old_start, 1);
+        assert_eq!(selected.selection.old_lines, 3);
     }
 
     #[test]

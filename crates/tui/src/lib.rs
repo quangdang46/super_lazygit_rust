@@ -18361,9 +18361,19 @@ mod tests {
             Some(Some(3))
         );
 
-        let moved = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+        let mut anchored_app = TuiApp::new(anchored.state, AppConfig::default());
+        let moved = anchored_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "J".to_string(),
         })));
+        dbg!(
+            &moved.effects,
+            &moved.state.repo_mode.as_ref().map(|repo_mode| (
+                repo_mode.active_subview,
+                repo_mode.diff_line_cursor,
+                repo_mode.diff_line_anchor,
+                repo_mode.diff_scroll,
+            ))
+        );
         assert_eq!(
             moved
                 .state
@@ -18373,7 +18383,8 @@ mod tests {
             Some(Some(4))
         );
 
-        let apply = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+        let mut moved_app = TuiApp::new(moved.state, AppConfig::default());
+        let apply = moved_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "L".to_string(),
         })));
         assert!(apply.effects.iter().any(|effect| matches!(
@@ -18469,6 +18480,67 @@ mod tests {
         let diff = sample_repo_detail().diff;
 
         assert_eq!(calculate_patch_focus_origin(&diff, 3, 3, None, None), 2);
+    }
+
+    #[test]
+    fn repo_diff_lines_render_inline_merge_conflict_markers_for_status_detail() {
+        let mut detail = sample_repo_detail();
+        detail.diff.selected_path = Some(PathBuf::from("conflict.txt"));
+        detail.diff.lines = vec![
+            DiffLine {
+                kind: DiffLineKind::Meta,
+                content: "<<<<<<< HEAD".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Context,
+                content: "ours".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Meta,
+                content: "=======".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Context,
+                content: "theirs".to_string(),
+            },
+            DiffLine {
+                kind: DiffLineKind::Meta,
+                content: ">>>>>>> branch".to_string(),
+            },
+        ];
+        detail.diff.hunks = vec![super_lazygit_core::DiffHunk {
+            header: "merge conflict lines 1-3".to_string(),
+            selection: super_lazygit_core::SelectedHunk {
+                old_start: 1,
+                old_lines: 3,
+                new_start: 1,
+                new_lines: 3,
+            },
+            start_line_index: 0,
+            end_line_index: 3,
+        }];
+        detail.diff.selected_hunk = Some(0);
+        detail.diff.hunk_count = 1;
+        let repo_mode = RepoModeState {
+            detail: Some(detail),
+            active_subview: RepoSubview::Status,
+            diff_scroll: 0,
+            ..RepoModeState::new(RepoId::new("repo-1"))
+        };
+
+        let visible_lines = repo_diff_lines(
+            Some(&repo_mode),
+            repo_mode.detail.as_ref(),
+            0,
+            8,
+            Theme::from_config(&AppConfig::default()),
+        );
+        let rendered_lines = visible_lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert!(rendered_lines.iter().any(|line| line == "<<<<<<< HEAD"));
+        assert!(rendered_lines.iter().any(|line| line == "ours"));
+        assert!(rendered_lines.iter().any(|line| line == "======="));
+        assert!(rendered_lines.iter().any(|line| line == ">>>>>>> branch"));
     }
 
     #[test]

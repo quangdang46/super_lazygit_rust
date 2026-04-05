@@ -197,7 +197,7 @@
 ./references/lazygit-master/pkg/gui/context/local_commits_context.go
 ./references/lazygit-master/pkg/gui/context/main_context.go
 ./references/lazygit-master/pkg/gui/context/menu_context.go
-./references/lazygit-master/pkg/gui/context/merge_conflicts_context.go
+[x] ./references/lazygit-master/pkg/gui/context/merge_conflicts_context.go
 [x] ./references/lazygit-master/pkg/gui/context/parent_context_mgr.go
 ./references/lazygit-master/pkg/gui/context/patch_explorer_context.go
 ./references/lazygit-master/pkg/gui/context/prompt_context.go
