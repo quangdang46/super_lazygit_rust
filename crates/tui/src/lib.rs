@@ -3737,6 +3737,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "start_interactive_rebase",
                                 raw,
@@ -3781,6 +3782,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "open_commit_amend_attribute_options",
                                 raw,
@@ -3803,6 +3805,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "open_commit_fixup_options",
                                 raw,
@@ -3814,6 +3817,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "fixup_selected_commit",
                                 raw,
@@ -3825,6 +3829,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "set_fixup_message_for_selected_commit",
                                 raw,
@@ -3836,6 +3841,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "apply_fixup_commits",
                                 raw,
@@ -3847,6 +3853,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "squash_selected_commit",
                                 raw,
@@ -3858,6 +3865,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "drop_selected_commit",
                                 raw,
@@ -3869,6 +3877,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "move_selected_commit_up",
                                 raw,
@@ -3880,6 +3889,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "move_selected_commit_down",
                                 raw,
@@ -3891,6 +3901,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "reword_selected_commit",
                                 raw,
@@ -3902,6 +3913,7 @@ impl TuiApp {
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && repo_mode.commit_history_mode != CommitHistoryMode::Reflog
                             && self.binding_matches_action(
                                 "reword_selected_commit_with_editor",
                                 raw,
@@ -8899,9 +8911,10 @@ fn repo_commit_context_line(
     visible_count: usize,
     total_count: usize,
 ) -> String {
-    let mut line = if commit_history_mode != CommitHistoryMode::Linear
-        || commit_history_ref.is_some()
-    {
+    let mut line = if commit_history_mode == CommitHistoryMode::Reflog {
+        "Context: Enter files. Ctrl+O copy hash. y copy menu. o browser. 3 current branch. n branch. T tag. C cherry-pick. t revert. S/M/H reset. 0 main. / filter. w worktrees."
+            .to_string()
+    } else if commit_history_mode != CommitHistoryMode::Linear || commit_history_ref.is_some() {
         "Context: Enter files. Ctrl+O copy hash. a amend attrs. y copy menu. o browser. 3 current branch. Ctrl+L log menu. 0 main. / filter. w worktrees."
             .to_string()
     } else {
@@ -11422,7 +11435,11 @@ fn repo_help_text(state: &AppState) -> String {
                 } else if repo_mode.active_subview == RepoSubview::Tags {
                     "Tags pane  j/k move  ,/. page  </> top/bottom  [/] tabs  Enter commits  Space checkout  Ctrl+O copy tag  g reset menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  w worktrees  b submodules  n create  d delete  P push  S/M/H reset  h left pane  1-9/t/m/b switch view  f fetch  p pull  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Commits {
-                    "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  c set fixup msg  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  r reword  R reword editor  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    if repo_mode.commit_history_mode == CommitHistoryMode::Reflog {
+                        "Reflog commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  y copy menu  o browser  C cherry-pick  t revert  3 current branch  n branch  T tag  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    } else {
+                        "Commits pane  j/k move commit  ,/. page  </> top/bottom  [/] tabs  Enter files  Space checkout  Ctrl+O copy hash  a amend attrs  y copy menu  o browser  C copy  V paste copied  t revert  Ctrl+R clear copied  3 current branch  Ctrl+L log menu  n branch  T tag  b bisect menu  i start rebase  A amend  f fixup menu  F fixup+autosquash  c set fixup msg  g apply-fixups  s squash  d drop  Ctrl+K move up  Ctrl+J move down  r reword  R reword editor  S soft reset  M mixed reset  H hard reset  v compare  x clear compare  Ctrl+W whitespace  {/} context  (/) rename similarity  Ctrl+S filter menu  W/Ctrl+E diff menu  m merge/rebase menu  : shell  @ command log  0 main pane  / filter  w worktrees  h left pane  1-9/t switch view  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
+                    }
                 } else if repo_mode.active_subview == RepoSubview::Compare {
                     "Compare pane  j/k scroll diff  Ctrl+W whitespace  {/} context  (/) rename similarity  W/Ctrl+E diff menu  Ctrl+R recent repos  : shell  @ command log  r refresh  R full refresh  0 main pane  x clear compare  h left pane  1-9/t/m/b switch view  f fetch  p pull  P push  Tab cycle panes  ? help  Esc workspace".to_string()
                 } else if repo_mode.active_subview == RepoSubview::Rebase {
@@ -13322,6 +13339,7 @@ mod tests {
                 active_subview: RepoSubview::Branches,
                 branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 detail: Some(RepoDetail {
                     branches: vec![
@@ -13430,6 +13448,7 @@ mod tests {
                 current_repo_id: repo_id,
                 status_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 detail: Some(sample_repo_detail()),
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
@@ -13510,6 +13529,7 @@ mod tests {
                 active_subview: RepoSubview::Branches,
                 branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 detail: Some(sample_repo_detail()),
                 ..RepoModeState::new(repo_id)
@@ -13552,6 +13572,7 @@ mod tests {
                 active_subview: RepoSubview::RemoteBranches,
                 remote_branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 detail: Some(sample_repo_detail()),
                 ..RepoModeState::new(repo_id)
@@ -13897,6 +13918,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commit_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -13952,6 +13974,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -13990,6 +14013,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -14033,6 +14057,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -14076,6 +14101,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -14140,6 +14166,7 @@ mod tests {
                 }),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -14187,6 +14214,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -14225,6 +14253,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -15170,6 +15199,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 tags_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(repo_id.clone())
             }),
@@ -15439,6 +15469,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commit_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -15492,6 +15523,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commit_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -15524,6 +15556,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -15561,6 +15594,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commit_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -15668,6 +15702,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -15706,6 +15741,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -15773,6 +15809,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -15936,6 +15973,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -17400,6 +17438,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 stash_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -17441,9 +17480,11 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 stash_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 stash_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -17477,9 +17518,11 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 stash_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 stash_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -17553,6 +17596,7 @@ mod tests {
                 detail: Some(detail),
                 reflog_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -17592,6 +17636,7 @@ mod tests {
                 detail: Some(detail),
                 reflog_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -17740,6 +17785,57 @@ mod tests {
                 summary: "HEAD@{1}: commit: add repo-mode stash flows".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn reflog_commit_history_hides_rebase_style_keybindings_and_help() {
+        let mut detail = sample_repo_detail();
+        detail.file_tree.clear();
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                commit_history_mode: CommitHistoryMode::Reflog,
+                detail: Some(detail),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut rebase_app = TuiApp::new(state.clone(), AppConfig::default());
+        let rebase = rebase_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "i".to_string(),
+        })));
+        assert!(rebase.effects.is_empty());
+        assert!(rebase.state.pending_confirmation.is_none());
+
+        let mut fixup_app = TuiApp::new(state.clone(), AppConfig::default());
+        let fixup = fixup_app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "g".to_string(),
+        })));
+        assert!(fixup.effects.is_empty());
+        assert!(fixup.state.pending_confirmation.is_none());
+
+        let help = repo_help_text(&state);
+        assert!(help.contains("C cherry-pick"));
+        assert!(help.contains("S soft reset"));
+        assert!(!help.contains("i start rebase"));
+        assert!(!help.contains("A amend"));
+        assert!(!help.contains("f fixup menu"));
+        assert!(!help.contains("g apply-fixups"));
+        assert!(!help.contains("r reword"));
+
+        let context = repo_commit_context_line(CommitHistoryMode::Reflog, None, "", false, 2, 2);
+        assert!(context.contains("C cherry-pick"));
+        assert!(context.contains("S/M/H reset"));
+        assert!(!context.contains("a amend attrs"));
+        assert!(!context.contains("Ctrl+L log menu"));
     }
 
     #[test]
@@ -17913,6 +18009,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 status_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -17959,6 +18056,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 staged_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -18139,6 +18237,7 @@ mod tests {
                 }),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19074,6 +19173,7 @@ mod tests {
                 detail: Some(detail),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(3),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(repo_id.clone())
             }),
@@ -19110,6 +19210,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commit_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19169,6 +19270,7 @@ mod tests {
                 detail: Some(detail),
                 commit_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19444,6 +19546,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19506,6 +19609,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 branches_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "fea".to_string(),
@@ -19556,6 +19660,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 remotes_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 remotes_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "up".to_string(),
@@ -19619,6 +19724,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 remote_branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 remote_branches_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "fea".to_string(),
@@ -19711,6 +19817,7 @@ mod tests {
             detail: Some(sample_repo_detail()),
             remote_branches_view: super_lazygit_core::ListViewState {
                 selected_index: Some(1),
+                selection_anchor: None,
             },
             ..RepoModeState::new(RepoId::new("repo-1"))
         };
@@ -19735,6 +19842,7 @@ mod tests {
                 active_subview: RepoSubview::Branches,
                 branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 detail: Some(detail),
                 ..RepoModeState::new(repo_id)
@@ -19771,6 +19879,7 @@ mod tests {
                 active_subview: RepoSubview::Branches,
                 branches_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 detail: Some(detail),
                 ..RepoModeState::new(repo_id)
@@ -19810,6 +19919,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 tags_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 tags_filter: super_lazygit_core::RepoSubviewFilterState {
                     query: "v1".to_string(),
@@ -19873,6 +19983,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 stash_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19924,9 +20035,11 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 stash_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 stash_files_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -19974,6 +20087,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 reflog_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -20028,6 +20142,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 reflog_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -20340,6 +20455,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 submodules_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
@@ -20395,6 +20511,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 worktree_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
@@ -20495,6 +20612,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 submodules_view: super_lazygit_core::ListViewState {
                     selected_index: Some(0),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(repo_id.clone())
             }),
@@ -20650,6 +20768,7 @@ mod tests {
                 detail: Some(sample_repo_detail()),
                 commits_view: super_lazygit_core::ListViewState {
                     selected_index: Some(1),
+                    selection_anchor: None,
                 },
                 ..RepoModeState::new(repo_id)
             }),
