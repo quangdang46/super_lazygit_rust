@@ -395,6 +395,20 @@ pub struct PendingInputPrompt {
     pub operation: InputPromptOperation,
     pub value: String,
     pub return_focus: PaneId,
+    pub suggestions: Vec<PromptSuggestion>,
+    pub selected_suggestion: usize,
+    pub suggestion_provider: Option<PromptSuggestionProvider>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromptSuggestion {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PromptSuggestionProvider {
+    CheckoutBranch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

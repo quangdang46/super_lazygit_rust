@@ -2123,6 +2123,20 @@ impl TuiApp {
                     ) {
                         Some(Action::CloseTopModal)
                     } else if self.binding_matches_action(
+                        "select_previous_prompt_suggestion",
+                        raw,
+                        &normalized,
+                        &["up", "k"],
+                    ) {
+                        Some(Action::SelectPreviousPromptSuggestion)
+                    } else if self.binding_matches_action(
+                        "select_next_prompt_suggestion",
+                        raw,
+                        &normalized,
+                        &["down", "j"],
+                    ) {
+                        Some(Action::SelectNextPromptSuggestion)
+                    } else if self.binding_matches_action(
                         "submit_prompt_input",
                         raw,
                         &normalized,
@@ -6088,7 +6102,23 @@ impl TuiApp {
                     lines.push(Line::from(input_prompt_copy(&prompt.operation)));
                     lines.push(Line::from(""));
                     lines.push(Line::from(format!("> {}_", prompt.value)));
-                    lines.push(Line::from("Enter submits. Esc cancels. Backspace deletes."));
+                    if !prompt.suggestions.is_empty() {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from("Suggestions:"));
+                        for (index, suggestion) in prompt.suggestions.iter().enumerate() {
+                            let prefix = if index == prompt.selected_suggestion {
+                                ">"
+                            } else {
+                                " "
+                            };
+                            lines.push(Line::from(format!("{prefix} {}", suggestion.label)));
+                        }
+                        lines.push(Line::from(
+                            "Enter submits selected suggestion. j/k or up/down moves. Esc cancels.",
+                        ));
+                    } else {
+                        lines.push(Line::from("Enter submits. Esc cancels. Backspace deletes."));
+                    }
                 }
             }
             super_lazygit_core::ModalKind::Menu => {
@@ -17237,6 +17267,9 @@ mod tests {
                 operation: super_lazygit_core::InputPromptOperation::CreateBranch,
                 value: "feature".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             mode: AppMode::Repository,
             repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
@@ -17319,6 +17352,69 @@ mod tests {
                 },
                 PaneId::RepoStaged,
             ))
+        );
+    }
+
+    #[test]
+    fn input_prompt_renders_suggestions_and_routes_selection() {
+        let state = AppState {
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![super_lazygit_core::Modal::new(
+                ModalKind::InputPrompt,
+                "Check out branch",
+            )],
+            pending_input_prompt: Some(super_lazygit_core::PendingInputPrompt {
+                repo_id: RepoId::new("repo-1"),
+                operation: super_lazygit_core::InputPromptOperation::CheckoutBranch,
+                value: "fea".to_string(),
+                return_focus: PaneId::RepoDetail,
+                suggestions: vec![
+                    super_lazygit_core::PromptSuggestion {
+                        value: "feature/demo".to_string(),
+                        label: "feature/demo".to_string(),
+                    },
+                    super_lazygit_core::PromptSuggestion {
+                        value: "origin/feature/demo".to_string(),
+                        label: "origin/feature/demo".to_string(),
+                    },
+                ],
+                selected_suggestion: 0,
+                suggestion_provider: Some(
+                    super_lazygit_core::PromptSuggestionProvider::CheckoutBranch,
+                ),
+            }),
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        let theme = Theme::from_config(&AppConfig::default());
+
+        let lines = app.modal_lines(app.state.modal_stack.last().expect("modal"), theme);
+        let text = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Suggestions:"));
+        assert!(text.contains("> feature/demo"));
+        assert!(text.contains("origin/feature/demo"));
+
+        let selected = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "j".to_string(),
+        })));
+        assert_eq!(
+            selected
+                .state
+                .pending_input_prompt
+                .as_ref()
+                .map(|prompt| prompt.selected_suggestion),
+            Some(1)
         );
     }
 

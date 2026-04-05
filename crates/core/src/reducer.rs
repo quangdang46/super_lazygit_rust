@@ -8,10 +8,11 @@ use crate::hosting_service;
 use crate::state::{
     AppMode, AppState, BackgroundJob, BackgroundJobKind, BackgroundJobState, CommitBoxMode,
     CommitFilesMode, CommitHistoryMode, CommitTodoAction, ComparisonTarget, ConfirmableOperation,
-    DiffLineKind, DiffPresentation, InputPromptOperation, JobId, MenuOperation,
+    DiffLineKind, DiffPresentation, GitRef, InputPromptOperation, JobId, MenuOperation,
     MergeFastForwardPreference, MergeState, MergeVariant, MessageLevel, Notification,
-    OperationProgress, PaneId, PendingInputPrompt, PendingMenu, PendingRemoteFlow, RepoModeState,
-    ResetMode, ReturnContext, ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
+    OperationProgress, PaneId, PendingInputPrompt, PendingMenu, PendingRemoteFlow,
+    PromptSuggestion, PromptSuggestionProvider, RepoModeState, ResetMode, ReturnContext,
+    ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
     MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
     RENAME_SIMILARITY_THRESHOLD_STEP,
 };
@@ -1840,14 +1841,39 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             }
         }
         Action::AppendPromptInput { text } => {
-            if let Some(prompt) = state.pending_input_prompt.as_mut() {
+            if let Some(mut prompt) = state.pending_input_prompt.take() {
                 prompt.value.push_str(&text);
+                refresh_prompt_suggestions(&mut prompt, state);
+                state.pending_input_prompt = Some(prompt);
                 effects.push(Effect::ScheduleRender);
             }
         }
         Action::BackspacePromptInput => {
-            if let Some(prompt) = state.pending_input_prompt.as_mut() {
+            if let Some(mut prompt) = state.pending_input_prompt.take() {
                 if prompt.value.pop().is_some() {
+                    refresh_prompt_suggestions(&mut prompt, state);
+                    effects.push(Effect::ScheduleRender);
+                }
+                state.pending_input_prompt = Some(prompt);
+            }
+        }
+        Action::SelectNextPromptSuggestion => {
+            if let Some(prompt) = state.pending_input_prompt.as_mut() {
+                if !prompt.suggestions.is_empty() {
+                    prompt.selected_suggestion =
+                        (prompt.selected_suggestion + 1) % prompt.suggestions.len();
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::SelectPreviousPromptSuggestion => {
+            if let Some(prompt) = state.pending_input_prompt.as_mut() {
+                if !prompt.suggestions.is_empty() {
+                    prompt.selected_suggestion = if prompt.selected_suggestion == 0 {
+                        prompt.suggestions.len() - 1
+                    } else {
+                        prompt.selected_suggestion - 1
+                    };
                     effects.push(Effect::ScheduleRender);
                 }
             }
@@ -5021,6 +5047,7 @@ fn open_input_prompt(
 ) {
     let title = input_prompt_title(&operation);
     let value = input_prompt_initial_value(&operation);
+    let suggestion_provider = prompt_suggestion_provider(&operation);
     state
         .return_context_stack
         .push(current_return_context(state));
@@ -5029,7 +5056,14 @@ fn open_input_prompt(
         operation,
         value,
         return_focus: state.focused_pane,
+        suggestions: Vec::new(),
+        selected_suggestion: 0,
+        suggestion_provider,
     });
+    if let Some(mut prompt) = state.pending_input_prompt.take() {
+        refresh_prompt_suggestions(&mut prompt, state);
+        state.pending_input_prompt = Some(prompt);
+    }
     state.modal_stack.push(crate::state::Modal::new(
         crate::state::ModalKind::InputPrompt,
         title,
@@ -5175,7 +5209,12 @@ enum PromptSubmission {
 }
 
 fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
-    let pending = state.pending_input_prompt.take()?;
+    let mut pending = state.pending_input_prompt.take()?;
+    if let Some(suggestion) = pending.suggestions.get(pending.selected_suggestion) {
+        if !suggestion.value.is_empty() {
+            pending.value = suggestion.value.clone();
+        }
+    }
     let value = pending.value.trim().to_string();
     if value.is_empty()
         && !matches!(
@@ -5565,6 +5604,62 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
         PromptSubmission::Shell(job) => enqueue_shell_job(state, job, &summary),
     }
     Some(submission)
+}
+
+fn prompt_suggestion_provider(
+    operation: &InputPromptOperation,
+) -> Option<PromptSuggestionProvider> {
+    match operation {
+        InputPromptOperation::CheckoutBranch => Some(PromptSuggestionProvider::CheckoutBranch),
+        _ => None,
+    }
+}
+
+fn refresh_prompt_suggestions(prompt: &mut PendingInputPrompt, state: &AppState) {
+    prompt.suggestions = match prompt.suggestion_provider {
+        Some(PromptSuggestionProvider::CheckoutBranch) => {
+            checkout_branch_suggestions(state, &prompt.value)
+        }
+        None => Vec::new(),
+    };
+    prompt.selected_suggestion = prompt
+        .selected_suggestion
+        .min(prompt.suggestions.len().saturating_sub(1));
+}
+
+fn checkout_branch_suggestions(state: &AppState, query: &str) -> Vec<PromptSuggestion> {
+    let Some(repo_mode) = state.repo_mode.as_ref() else {
+        return Vec::new();
+    };
+    let Some(detail) = repo_mode.detail.as_ref() else {
+        return Vec::new();
+    };
+
+    let normalized = query.trim().to_ascii_lowercase();
+    let mut suggestions: Vec<PromptSuggestion> = detail
+        .branches
+        .iter()
+        .map(|branch| PromptSuggestion {
+            value: branch.name.clone(),
+            label: branch.name.clone(),
+        })
+        .chain(
+            detail
+                .remote_branches
+                .iter()
+                .map(|branch| PromptSuggestion {
+                    value: branch.ref_name(),
+                    label: branch.ref_name(),
+                }),
+        )
+        .filter(|suggestion| {
+            normalized.is_empty() || suggestion.label.to_ascii_lowercase().contains(&normalized)
+        })
+        .collect();
+    suggestions.sort_by(|left, right| left.label.cmp(&right.label));
+    suggestions.dedup_by(|left, right| left.value == right.value);
+    suggestions.truncate(8);
+    suggestions
 }
 
 struct CreateWorktreeInput {
@@ -10638,8 +10733,9 @@ mod tests {
     };
 
     use super::{
-        join_commit_message_and_unwrapped_description, merge_rebase_menu_entries, reduce,
-        split_commit_message_and_description, try_remove_hard_line_breaks,
+        join_commit_message_and_unwrapped_description, merge_rebase_menu_entries,
+        open_input_prompt, reduce, reduce_action, split_commit_message_and_description,
+        submit_input_prompt, try_remove_hard_line_breaks, PromptSubmission,
     };
 
     fn workspace_summary(repo_id: &str) -> RepoSummary {
@@ -15262,6 +15358,9 @@ mod tests {
                 operation: InputPromptOperation::CreateBranch,
                 value: "feature/test".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
@@ -17078,6 +17177,9 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateBranch,
                 value: "feature/new-ui".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17125,6 +17227,9 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CheckoutBranch,
                 value: "origin/feature/new-ui".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17174,6 +17279,9 @@ mod tests {
                 },
                 value: "feature/from-commit".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17224,6 +17332,9 @@ mod tests {
                 },
                 value: "feature-local".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17275,6 +17386,9 @@ mod tests {
                 },
                 value: "feature".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17298,6 +17412,109 @@ mod tests {
     }
 
     #[test]
+    fn open_checkout_branch_prompt_populates_branch_suggestions() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState::default();
+        state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
+        let repo_mode = state.repo_mode.as_mut().expect("repo mode");
+        repo_mode.detail = Some(RepoDetail {
+            branches: vec![crate::state::BranchItem {
+                name: "feature/demo".to_string(),
+                ..Default::default()
+            }],
+            remote_branches: vec![crate::state::RemoteBranchItem {
+                name: "origin/feature/demo".to_string(),
+                remote_name: "origin".to_string(),
+                branch_name: "feature/demo".to_string(),
+            }],
+            ..Default::default()
+        });
+
+        open_input_prompt(&mut state, repo_id, InputPromptOperation::CheckoutBranch);
+
+        let prompt = state.pending_input_prompt.as_ref().expect("prompt");
+        assert_eq!(
+            prompt.suggestion_provider,
+            Some(crate::state::PromptSuggestionProvider::CheckoutBranch)
+        );
+        assert_eq!(prompt.suggestions.len(), 2);
+        assert_eq!(prompt.suggestions[0].value, "feature/demo");
+        assert_eq!(prompt.suggestions[1].value, "origin/feature/demo");
+    }
+
+    #[test]
+    fn append_prompt_input_refreshes_checkout_suggestions() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState::default();
+        state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
+        let repo_mode = state.repo_mode.as_mut().expect("repo mode");
+        repo_mode.detail = Some(RepoDetail {
+            branches: vec![crate::state::BranchItem {
+                name: "feature/demo".to_string(),
+                ..Default::default()
+            }],
+            remote_branches: vec![crate::state::RemoteBranchItem {
+                name: "origin/main".to_string(),
+                remote_name: "origin".to_string(),
+                branch_name: "main".to_string(),
+            }],
+            ..Default::default()
+        });
+
+        open_input_prompt(&mut state, repo_id, InputPromptOperation::CheckoutBranch);
+        let mut effects = Vec::new();
+        reduce_action(
+            &mut state,
+            Action::AppendPromptInput {
+                text: "demo".to_string(),
+            },
+            &mut effects,
+        );
+
+        let prompt = state.pending_input_prompt.as_ref().expect("prompt");
+        assert_eq!(prompt.suggestions.len(), 1);
+        assert_eq!(prompt.suggestions[0].value, "feature/demo");
+    }
+
+    #[test]
+    fn submit_prompt_input_prefers_selected_checkout_suggestion() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState::default();
+        state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
+        let repo_mode = state.repo_mode.as_mut().expect("repo mode");
+        repo_mode.detail = Some(RepoDetail {
+            branches: vec![crate::state::BranchItem {
+                name: "feature/demo".to_string(),
+                ..Default::default()
+            }],
+            remote_branches: vec![crate::state::RemoteBranchItem {
+                name: "origin/feature/demo".to_string(),
+                remote_name: "origin".to_string(),
+                branch_name: "feature/demo".to_string(),
+            }],
+            ..Default::default()
+        });
+
+        open_input_prompt(&mut state, repo_id, InputPromptOperation::CheckoutBranch);
+        state
+            .pending_input_prompt
+            .as_mut()
+            .expect("prompt")
+            .selected_suggestion = 1;
+
+        let submission = submit_input_prompt(&mut state).expect("submission");
+        match submission {
+            PromptSubmission::Git(job) => match job.command {
+                GitCommand::CheckoutBranch { branch_ref } => {
+                    assert_eq!(branch_ref, "origin/feature/demo");
+                }
+                command => panic!("expected checkout command, got {command:?}"),
+            },
+            _ => panic!("expected git submission"),
+        }
+    }
+
+    #[test]
     fn submit_create_remote_prompt_queues_git_job() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
@@ -17312,6 +17529,9 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateRemote,
                 value: "upstream".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17329,6 +17549,9 @@ mod tests {
                 },
                 value: String::new(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             })
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
@@ -17351,6 +17574,9 @@ mod tests {
                 },
                 value: "git@github.com:example/upstream.git".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17401,6 +17627,9 @@ mod tests {
                 },
                 value: "alice:feature".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17451,6 +17680,9 @@ mod tests {
                 },
                 value: "mirror".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17469,6 +17701,9 @@ mod tests {
                 },
                 value: "git@github.com:example/upstream.git".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             })
         );
         assert_eq!(result.effects, vec![Effect::ScheduleRender]);
@@ -17493,6 +17728,9 @@ mod tests {
                 },
                 value: "git@github.com:example/mirror.git".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17630,6 +17868,9 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateTag,
                 value: "release-candidate".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17679,6 +17920,9 @@ mod tests {
                 },
                 value: "release-candidate".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17729,6 +17973,9 @@ mod tests {
                 },
                 value: String::new(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17776,6 +18023,9 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateWorktree,
                 value: "../repo-feature main feature".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17852,6 +18102,9 @@ mod tests {
                 },
                 value: "feature/from-stash".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17895,6 +18148,9 @@ mod tests {
                 },
                 value: "reworded subject\n\nnew body".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17936,6 +18192,9 @@ mod tests {
                 operation: crate::state::InputPromptOperation::ShellCommand,
                 value: "git status --short".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -17985,6 +18244,9 @@ mod tests {
                 },
                 value: "checkpoint".to_string(),
                 return_focus: PaneId::RepoStaged,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -18026,6 +18288,9 @@ mod tests {
                 },
                 value: "   ".to_string(),
                 return_focus: PaneId::RepoUnstaged,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()
@@ -21905,6 +22170,9 @@ mod tests {
                 },
                 value: "rewritten subject".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestions: Vec::new(),
+                selected_suggestion: 0,
+                suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
             ..AppState::default()

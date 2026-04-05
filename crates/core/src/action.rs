@@ -167,6 +167,8 @@ pub enum Action {
         text: String,
     },
     BackspacePromptInput,
+    SelectNextPromptSuggestion,
+    SelectPreviousPromptSuggestion,
     SubmitPromptInput,
     OpenInEditor,
     OpenConfigFileInDefaultApp,
