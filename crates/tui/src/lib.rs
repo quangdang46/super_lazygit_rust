@@ -13121,6 +13121,37 @@ mod tests {
     }
 
     #[test]
+    fn footer_segments_compose_display_only_context_surfaces() {
+        let segments = footer_segments("Options", "Busy", "Repository  v1.0.0");
+        assert_eq!(
+            segments
+                .iter()
+                .map(|segment| segment.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                FooterSegmentKind::AppStatus,
+                FooterSegmentKind::SpacerFixed,
+                FooterSegmentKind::Options,
+                FooterSegmentKind::SpacerFixed,
+                FooterSegmentKind::Information,
+            ]
+        );
+
+        let information_only = footer_segments("", "", "Repository  v1.0.0");
+        assert_eq!(
+            information_only
+                .iter()
+                .map(|segment| segment.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                FooterSegmentKind::SpacerFlexible,
+                FooterSegmentKind::SpacerFixed,
+                FooterSegmentKind::Information,
+            ]
+        );
+    }
+
+    #[test]
     fn route_repository_mouse_click_focuses_main_repo_panes() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {

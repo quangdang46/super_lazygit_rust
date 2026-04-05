@@ -14532,6 +14532,59 @@ mod tests {
     }
 
     #[test]
+    fn close_top_modal_restores_return_context_and_clears_filter_focus() {
+        let repo_id = RepoId::new("repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(ModalKind::Menu, "Filter options")],
+            pending_menu: Some(crate::state::PendingMenu {
+                repo_id: repo_id.clone(),
+                operation: MenuOperation::FilterOptions,
+                selected_index: 0,
+                return_focus: PaneId::RepoDetail,
+            }),
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Branches,
+                branches_filter: crate::state::RepoSubviewFilterState {
+                    query: "feat".to_string(),
+                    history: Vec::new(),
+                    focused: true,
+                    history_index: -1,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            return_context_stack: vec![ReturnContext::new(
+                PaneId::RepoDetail,
+                Some(RepoSubview::Branches),
+            )],
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::CloseTopModal));
+
+        assert_eq!(result.state.focused_pane, PaneId::RepoDetail);
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .map(|repo_mode| repo_mode.active_subview),
+            Some(RepoSubview::Branches)
+        );
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.subview_filter(RepoSubview::Branches))
+                .map(|filter| filter.focused),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn hard_reset_selected_reflog_entry_uses_reflog_selector() {
         let repo_id = RepoId::new("repo-1");
         let state = AppState {
