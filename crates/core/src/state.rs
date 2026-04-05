@@ -1284,12 +1284,14 @@ pub enum CommitBoxMode {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListViewState {
     pub selected_index: Option<usize>,
+    pub selection_anchor: Option<usize>,
 }
 
 impl ListViewState {
     pub fn ensure_selection(&mut self, len: usize) -> Option<usize> {
         if len == 0 {
             self.selected_index = None;
+            self.selection_anchor = None;
             return None;
         }
 
@@ -1297,6 +1299,7 @@ impl ListViewState {
             .selected_index
             .filter(|index| *index < len)
             .unwrap_or(0);
+        self.selection_anchor = self.selection_anchor.filter(|index| *index < len);
         self.selected_index = Some(selected);
         Some(selected)
     }
@@ -1304,6 +1307,7 @@ impl ListViewState {
     pub fn select_with_step(&mut self, len: usize, step: isize) -> Option<usize> {
         if len == 0 {
             self.selected_index = None;
+            self.selection_anchor = None;
             return None;
         }
 
@@ -1316,6 +1320,7 @@ impl ListViewState {
     pub fn select_first(&mut self, len: usize) -> Option<usize> {
         if len == 0 {
             self.selected_index = None;
+            self.selection_anchor = None;
             return None;
         }
 
@@ -1326,6 +1331,7 @@ impl ListViewState {
     pub fn select_last(&mut self, len: usize) -> Option<usize> {
         if len == 0 {
             self.selected_index = None;
+            self.selection_anchor = None;
             return None;
         }
 
@@ -1337,11 +1343,66 @@ impl ListViewState {
     pub fn set_selected(&mut self, len: usize, index: usize) -> Option<usize> {
         if len == 0 || index >= len {
             self.selected_index = None;
+            self.selection_anchor = None;
             return None;
         }
 
         self.selected_index = Some(index);
         Some(index)
+    }
+
+    pub fn toggle_selection_anchor(&mut self, len: usize) -> Option<usize> {
+        let selected = self.ensure_selection(len)?;
+        if self.selection_anchor == Some(selected) {
+            self.selection_anchor = None;
+        } else {
+            self.selection_anchor = Some(selected);
+        }
+        Some(selected)
+    }
+
+    pub fn clear_selection_anchor(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    pub fn selection_range(&mut self, len: usize) -> Option<(usize, usize)> {
+        let selected = self.ensure_selection(len)?;
+        let anchor = self.selection_anchor.unwrap_or(selected);
+        Some((anchor.min(selected), anchor.max(selected)))
+    }
+
+    pub fn selected_item<'a, T>(&mut self, items: &'a [T]) -> Option<&'a T> {
+        let index = self.ensure_selection(items.len())?;
+        items.get(index)
+    }
+
+    pub fn selected_items<'a, T>(&mut self, items: &'a [T]) -> Option<(&'a [T], usize, usize)> {
+        let (start, end) = self.selection_range(items.len())?;
+        Some((&items[start..=end], start, end))
+    }
+
+    pub fn selected_item_id<T, F>(&mut self, items: &[T], mut get_id: F) -> Option<String>
+    where
+        F: FnMut(&T) -> &str,
+    {
+        self.selected_item(items)
+            .map(|item| get_id(item).to_string())
+    }
+
+    pub fn selected_item_ids<T, F>(
+        &mut self,
+        items: &[T],
+        mut get_id: F,
+    ) -> Option<(Vec<String>, usize, usize)>
+    where
+        F: FnMut(&T) -> &str,
+    {
+        let (items, start, end) = self.selected_items(items)?;
+        Some((
+            items.iter().map(|item| get_id(item).to_string()).collect(),
+            start,
+            end,
+        ))
     }
 }
 
@@ -4017,9 +4078,7 @@ mod tests {
 
     #[test]
     fn list_view_selection_wraps_with_step() {
-        let mut view = ListViewState {
-            selected_index: Some(0),
-        };
+        let mut view = ListViewState { selected_index: Some(0), selection_anchor: None };
 
         let previous = view.select_with_step(3, -1);
         assert_eq!(previous, Some(2));
@@ -4834,6 +4893,102 @@ mod tests {
             workspace_attention_score(Some(&conflict)) > workspace_attention_score(Some(&behind))
         );
         assert!(workspace_attention_score(Some(&behind)) > workspace_attention_score(Some(&clean)));
+    }
+
+    #[test]
+    fn list_view_selection_range_defaults_to_selected_index_without_anchor() {
+        let mut state = ListViewState::default();
+        state.set_selected(4, 2);
+
+        assert_eq!(state.selection_range(4), Some((2, 2)));
+        assert_eq!(state.selection_anchor, None);
+    }
+
+    #[test]
+    fn list_view_selection_range_tracks_anchor_and_selected_index() {
+        let mut state = ListViewState::default();
+        state.set_selected(5, 1);
+        assert_eq!(state.toggle_selection_anchor(5), Some(1));
+
+        state.set_selected(5, 3);
+        assert_eq!(state.selection_range(5), Some((1, 3)));
+
+        state.set_selected(5, 0);
+        assert_eq!(state.selection_range(5), Some((0, 1)));
+    }
+
+    #[test]
+    fn list_view_selected_items_and_ids_match_upstream_range_semantics() {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        struct Item {
+            id: &'static str,
+            value: i32,
+        }
+
+        let items = vec![
+            Item { id: "a", value: 10 },
+            Item { id: "b", value: 20 },
+            Item { id: "c", value: 30 },
+            Item { id: "d", value: 40 },
+        ];
+        let mut state = ListViewState::default();
+        state.set_selected(items.len(), 1);
+        state.toggle_selection_anchor(items.len());
+        state.set_selected(items.len(), 3);
+
+        let (selected, start, end) = state.selected_items(&items).expect("selected items");
+        assert_eq!((start, end), (1, 3));
+        assert_eq!(
+            selected.iter().map(|item| item.value).collect::<Vec<_>>(),
+            vec![20, 30, 40]
+        );
+
+        let (ids, start, end) = state
+            .selected_item_ids(&items, |item| item.id)
+            .expect("selected item ids");
+        assert_eq!((start, end), (1, 3));
+        assert_eq!(ids, vec!["b".to_string(), "c".to_string(), "d".to_string()]);
+    }
+
+    #[test]
+    fn list_view_selected_item_and_id_follow_current_selection() {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        struct Item {
+            id: &'static str,
+        }
+
+        let items = vec![Item { id: "left" }, Item { id: "right" }];
+        let mut state = ListViewState::default();
+
+        assert_eq!(
+            state.selected_item(&items).map(|item| item.id),
+            Some("left")
+        );
+        assert_eq!(
+            state.selected_item_id(&items, |item| item.id),
+            Some("left".to_string())
+        );
+
+        state.select_last(items.len());
+        assert_eq!(
+            state.selected_item(&items).map(|item| item.id),
+            Some("right")
+        );
+        assert_eq!(
+            state.selected_item_id(&items, |item| item.id),
+            Some("right".to_string())
+        );
+    }
+
+    #[test]
+    fn list_view_clears_anchor_when_list_becomes_empty() {
+        let mut state = ListViewState::default();
+        state.set_selected(3, 2);
+        state.toggle_selection_anchor(3);
+
+        assert_eq!(state.ensure_selection(0), None);
+        assert_eq!(state.selected_index, None);
+        assert_eq!(state.selection_anchor, None);
     }
 
     #[test]

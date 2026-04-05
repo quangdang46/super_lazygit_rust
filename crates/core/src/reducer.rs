@@ -10696,9 +10696,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                worktree_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                worktree_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
             ..AppState::default()
@@ -10761,9 +10759,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commit_files_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commit_files_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
             ..AppState::default()
@@ -10901,9 +10897,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commit_files_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commit_files_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -10942,9 +10936,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -10984,9 +10976,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                tags_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                tags_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -11026,9 +11016,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                reflog_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                reflog_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -11075,9 +11063,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                submodules_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                submodules_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -11132,9 +11118,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commit_files_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commit_files_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -11191,9 +11175,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -11273,9 +11255,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -11403,9 +11383,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commit_files_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commit_files_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -11645,9 +11623,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 branches_filter: RepoSubviewFilterState {
                     query: "fea".to_string(),
                     history: Vec::new(),
@@ -11721,9 +11697,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id)
             }),
             ..AppState::default()
@@ -11839,9 +11813,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 branches_filter: RepoSubviewFilterState {
                     query: "feature".to_string(),
                     history: vec!["feature-alpha".to_string(), "main".to_string()],
@@ -11931,9 +11903,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                worktree_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                worktree_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id)
             }),
             ..AppState::default()
@@ -12075,9 +12045,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12216,9 +12184,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12409,9 +12375,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12465,9 +12429,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12519,9 +12481,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12565,9 +12525,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                remote_branches_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                remote_branches_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12687,9 +12645,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                remotes_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remotes_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12739,9 +12695,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                remotes_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remotes_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12789,9 +12743,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                remote_branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remote_branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12847,9 +12799,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                remotes_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remotes_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12908,9 +12858,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                remote_branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remote_branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -12993,9 +12941,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                remote_branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remote_branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -13042,9 +12988,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                remote_branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remote_branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -13100,9 +13044,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                tags_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                tags_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -13154,9 +13096,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                tags_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                tags_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -13217,9 +13157,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                status_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                status_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -13283,9 +13221,7 @@ mod tests {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
                 commit_history_mode: CommitHistoryMode::Reflog,
-                status_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                status_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     file_tree: repo_detail_with_file_tree().file_tree,
                     commits: vec![crate::state::CommitItem {
@@ -13347,9 +13283,7 @@ mod tests {
                 repo_mode: Some(RepoModeState {
                     current_repo_id: RepoId::new("repo-1"),
                     active_subview: RepoSubview::Branches,
-                    branches_view: crate::state::ListViewState {
-                        selected_index: Some(0),
-                    },
+                    branches_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                     branches_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
                         history: Vec::new(),
@@ -13398,9 +13332,7 @@ mod tests {
                 repo_mode: Some(RepoModeState {
                     current_repo_id: RepoId::new("repo-1"),
                     active_subview: RepoSubview::Commits,
-                    commits_view: crate::state::ListViewState {
-                        selected_index: Some(0),
-                    },
+                    commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                     commits_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
                         history: Vec::new(),
@@ -13457,9 +13389,7 @@ mod tests {
                 repo_mode: Some(RepoModeState {
                     current_repo_id: RepoId::new("repo-1"),
                     active_subview: RepoSubview::Stash,
-                    stash_view: crate::state::ListViewState {
-                        selected_index: Some(0),
-                    },
+                    stash_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                     stash_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
                         history: Vec::new(),
@@ -13508,9 +13438,7 @@ mod tests {
                 repo_mode: Some(RepoModeState {
                     current_repo_id: RepoId::new("repo-1"),
                     active_subview: RepoSubview::Worktrees,
-                    worktree_view: crate::state::ListViewState {
-                        selected_index: Some(0),
-                    },
+                    worktree_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                     worktree_filter: crate::state::RepoSubviewFilterState {
                         query: "a".to_string(),
                         history: Vec::new(),
@@ -13555,9 +13483,7 @@ mod tests {
                 repo_mode: Some(RepoModeState {
                     current_repo_id: RepoId::new("repo-1"),
                     active_subview: RepoSubview::Submodules,
-                    submodules_view: crate::state::ListViewState {
-                        selected_index: Some(0),
-                    },
+                    submodules_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                     submodules_filter: crate::state::RepoSubviewFilterState {
                         query: "zed".to_string(),
                         history: Vec::new(),
@@ -13869,9 +13795,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -13925,9 +13849,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                tags_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                tags_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -13984,9 +13906,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                stash_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                stash_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -14138,9 +14058,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                stash_files_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                stash_files_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -14187,9 +14105,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                reflog_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                reflog_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -14238,9 +14154,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                reflog_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                reflog_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -14303,9 +14217,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                reflog_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                reflog_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -14355,9 +14267,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                reflog_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                reflog_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 commits_filter: crate::state::RepoSubviewFilterState {
                     query: "stale".to_string(),
                     history: Vec::new(),
@@ -14447,9 +14357,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                reflog_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                reflog_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -14498,9 +14406,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                reflog_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                reflog_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -14548,9 +14454,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                worktree_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                worktree_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -14596,9 +14500,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                worktree_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                worktree_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -14745,9 +14647,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                stash_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                stash_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -14796,9 +14696,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                stash_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                stash_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -14851,9 +14749,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                stash_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                stash_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -15046,9 +14942,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     commits: vec![
                         CommitItem {
@@ -15099,9 +14993,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Branches,
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     branches: vec![
                         crate::state::BranchItem {
@@ -15152,9 +15044,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::RemoteBranches,
-                remote_branches_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                remote_branches_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 detail: Some(RepoDetail {
                     remote_branches: vec![crate::state::RemoteBranchItem {
                         name: "origin/feature".to_string(),
@@ -15196,9 +15086,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Branches,
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     branches: vec![
                         crate::state::BranchItem {
@@ -15269,9 +15157,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Branches,
-                branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     branches: vec![
                         crate::state::BranchItem {
@@ -15328,9 +15214,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     commits: vec![
                         CommitItem {
@@ -15425,9 +15309,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     commits: vec![
                         CommitItem {
@@ -15482,9 +15364,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     commits: vec![
                         CommitItem {
@@ -15537,9 +15417,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 detail: Some(RepoDetail {
                     commits: vec![
                         CommitItem {
@@ -16652,9 +16530,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                worktree_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                worktree_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -16697,9 +16573,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                worktree_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                worktree_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -18931,9 +18805,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                remote_branches_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                remote_branches_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -19208,9 +19080,7 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: RepoId::new("repo-1"),
                 active_subview: RepoSubview::Commits,
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 comparison_base: Some(crate::state::ComparisonTarget::Commit(
                     "abcdef1234567890".to_string(),
                 )),
@@ -19409,9 +19279,7 @@ mod tests {
             focused_pane: PaneId::RepoUnstaged,
             repo_mode: Some(crate::state::RepoModeState {
                 detail: Some(repo_detail_with_file_tree()),
-                status_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                status_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -19504,9 +19372,7 @@ mod tests {
             focused_pane: PaneId::RepoUnstaged,
             repo_mode: Some(crate::state::RepoModeState {
                 detail: Some(repo_detail_with_file_tree()),
-                status_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                status_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -19546,9 +19412,7 @@ mod tests {
             focused_pane: PaneId::RepoUnstaged,
             repo_mode: Some(crate::state::RepoModeState {
                 detail: Some(repo_detail_with_file_tree()),
-                status_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                status_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id)
             }),
             ..AppState::default()
@@ -19574,9 +19438,7 @@ mod tests {
             focused_pane: PaneId::RepoUnstaged,
             repo_mode: Some(crate::state::RepoModeState {
                 detail: Some(repo_detail_with_file_tree()),
-                status_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                status_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id)
             }),
             ..AppState::default()
@@ -19863,9 +19725,7 @@ mod tests {
             focused_pane: PaneId::RepoStaged,
             repo_mode: Some(crate::state::RepoModeState {
                 detail: Some(repo_detail_with_file_tree()),
-                staged_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                staged_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..crate::state::RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -20489,9 +20349,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -20535,9 +20393,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -20583,9 +20439,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -20630,9 +20484,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -20678,9 +20530,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -20723,9 +20573,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -20776,9 +20624,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -20852,9 +20698,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21123,9 +20967,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21168,9 +21010,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21226,9 +21066,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21285,9 +21123,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21348,9 +21184,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21418,9 +21252,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21489,9 +21321,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21591,9 +21421,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -21636,9 +21464,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -21686,9 +21512,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -21752,9 +21576,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21815,9 +21637,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -21866,9 +21686,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -21916,9 +21734,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -21956,9 +21772,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22001,9 +21815,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22040,9 +21852,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22085,9 +21895,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22124,9 +21932,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22169,9 +21975,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22218,9 +22022,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22263,9 +22065,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22373,9 +22173,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commit_files_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commit_files_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -22509,9 +22307,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -22568,9 +22364,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commit_files_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                commit_files_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -22630,9 +22424,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22713,9 +22505,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id.clone())
             }),
             ..AppState::default()
@@ -22797,9 +22587,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -22844,9 +22632,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                commits_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                commits_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -23689,9 +23475,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                submodules_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                submodules_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(repo_id)
             }),
             ..AppState::default()
@@ -23769,9 +23553,7 @@ mod tests {
                     ],
                     ..RepoDetail::default()
                 }),
-                submodules_view: crate::state::ListViewState {
-                    selected_index: Some(1),
-                },
+                submodules_view: crate::state::ListViewState { selected_index: Some(1), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
             }),
             ..AppState::default()
@@ -24064,9 +23846,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                submodules_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                submodules_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -24117,9 +23897,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                submodules_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                submodules_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -24185,9 +23963,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                submodules_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                submodules_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
@@ -24253,9 +24029,7 @@ mod tests {
                     }],
                     ..RepoDetail::default()
                 }),
-                submodules_view: crate::state::ListViewState {
-                    selected_index: Some(0),
-                },
+                submodules_view: crate::state::ListViewState { selected_index: Some(0), selection_anchor: None },
                 ..RepoModeState::new(RepoId::new("repo-1"))
             }),
             ..AppState::default()
