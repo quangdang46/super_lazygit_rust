@@ -812,7 +812,7 @@
 ./references/lazygit-master/pkg/integration/tests/reflog/cherry_pick.go
 ./references/lazygit-master/pkg/integration/tests/reflog/do_not_show_branch_markers_in_reflog_subcommits.go
 ./references/lazygit-master/pkg/integration/tests/reflog/patch.go
-./references/lazygit-master/pkg/integration/tests/reflog/reset.go
+[x] ./references/lazygit-master/pkg/integration/tests/reflog/reset.go
 [x] ./references/lazygit-master/pkg/integration/tests/remote/add_fork_remote.go
 ./references/lazygit-master/pkg/integration/tests/shared/README.md
 [x] ./references/lazygit-master/pkg/integration/tests/shared/conflicts.go
