@@ -20,6 +20,7 @@ pub mod record_directory_helper;
 pub mod refresh_helper;
 pub mod refs_helper;
 pub mod repos_helper;
+pub mod search_helper;
 
 pub use amend_helper::*;
 pub use app_status_helper::*;
@@ -43,3 +44,4 @@ pub use record_directory_helper::*;
 pub use refresh_helper::*;
 pub use refs_helper::*;
 pub use repos_helper::*;
+pub use search_helper::*;
