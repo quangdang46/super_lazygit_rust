@@ -1,14 +1,13 @@
 ---
 active: true
-iteration: 4
-completion_promise: "VERIFIED"
+iteration: 5
+completion_promise: "DONE"
 initial_completion_promise: "DONE"
-started_at: "2026-04-06T19:30:20.431Z"
+started_at: "2026-04-06T20:17:33.867Z"
 session_id: "ses_29c52c2dcffe0Fv62Wc0iNz5Is"
 ultrawork: true
-verification_pending: true
 strategy: "continue"
-message_count_at_start: 713
+message_count_at_start: 1024
 ---
 You is porter currently porting from each golang file to match exact the logic to rust
 MANDATORY: You are the sole implementer. Execute ALL remaining beads sequentially without stopping. After completing each bead, immediately continue to the next without asking for permission, confirmation, or clarification. Do not pause between beads. Do not summarize progress and wait. Do not ask "shall I continue?". Keep going until every single bead is marked done. If you encounter an error, fix it and continue. You have full authority to make all implementation decisions. BEGIN NOW and do not stop until completion.

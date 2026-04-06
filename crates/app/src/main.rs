@@ -10,6 +10,7 @@ mod context;
 mod controllers;
 mod filetree;
 mod gui;
+mod mergeconflicts;
 mod runtime;
 mod terminal;
 pub mod utils;
