@@ -36,6 +36,7 @@ pub mod status_controller;
 pub mod sub_commits_controller;
 pub mod submodules_controller;
 pub mod suggestions_controller;
+pub mod switch_to_diff_files_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
