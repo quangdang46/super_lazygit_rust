@@ -5,3 +5,4 @@ pub mod extras_panel;
 pub mod global_handlers;
 pub mod gui;
 pub mod gui_common;
+pub mod gui_driver;
