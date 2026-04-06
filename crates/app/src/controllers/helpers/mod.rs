@@ -29,6 +29,7 @@ pub mod sub_commits_helper;
 pub mod suggestions_helper;
 pub mod suspend_resume_helper;
 pub mod tags_helper;
+pub mod update_helper;
 
 pub use amend_helper::*;
 pub use app_status_helper::*;
@@ -61,3 +62,4 @@ pub use sub_commits_helper::*;
 pub use suggestions_helper::*;
 pub use suspend_resume_helper::*;
 pub use tags_helper::*;
+pub use update_helper::*;
