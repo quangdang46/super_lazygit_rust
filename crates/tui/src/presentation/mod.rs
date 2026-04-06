@@ -2,6 +2,7 @@ pub mod authors;
 pub mod branches;
 pub mod commits;
 pub mod files;
+pub mod graph;
 pub mod icons;
 pub mod worktrees;
 
