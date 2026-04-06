@@ -22,6 +22,8 @@ clap.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 regex.workspace = true
+unicode-segmentation = "1.11"
+unicode-width = "0.2"
 super-lazygit-config = { path = "../config" }
 super-lazygit-core = { path = "../core" }
 super-lazygit-git = { path = "../git" }
