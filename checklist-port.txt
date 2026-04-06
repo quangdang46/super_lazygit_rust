@@ -822,7 +822,7 @@
 ./references/lazygit-master/pkg/integration/tests/shell_commands/edit_history.go
 [x] ./references/lazygit-master/pkg/integration/tests/shell_commands/history.go
 [x] ./references/lazygit-master/pkg/integration/tests/shell_commands/omit_from_history.go
-./references/lazygit-master/pkg/integration/tests/staging/diff_change_screen_mode.go
+[x] ./references/lazygit-master/pkg/integration/tests/staging/diff_change_screen_mode.go
 [x] ./references/lazygit-master/pkg/integration/tests/staging/diff_context_change.go
 ./references/lazygit-master/pkg/integration/tests/staging/discard_all_changes.go
 ./references/lazygit-master/pkg/integration/tests/staging/search.go
