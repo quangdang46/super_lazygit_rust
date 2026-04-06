@@ -8,3 +8,4 @@ pub mod gui_common;
 pub mod gui_driver;
 pub mod keybindings;
 pub mod main_panels;
+pub mod menu_panel;
