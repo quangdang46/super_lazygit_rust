@@ -14,6 +14,7 @@ mod mergeconflicts;
 mod modes;
 mod patch_exploring;
 mod popup;
+mod pty;
 mod runtime;
 mod terminal;
 pub mod utils;
