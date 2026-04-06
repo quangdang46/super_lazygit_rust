@@ -4,6 +4,7 @@ pub mod once_writer;
 pub mod rebase_todo;
 pub mod search;
 pub mod slice;
+pub mod template;
 
 use std::collections::VecDeque;
 
