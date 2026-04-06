@@ -15,6 +15,7 @@ mod modes;
 mod patch_exploring;
 mod popup;
 mod pty;
+mod recent_repos_panel;
 mod runtime;
 mod terminal;
 pub mod utils;
