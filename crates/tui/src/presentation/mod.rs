@@ -5,6 +5,7 @@ pub mod files;
 pub mod graph;
 pub mod icons;
 pub mod item_operations;
+pub mod loader;
 pub mod worktrees;
 
 pub use authors::{author_span, author_style, author_with_length};
