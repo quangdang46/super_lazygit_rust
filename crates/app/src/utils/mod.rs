@@ -1,6 +1,7 @@
 pub mod color;
 pub mod formatting;
 pub mod once_writer;
+pub mod rebase_todo;
 
 use std::collections::VecDeque;
 
