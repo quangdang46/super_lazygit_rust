@@ -26,6 +26,7 @@ pub mod remote_branches_controller;
 pub mod rename_similarity_threshold_controller;
 pub mod screen_mode_actions;
 pub mod search_controller;
+pub mod search_prompt_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
@@ -46,3 +47,4 @@ pub use remote_branches_controller::*;
 pub use rename_similarity_threshold_controller::*;
 pub use screen_mode_actions::*;
 pub use search_controller::*;
+pub use search_prompt_controller::*;
