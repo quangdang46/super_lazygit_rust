@@ -5,7 +5,7 @@
 //! integration test framework.
 
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// The description used for unit tests to avoid panicking when trying to get
@@ -216,13 +216,57 @@ impl Default for NewIntegrationTestArgs {
     }
 }
 
-/// Stub for test shell operations.
-/// In a full implementation, this would provide a shell for setting up test repos.
-pub struct TestShell;
+/// Test shell operations for setting up test repositories.
+/// Provides git command execution and file manipulation for test setup.
+pub struct TestShell {
+    pwd: PathBuf,
+    env: Vec<(String, String)>,
+}
 
 impl TestShell {
-    pub fn new(_pwd: &Path, _env: &[(String, String)]) -> Self {
-        TestShell
+    pub fn new(pwd: &Path, env: &[(String, String)]) -> Self {
+        TestShell {
+            pwd: pwd.to_path_buf(),
+            env: env.iter().cloned().collect(),
+        }
+    }
+
+    /// Creates an empty commit with the given message.
+    pub fn empty_commit(&self, message: &str) -> &Self {
+        let _ = std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", message])
+            .current_dir(&self.pwd)
+            .output();
+        self
+    }
+
+    /// Creates a file with the given content.
+    pub fn create_file(&self, path: &str, content: &str) -> &Self {
+        let full_path = self.pwd.join(path);
+        if let Some(parent) = full_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&full_path, content);
+        self
+    }
+
+    /// Stages a file with git add.
+    pub fn git_add(&self, path: &str) -> &Self {
+        let _ = std::process::Command::new("git")
+            .args(["add", path])
+            .current_dir(&self.pwd)
+            .output();
+        self
+    }
+
+    /// Creates a file and stages it.
+    pub fn create_file_and_add(&self, path: &str, content: &str) -> &Self {
+        self.create_file(path, content).git_add(path)
+    }
+
+    /// Updates a file with new content.
+    pub fn update_file(&self, path: &str, content: &str) -> &Self {
+        self.create_file(path, content)
     }
 }
 

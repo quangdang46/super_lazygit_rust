@@ -9,6 +9,8 @@ use tempfile::TempDir;
 pub mod integration_test;
 pub use integration_test::*;
 
+pub mod integration_tests;
+
 pub fn temp_repo() -> io::Result<TempRepo> {
     TempRepo::new()
 }
