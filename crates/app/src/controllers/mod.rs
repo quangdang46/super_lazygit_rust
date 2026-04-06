@@ -13,6 +13,7 @@ pub mod git_flow_controller;
 pub mod global_controller;
 pub mod jump_to_side_window_controller;
 pub mod local_commits_controller;
+pub mod main_view_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
@@ -20,3 +21,4 @@ pub use global_controller::*;
 pub use helpers::*;
 pub use jump_to_side_window_controller::*;
 pub use local_commits_controller::*;
+pub use main_view_controller::*;
