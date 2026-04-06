@@ -523,6 +523,7 @@ pub struct RepoDetailRequest {
     pub diff_presentation: DiffPresentation,
     pub commit_ref: Option<String>,
     pub commit_history_mode: CommitHistoryMode,
+    pub show_branch_heads: bool,
     pub ignore_whitespace_in_diff: bool,
     pub diff_context_lines: u16,
     pub rename_similarity_threshold: u8,
@@ -1043,6 +1044,7 @@ impl GitBackend for CliGitBackend {
             &repo_path,
             request.commit_ref.as_deref(),
             request.commit_history_mode,
+            request.show_branch_heads,
         );
         let branches = read_branches(&repo_path);
         let remote_branches = read_remote_branches(&repo_path);
@@ -1172,6 +1174,31 @@ impl GitBackend for CliGitBackend {
                     .unwrap_or_else(|_| commit.clone());
                 format!("Started bisect by marking {short} {subject} as {term}")
             }
+            GitCommand::StartBisectWithTerms {
+                commit,
+                old_term,
+                new_term,
+            } => {
+                git(
+                    &repo_path,
+                    [
+                        "bisect",
+                        "start",
+                        "--term-old",
+                        old_term.as_str(),
+                        "--term-new",
+                        new_term.as_str(),
+                    ],
+                )?;
+                git(&repo_path, ["bisect", new_term.as_str(), commit])?;
+                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                    .unwrap_or_else(|_| commit.clone());
+                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                    .unwrap_or_else(|_| commit.clone());
+                format!(
+                    "Started bisect with terms {old_term}/{new_term} by marking {short} {subject} as {new_term}"
+                )
+            }
             GitCommand::MarkBisect { commit, term } => {
                 git(&repo_path, ["bisect", term.as_str(), commit])?;
                 let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
@@ -1278,13 +1305,18 @@ impl GitBackend for CliGitBackend {
                     }
                 }
             }
-            GitCommand::CherryPickCommit { commit } => {
-                cherry_pick_commit(&repo_path, commit)?;
-                let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
-                    .unwrap_or_else(|_| commit.clone());
-                let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
-                    .unwrap_or_else(|_| commit.clone());
-                format!("Cherry-picked {short} {subject}")
+            GitCommand::CherryPickCommit { commits } => {
+                cherry_pick_commits(&repo_path, commits)?;
+                if commits.len() == 1 {
+                    let commit = &commits[0];
+                    let short = git_stdout(&repo_path, ["rev-parse", "--short", commit.as_str()])
+                        .unwrap_or_else(|_| commit.clone());
+                    let subject = git_stdout(&repo_path, ["show", "-s", "--format=%s", commit])
+                        .unwrap_or_else(|_| commit.clone());
+                    format!("Cherry-picked {short} {subject}")
+                } else {
+                    format!("Cherry-picked {} commits", commits.len())
+                }
             }
             GitCommand::RevertCommit { commit } => {
                 revert_commit(&repo_path, commit)?;
@@ -1812,6 +1844,7 @@ fn git_command_label(request: &GitCommandRequest) -> &'static str {
         GitCommand::CommitStagedWithEditor => "commit_staged_with_editor",
         GitCommand::AmendHead { .. } => "amend_head",
         GitCommand::StartBisect { .. } => "start_bisect",
+        GitCommand::StartBisectWithTerms { .. } => "start_bisect_with_terms",
         GitCommand::MarkBisect { .. } => "mark_bisect",
         GitCommand::SkipBisect { .. } => "skip_bisect",
         GitCommand::ResetBisect => "reset_bisect",
@@ -4488,8 +4521,11 @@ fn rebase_base_args(repo_path: &Path, commit: &str) -> Vec<String> {
         .unwrap_or_else(|_| vec!["--root".to_string()])
 }
 
-fn cherry_pick_commit(repo_path: &Path, commit: &str) -> GitResult<()> {
-    git(repo_path, ["cherry-pick", commit])
+fn cherry_pick_commits(repo_path: &Path, commits: &[String]) -> GitResult<()> {
+    git_builder(
+        repo_path,
+        GitCommandBuilder::new("cherry-pick").arg(commits.iter().map(String::as_str)),
+    )
 }
 
 fn revert_commit(repo_path: &Path, commit: &str) -> GitResult<()> {
@@ -5548,9 +5584,10 @@ fn read_commits(
     repo_path: &Path,
     commit_ref: Option<&str>,
     commit_history_mode: CommitHistoryMode,
+    show_branch_heads: bool,
 ) -> CommitHistoryResult {
     match commit_history_mode {
-        CommitHistoryMode::Linear => read_linear_commits(repo_path, commit_ref),
+        CommitHistoryMode::Linear => read_linear_commits(repo_path, commit_ref, show_branch_heads),
         CommitHistoryMode::Graph { reverse } => read_graph_commits(repo_path, reverse),
         CommitHistoryMode::Reflog => read_reflog_commit_history(repo_path),
         CommitHistoryMode::SubHistory => read_sub_history_commits(repo_path, commit_ref),
@@ -5590,7 +5627,11 @@ fn read_sub_history_commits(repo_path: &Path, commit_ref: Option<&str>) -> Commi
         .unwrap_or_default()
 }
 
-fn read_linear_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHistoryResult {
+fn read_linear_commits(
+    repo_path: &Path,
+    commit_ref: Option<&str>,
+    show_branch_heads: bool,
+) -> CommitHistoryResult {
     let main_branch_refs = existing_main_branch_refs(repo_path).unwrap_or_default();
     let unmerged_hashes = reachable_hashes(
         repo_path,
@@ -5614,6 +5655,9 @@ fn read_linear_commits(repo_path: &Path, commit_ref: Option<&str>) -> CommitHist
         OsString::from("-n"),
         OsString::from("64"),
     ];
+    if show_branch_heads {
+        args.push(OsString::from("--decorate=short"));
+    }
     if let Some(commit_ref) = commit_ref {
         args.push(OsString::from(commit_ref));
     }
@@ -8632,6 +8676,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -8689,6 +8734,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -8855,6 +8901,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -8943,6 +8990,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Staged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -8975,6 +9023,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9041,6 +9090,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9071,6 +9121,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9133,6 +9184,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9170,6 +9222,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9204,6 +9257,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9225,6 +9279,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9636,6 +9691,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9684,6 +9740,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9717,6 +9774,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9757,6 +9815,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9792,6 +9851,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -9826,6 +9886,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10086,6 +10147,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10140,6 +10202,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: Some(head.clone()),
                 commit_history_mode: CommitHistoryMode::SubHistory,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10232,6 +10295,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10278,6 +10342,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: Some("feature".to_string()),
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10303,6 +10368,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10355,6 +10421,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Graph { reverse: false },
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10367,6 +10434,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10423,6 +10491,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10598,6 +10667,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10680,6 +10750,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10719,6 +10790,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10766,6 +10838,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10928,6 +11001,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -10971,6 +11045,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11013,6 +11088,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11043,6 +11119,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11118,6 +11195,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11147,6 +11225,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11183,6 +11262,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11252,6 +11332,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11297,6 +11378,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11338,6 +11420,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11713,6 +11796,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -11944,6 +12028,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12016,6 +12101,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12158,6 +12244,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12199,6 +12286,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12235,6 +12323,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12267,6 +12356,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12307,6 +12397,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12374,6 +12465,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -12732,6 +12824,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -13008,6 +13101,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -13491,6 +13585,7 @@ index 9ce8efb33..0632e41b0 100644
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -13726,6 +13821,7 @@ garbage\n";
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -13770,6 +13866,81 @@ garbage\n";
             lightweight.target_short_oid,
             lightweight_target.chars().take(7).collect::<String>()
         );
+    }
+
+    #[test]
+    fn linear_tag_history_can_include_branch_head_decorations() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.git(["branch", "feature/head-label"])
+            .expect("create branch head label");
+        repo.git(["tag", "-a", "v1.0.0", "-m", "release v1.0.0"])
+            .expect("create annotated tag");
+
+        let backend = CliGitBackend;
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: Some("v1.0.0".to_string()),
+                commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: true,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail succeeds");
+
+        let commit = detail.commits.first().expect("tag history commit");
+        assert!(commit.extra_info.contains("tag: v1.0.0"));
+        assert!(
+            commit.extra_info.contains("feature/head-label") || commit.extra_info.contains("main")
+        );
+    }
+
+    #[test]
+    fn start_bisect_with_custom_terms_marks_selected_commit() {
+        let repo = TempRepo::new().expect("fixture repo");
+        repo.write_file("tracked.txt", "base\n")
+            .expect("write tracked file");
+        repo.commit_all("initial").expect("initial commit");
+        repo.write_file("tracked.txt", "change\n")
+            .expect("update tracked file");
+        let commit = repo.commit_all("second").expect("second commit");
+
+        let backend = CliGitBackend;
+        let summary = backend
+            .run_command(GitCommandRequest {
+                job_id: super_lazygit_core::JobId::new("git:test:start-bisect-with-terms"),
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                command: GitCommand::StartBisectWithTerms {
+                    commit: commit.clone(),
+                    old_term: "good".to_string(),
+                    new_term: "bad".to_string(),
+                },
+            })
+            .expect("start bisect with terms succeeds");
+
+        assert!(summary.contains("Started bisect with terms good/bad"));
+        let detail = backend
+            .read_repo_detail(RepoDetailRequest {
+                repo_id: RepoId::new(repo.path().display().to_string()),
+                selected_path: None,
+                diff_presentation: DiffPresentation::Unstaged,
+                commit_ref: None,
+                commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
+                ignore_whitespace_in_diff: false,
+                diff_context_lines: 3,
+                rename_similarity_threshold: 50,
+            })
+            .expect("detail succeeds");
+        let bisect = detail.bisect_state.expect("bisect state present");
+        assert_eq!(bisect.good_term, "good");
+        assert_eq!(bisect.bad_term, "bad");
     }
 
     #[test]
@@ -15278,6 +15449,7 @@ diff --git a/file.txt b/file.txt
                 diff_presentation: DiffPresentation::Unstaged,
                 commit_ref: None,
                 commit_history_mode: CommitHistoryMode::Linear,
+                show_branch_heads: false,
                 ignore_whitespace_in_diff: false,
                 diff_context_lines: 3,
                 rename_similarity_threshold: 50,
@@ -15322,6 +15494,7 @@ diff --git a/file.txt b/file.txt
             diff_presentation: DiffPresentation::Unstaged,
             commit_ref: None,
             commit_history_mode: CommitHistoryMode::Linear,
+            show_branch_heads: false,
             ignore_whitespace_in_diff: false,
             diff_context_lines: 3,
             rename_similarity_threshold: 50,

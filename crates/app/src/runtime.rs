@@ -209,20 +209,15 @@ impl AppRuntime {
                     diff_presentation,
                     commit_ref,
                     commit_history_mode,
+                    show_branch_heads,
                     ignore_whitespace_in_diff,
                     diff_context_lines,
                     rename_similarity_threshold,
                 } => {
-                    let result = self.git.read_repo_detail(RepoDetailRequest {
-                        repo_id: repo_id.clone(),
-                        selected_path: selected_path.clone(),
-                        diff_presentation: *diff_presentation,
-                        commit_ref: commit_ref.clone(),
-                        commit_history_mode: *commit_history_mode,
-                        ignore_whitespace_in_diff: *ignore_whitespace_in_diff,
-                        diff_context_lines: *diff_context_lines,
-                        rename_similarity_threshold: *rename_similarity_threshold,
-                    });
+                    let result = self.git.read_repo_detail(RepoDetailRequest { repo_id: repo_id.clone(), selected_path: selected_path.clone(), diff_presentation: *diff_presentation, commit_ref: commit_ref.clone(), commit_history_mode: *commit_history_mode, show_branch_heads: *show_branch_heads,
+                    ignore_whitespace_in_diff: *ignore_whitespace_in_diff,
+                    diff_context_lines: *diff_context_lines,
+                    rename_similarity_threshold: *rename_similarity_threshold, });
                     self.diagnostics.extend_snapshot(self.git.diagnostics());
 
                     if let Ok(detail) = result {
@@ -1262,16 +1257,10 @@ mod tests {
 
         let detail = runtime
             .git
-            .read_repo_detail(RepoDetailRequest {
-                repo_id: repo_id.clone(),
-                selected_path: None,
-                diff_presentation: super_lazygit_core::DiffPresentation::Unstaged,
-                commit_ref: None,
-                commit_history_mode: super_lazygit_core::CommitHistoryMode::Linear,
-                ignore_whitespace_in_diff: false,
-                diff_context_lines: 3,
-                rename_similarity_threshold: 50,
-            })
+            .read_repo_detail(RepoDetailRequest { repo_id: repo_id.clone(), selected_path: None, diff_presentation: super_lazygit_core::DiffPresentation::Unstaged, commit_ref: None, commit_history_mode: super_lazygit_core::CommitHistoryMode::Linear, show_branch_heads: false,
+            ignore_whitespace_in_diff: false,
+            diff_context_lines: 3,
+            rename_similarity_threshold: 50, })
             .map_err(io::Error::other)?;
         let events = runtime.apply_effects(&[Effect::FindBaseCommitForFixup {
             repo_id: repo_id.clone(),

@@ -11,8 +11,8 @@ use crate::state::{
     DiffLineKind, DiffPresentation, GitRef, InputPromptOperation, JobId, MenuOperation,
     MergeFastForwardPreference, MergeState, MergeVariant, MessageLevel, Notification,
     OperationProgress, PaneId, PendingInputPrompt, PendingMenu, PendingRemoteFlow,
-    PromptSuggestion, PromptSuggestionProvider, RepoModeState, ResetMode, ReturnContext,
-    ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
+    PendingSuggestions, PromptSuggestion, PromptSuggestionProvider, RepoModeState, ResetMode,
+    ReturnContext, ScanStatus, SelectedHunk, StashMode, StatusMessage, WatcherHealth,
     MAX_RENAME_SIMILARITY_THRESHOLD, MIN_RENAME_SIMILARITY_THRESHOLD,
     RENAME_SIMILARITY_THRESHOLD_STEP,
 };
@@ -59,6 +59,7 @@ fn enter_repo_mode_with_parents(
         diff_presentation: DiffPresentation::Unstaged,
         commit_ref: None,
         commit_history_mode: CommitHistoryMode::Linear,
+        show_branch_heads: false,
         ignore_whitespace_in_diff: false,
         diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
         rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -375,6 +376,10 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 repo_mode.commit_subview_mode = crate::state::CommitSubviewMode::History;
                 repo_mode.commit_history_mode = CommitHistoryMode::Linear;
                 repo_mode.commit_history_ref = Some(tag_ref);
+                repo_mode.sub_commit_parent_ref = None;
+                repo_mode.sub_commit_divergence_ref = None;
+                repo_mode.sub_commit_show_branch_heads = true;
+                repo_mode.sub_commit_limit = true;
                 repo_mode.pending_commit_selection_oid = None;
                 repo_mode.diff_scroll = 0;
                 close_commit_box(repo_mode, false);
@@ -834,16 +839,41 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
             effects.push(Effect::ScheduleRender);
         }
         Action::CopySelectedCommitForCherryPick => {
-            let copied_commit =
-                state
-                    .repo_mode
-                    .as_ref()
-                    .and_then(selected_commit_item)
-                    .map(|commit| crate::state::CopiedCommit {
-                        oid: commit.oid.clone(),
-                        short_oid: commit.short_oid.clone(),
-                        summary: commit.summary.clone(),
-                    });
+            let copied_commit = state.repo_mode.as_ref().and_then(|repo_mode| {
+                let detail = repo_mode.detail.as_ref()?;
+                let visible_indices = filtered_commit_indices(repo_mode);
+                let visible_commits = visible_indices
+                    .iter()
+                    .filter_map(|index| detail.commits.get(*index))
+                    .collect::<Vec<_>>();
+                let (selected_commits, start, end) = repo_mode
+                    .commits_view
+                    .clone()
+                    .selected_items(&visible_commits)?;
+                let oids = selected_commits
+                    .iter()
+                    .map(|commit| commit.oid.clone())
+                    .collect::<Vec<_>>();
+                let short_label = if selected_commits.len() == 1 {
+                    selected_commits[0].short_oid.clone()
+                } else {
+                    format!(
+                        "{}..{}",
+                        selected_commits[0].short_oid,
+                        selected_commits[end - start].short_oid
+                    )
+                };
+                let summary = if selected_commits.len() == 1 {
+                    selected_commits[0].summary.clone()
+                } else {
+                    format!("{} commits", selected_commits.len())
+                };
+                Some(crate::state::CopiedCommit {
+                    oids,
+                    short_label,
+                    summary,
+                })
+            });
             let Some(copied_commit) = copied_commit else {
                 push_warning(state, "Select a commit before copying it for cherry-pick.");
                 effects.push(Effect::ScheduleRender);
@@ -860,8 +890,8 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                     (
                         repo_mode.current_repo_id.clone(),
                         ConfirmableOperation::CherryPickCommit {
-                            commit: commit.oid.clone(),
-                            summary: format!("{} {}", commit.short_oid, commit.summary),
+                            commits: commit.oids.clone(),
+                            summary: format!("{} {}", commit.short_label, commit.summary),
                         },
                     )
                 })
@@ -1252,7 +1282,10 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 Ok(Some((repo_id, commit, summary))) => open_confirmation_modal(
                     state,
                     repo_id,
-                    ConfirmableOperation::CherryPickCommit { commit, summary },
+                    ConfirmableOperation::CherryPickCommit {
+                        commits: vec![commit],
+                        summary,
+                    },
                 ),
                 Ok(None) => push_warning(state, "Select a commit before cherry-picking."),
                 Err(message) => push_warning(state, message),
@@ -1556,6 +1589,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 .is_some_and(|modal| matches!(modal.kind, crate::state::ModalKind::InputPrompt))
             {
                 state.pending_input_prompt = None;
+                state.pending_suggestions = None;
             }
             if state
                 .modal_stack
@@ -1843,7 +1877,7 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::AppendPromptInput { text } => {
             if let Some(mut prompt) = state.pending_input_prompt.take() {
                 prompt.value.push_str(&text);
-                refresh_prompt_suggestions(&mut prompt, state);
+                refresh_prompt_suggestions(state, &prompt);
                 state.pending_input_prompt = Some(prompt);
                 effects.push(Effect::ScheduleRender);
             }
@@ -1851,32 +1885,53 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
         Action::BackspacePromptInput => {
             if let Some(mut prompt) = state.pending_input_prompt.take() {
                 if prompt.value.pop().is_some() {
-                    refresh_prompt_suggestions(&mut prompt, state);
+                    refresh_prompt_suggestions(state, &prompt);
                     effects.push(Effect::ScheduleRender);
                 }
                 state.pending_input_prompt = Some(prompt);
             }
         }
+        Action::SelectPromptSuggestion { index } => {
+            if let Some(suggestions) = state.pending_suggestions.as_mut() {
+                if index < suggestions.suggestions.len() {
+                    suggestions.selected_index = index;
+                    effects.push(Effect::ScheduleRender);
+                }
+            }
+        }
+        Action::ConfirmPromptSuggestion => {
+            if let Some(submission) = submit_input_prompt(state) {
+                match submission {
+                    PromptSubmission::Git(job) => effects.push(Effect::RunGitCommand(job)),
+                    PromptSubmission::Shell(job) => effects.push(Effect::RunShellCommand(job)),
+                }
+            } else {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::SelectNextPromptSuggestion => {
-            if let Some(prompt) = state.pending_input_prompt.as_mut() {
-                if !prompt.suggestions.is_empty() {
-                    prompt.selected_suggestion =
-                        (prompt.selected_suggestion + 1) % prompt.suggestions.len();
+            if let Some(suggestions) = state.pending_suggestions.as_mut() {
+                if !suggestions.suggestions.is_empty() {
+                    suggestions.selected_index =
+                        (suggestions.selected_index + 1) % suggestions.suggestions.len();
                     effects.push(Effect::ScheduleRender);
                 }
             }
         }
         Action::SelectPreviousPromptSuggestion => {
-            if let Some(prompt) = state.pending_input_prompt.as_mut() {
-                if !prompt.suggestions.is_empty() {
-                    prompt.selected_suggestion = if prompt.selected_suggestion == 0 {
-                        prompt.suggestions.len() - 1
+            if let Some(suggestions) = state.pending_suggestions.as_mut() {
+                if !suggestions.suggestions.is_empty() {
+                    suggestions.selected_index = if suggestions.selected_index == 0 {
+                        suggestions.suggestions.len() - 1
                     } else {
-                        prompt.selected_suggestion - 1
+                        suggestions.selected_index - 1
                     };
                     effects.push(Effect::ScheduleRender);
                 }
             }
+        }
+        Action::DeletePromptSuggestion => {
+            effects.push(Effect::ScheduleRender);
         }
         Action::SubmitPromptInput => {
             if let Some(submission) = submit_input_prompt(state) {
@@ -2149,6 +2204,88 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         },
+        Action::OpenSelectedCommitInExternalDiffTool => {
+            let Some((repo_id, commit_oid, short_oid, summary)) =
+                state.repo_mode.as_ref().and_then(|repo_mode| {
+                    selected_commit_item(repo_mode).map(|commit| {
+                        (
+                            repo_mode.current_repo_id.clone(),
+                            commit.oid.clone(),
+                            commit.short_oid.clone(),
+                            commit.summary.clone(),
+                        )
+                    })
+                })
+            else {
+                push_warning(
+                    state,
+                    "Select a commit before opening the external difftool.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            let command = commit_external_difftool_command(&commit_oid);
+            let label = if short_oid.is_empty() {
+                commit_oid.chars().take(8).collect::<String>()
+            } else {
+                short_oid
+            };
+            let request = GuiIoShellRequest::new(
+                repo_id,
+                command,
+                format!("Open difftool for {label} {summary}"),
+            );
+            enqueue_gui_io_shell_job(state, request, effects);
+        }
+        Action::SelectCommitsOfCurrentBranch => {
+            let Some(repo_mode) = state.repo_mode.as_mut() else {
+                return;
+            };
+            if repo_mode.active_subview != crate::state::RepoSubview::Commits
+                || repo_mode.commit_subview_mode != crate::state::CommitSubviewMode::History
+            {
+                push_warning(
+                    state,
+                    "Current-branch selection is only available from commit history.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            }
+            let Some(detail) = repo_mode.detail.as_ref() else {
+                push_warning(
+                    state,
+                    "Load commit history before selecting the current branch range.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            let visible_indices = filtered_commit_indices(repo_mode);
+            let Some(boundary_position) = visible_indices.iter().position(|index| {
+                detail.commits.get(*index).is_some_and(|commit| {
+                    commit.status == crate::state::CommitStatus::Merged || commit.is_merge()
+                })
+            }) else {
+                push_warning(
+                    state,
+                    "No commits from the current branch are available to select.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            };
+            if boundary_position == 0 {
+                push_warning(
+                    state,
+                    "No commits from the current branch are available to select.",
+                );
+                effects.push(Effect::ScheduleRender);
+                return;
+            }
+            let head_index = visible_indices[0];
+            let tail_index = visible_indices[boundary_position - 1];
+            repo_mode.commits_view.selected_index = Some(head_index);
+            repo_mode.commits_view.selection_anchor = Some(tail_index);
+            effects.push(Effect::ScheduleRender);
+        }
         Action::CopySelectedStatusPath => match selected_repo_shell_target(state, false) {
             Ok(Some((repo_id, path, is_directory, _))) => {
                 let display_path = status_clipboard_path(&path, is_directory);
@@ -4157,6 +4294,7 @@ fn select_repo_list_page(state: &mut AppState, step: isize, effects: &mut Vec<Ef
                     diff_presentation,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
                     diff_context_lines: repo_mode.diff_context_lines,
                     rename_similarity_threshold: repo_mode.rename_similarity_threshold,
@@ -4219,6 +4357,7 @@ fn select_repo_list_edge(
                     diff_presentation,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
                     diff_context_lines: repo_mode.diff_context_lines,
                     rename_similarity_threshold: repo_mode.rename_similarity_threshold,
@@ -4899,8 +5038,8 @@ fn confirm_pending_operation(state: &mut AppState) -> Option<GitCommandRequest> 
             GitCommand::RewordCommitWithEditor { commit },
             "Reword selected commit in editor",
         ),
-        ConfirmableOperation::CherryPickCommit { commit, .. } => (
-            GitCommand::CherryPickCommit { commit },
+        ConfirmableOperation::CherryPickCommit { commits, .. } => (
+            GitCommand::CherryPickCommit { commits },
             "Cherry-pick selected commit",
         ),
         ConfirmableOperation::RevertCommit { commit, .. } => (
@@ -5056,12 +5195,16 @@ fn open_input_prompt(
         operation,
         value,
         return_focus: state.focused_pane,
-        suggestions: Vec::new(),
-        selected_suggestion: 0,
         suggestion_provider,
     });
-    if let Some(mut prompt) = state.pending_input_prompt.take() {
-        refresh_prompt_suggestions(&mut prompt, state);
+    state.pending_suggestions = Some(PendingSuggestions {
+        suggestions: Vec::new(),
+        selected_index: 0,
+        scroll_offset: 0,
+        allow_edit_suggestion: false,
+    });
+    if let Some(prompt) = state.pending_input_prompt.take() {
+        refresh_prompt_suggestions(state, &prompt);
         state.pending_input_prompt = Some(prompt);
     }
     state.modal_stack.push(crate::state::Modal::new(
@@ -5069,6 +5212,14 @@ fn open_input_prompt(
         title,
     ));
     state.focused_pane = PaneId::Modal;
+}
+
+fn replace_prompt_suggestions(state: &mut AppState, suggestions: Vec<PromptSuggestion>) {
+    if let Some(pending_suggestions) = state.pending_suggestions.as_mut() {
+        pending_suggestions.suggestions = suggestions;
+        pending_suggestions.selected_index = 0;
+        pending_suggestions.scroll_offset = 0;
+    }
 }
 
 fn open_menu(state: &mut AppState, repo_id: crate::state::RepoId, operation: MenuOperation) {
@@ -5096,6 +5247,16 @@ fn input_prompt_title(operation: &InputPromptOperation) -> String {
         InputPromptOperation::StartGitFlow { branch_type } => {
             format!("New {} name", branch_type.command_name())
         }
+        InputPromptOperation::StartBisectTerms {
+            summary,
+            old_term: None,
+            ..
+        } => format!("Old bisect term for {summary}"),
+        InputPromptOperation::StartBisectTerms {
+            summary,
+            old_term: Some(_),
+            ..
+        } => format!("New bisect term for {summary}"),
         InputPromptOperation::CreateRemote => "Add remote".to_string(),
         InputPromptOperation::CreateRemoteUrl { remote_name } => {
             format!("Add remote URL for {remote_name}")
@@ -5166,6 +5327,9 @@ fn input_prompt_initial_value(operation: &InputPromptOperation) -> String {
         InputPromptOperation::CheckoutBranch => String::new(),
         InputPromptOperation::CreateBranch => String::new(),
         InputPromptOperation::StartGitFlow { .. } => String::new(),
+        InputPromptOperation::StartBisectTerms { old_term, .. } => {
+            old_term.clone().unwrap_or_default()
+        }
         InputPromptOperation::CreateRemote => String::new(),
         InputPromptOperation::CreateRemoteUrl { .. } => String::new(),
         InputPromptOperation::ForkRemote {
@@ -5210,7 +5374,11 @@ enum PromptSubmission {
 
 fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
     let mut pending = state.pending_input_prompt.take()?;
-    if let Some(suggestion) = pending.suggestions.get(pending.selected_suggestion) {
+    if let Some(suggestion) = state
+        .pending_suggestions
+        .as_ref()
+        .and_then(|suggestions| suggestions.suggestions.get(suggestions.selected_index))
+    {
         if !suggestion.value.is_empty() {
             pending.value = suggestion.value.clone();
         }
@@ -5228,6 +5396,7 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
     }
 
     state.modal_stack.pop();
+    state.pending_suggestions = None;
     if state.modal_stack.is_empty() {
         state.focused_pane = pending.return_focus;
     }
@@ -5260,6 +5429,37 @@ fn submit_input_prompt(state: &mut AppState) -> Option<PromptSubmission> {
                 },
             )),
             format!("Start git-flow {} {value}", branch_type.command_name()),
+        ),
+        InputPromptOperation::StartBisectTerms {
+            commit,
+            summary,
+            old_term: None,
+        } => {
+            open_input_prompt(
+                state,
+                pending.repo_id,
+                InputPromptOperation::StartBisectTerms {
+                    commit,
+                    summary,
+                    old_term: Some(value),
+                },
+            );
+            return None;
+        }
+        InputPromptOperation::StartBisectTerms {
+            commit,
+            summary: _,
+            old_term: Some(old_term),
+        } => (
+            PromptSubmission::Git(git_job(
+                pending.repo_id.clone(),
+                GitCommand::StartBisectWithTerms {
+                    commit,
+                    old_term: old_term.clone(),
+                    new_term: value.clone(),
+                },
+            )),
+            format!("Start bisect with terms {old_term}/{value}"),
         ),
         InputPromptOperation::CreateRemote => {
             let remote_name = value.trim();
@@ -5615,16 +5815,14 @@ fn prompt_suggestion_provider(
     }
 }
 
-fn refresh_prompt_suggestions(prompt: &mut PendingInputPrompt, state: &AppState) {
-    prompt.suggestions = match prompt.suggestion_provider {
+fn refresh_prompt_suggestions(state: &mut AppState, prompt: &PendingInputPrompt) {
+    let suggestions = match prompt.suggestion_provider {
         Some(PromptSuggestionProvider::CheckoutBranch) => {
             checkout_branch_suggestions(state, &prompt.value)
         }
         None => Vec::new(),
     };
-    prompt.selected_suggestion = prompt
-        .selected_suggestion
-        .min(prompt.suggestions.len().saturating_sub(1));
+    replace_prompt_suggestions(state, suggestions);
 }
 
 fn checkout_branch_suggestions(state: &AppState, query: &str) -> Vec<PromptSuggestion> {
@@ -5884,7 +6082,7 @@ fn menu_item_count(state: &AppState, operation: MenuOperation) -> usize {
         MenuOperation::FilterOptions => filter_menu_entries(state).len(),
         MenuOperation::DiffOptions => diff_menu_entries(state).len(),
         MenuOperation::CommitLogOptions => commit_log_menu_entries(state).len(),
-        MenuOperation::CommitCopyOptions => 5,
+        MenuOperation::CommitCopyOptions => 10,
         MenuOperation::BranchGitFlowOptions => branch_git_flow_menu_entries(state).len(),
         MenuOperation::BranchPullRequestOptions => branch_pull_request_menu_entries(state).len(),
         MenuOperation::BranchResetOptions => branch_reset_menu_entries(state).len(),
@@ -6591,7 +6789,12 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
                 0 => CommitClipboardTarget::ShortHash,
                 1 => CommitClipboardTarget::FullHash,
                 2 => CommitClipboardTarget::Summary,
-                3 => CommitClipboardTarget::Diff,
+                3 => CommitClipboardTarget::Subject,
+                4 => CommitClipboardTarget::Message,
+                5 => CommitClipboardTarget::MessageBody,
+                6 => CommitClipboardTarget::Author,
+                7 => CommitClipboardTarget::Tags,
+                8 => CommitClipboardTarget::Diff,
                 _ => CommitClipboardTarget::BrowserUrl,
             };
             let Some(menu) = state.pending_menu.take() else {
@@ -6794,6 +6997,42 @@ fn submit_menu_selection(state: &mut AppState, effects: &mut Vec<Effect>) -> boo
             true
         }
         MenuOperation::BisectOptions => {
+            if selected_index == 2 {
+                let Some(menu) = state.pending_menu.take() else {
+                    return false;
+                };
+                state.modal_stack.pop();
+                if state.modal_stack.is_empty() {
+                    state.focused_pane = menu.return_focus;
+                }
+                match pending_history_commit_operation(state, |detail, commit, _| {
+                    if detail.bisect_state.is_some() {
+                        return Err(
+                            "Custom bisect terms are only available before bisect starts."
+                                .to_string(),
+                        );
+                    }
+                    Ok(InputPromptOperation::StartBisectTerms {
+                        commit: commit.oid.clone(),
+                        summary: format!("{} {}", commit.short_oid, commit.summary),
+                        old_term: None,
+                    })
+                }) {
+                    Ok(Some((repo_id, operation))) => {
+                        open_input_prompt(state, repo_id, operation);
+                    }
+                    Ok(None) => {
+                        push_warning(
+                            state,
+                            "Select a commit before choosing custom bisect terms.",
+                        );
+                    }
+                    Err(message) => {
+                        push_warning(state, message);
+                    }
+                }
+                return true;
+            }
             let entries = bisect_menu_entries(state);
             let Some(action) = entries
                 .get(selected_index)
@@ -7161,6 +7400,11 @@ enum CommitClipboardTarget {
     ShortHash,
     FullHash,
     Summary,
+    Subject,
+    Message,
+    MessageBody,
+    Author,
+    Tags,
     Diff,
     BrowserUrl,
 }
@@ -7323,6 +7567,10 @@ fn bisect_menu_entries(state: &AppState) -> Vec<MenuEntry> {
             MenuEntry {
                 label: "Start bisect by marking selected commit as good".to_string(),
                 action: Action::StartBisectGood,
+            },
+            MenuEntry {
+                label: "Choose custom bisect terms".to_string(),
+                action: Action::OpenBisectOptions,
             },
         ]
     }
@@ -7926,6 +8174,7 @@ fn enqueue_selected_status_detail_load(
             diff_presentation,
             commit_ref: None,
             commit_history_mode: CommitHistoryMode::Linear,
+            show_branch_heads: false,
             ignore_whitespace_in_diff: repo_mode.ignore_whitespace_in_diff,
             diff_context_lines: repo_mode.diff_context_lines,
             rename_similarity_threshold: repo_mode.rename_similarity_threshold,
@@ -8226,6 +8475,38 @@ fn selected_commit_clipboard_target(
             let summary = format!("Copy summary for {commit_label}");
             (value, summary)
         }
+        CommitClipboardTarget::Subject => {
+            let value = commit.summary.clone();
+            let summary = format!("Copy subject for {commit_label}");
+            (value, summary)
+        }
+        CommitClipboardTarget::Message => {
+            let value = git_commit_clipboard_command(commit.oid.as_str(), "%B", &state.os);
+            let summary = format!("Copy full commit message for {commit_label}");
+            (value, summary)
+        }
+        CommitClipboardTarget::MessageBody => {
+            let value = git_commit_body_clipboard_command(commit.oid.as_str(), &state.os);
+            let summary = format!("Copy message body for {commit_label}");
+            (value, summary)
+        }
+        CommitClipboardTarget::Author => {
+            let value = if commit.author_email.is_empty() {
+                commit.author_name.clone()
+            } else {
+                format!("{} <{}>", commit.author_name, commit.author_email)
+            };
+            let summary = format!("Copy author for {commit_label}");
+            (value, summary)
+        }
+        CommitClipboardTarget::Tags => {
+            if commit.tags.is_empty() {
+                return Err("The selected commit has no tags to copy.".to_string());
+            }
+            let value = commit.tags.join("\n");
+            let summary = format!("Copy tags for {commit_label}");
+            (value, summary)
+        }
         CommitClipboardTarget::Diff => {
             if commit.diff.lines.is_empty() {
                 return Err("No diff is loaded for the selected commit.".to_string());
@@ -8257,6 +8538,32 @@ fn selected_commit_clipboard_target(
     };
 
     Ok(Some((repo_mode.current_repo_id.clone(), value, summary)))
+}
+
+fn git_commit_clipboard_command(
+    commit_oid: &str,
+    format_spec: &str,
+    os: &crate::state::OsConfigSnapshot,
+) -> String {
+    let git_command = format!(
+        "git show -s --format={} {} | {}",
+        shell_quote(std::ffi::OsStr::new(format_spec)),
+        shell_quote(std::ffi::OsStr::new(commit_oid)),
+        clipboard_shell_command(std::ffi::OsStr::new("$(cat)"), os)
+    );
+    git_command.replace("'$(cat)'", "$(cat)")
+}
+
+fn git_commit_body_clipboard_command(
+    commit_oid: &str,
+    os: &crate::state::OsConfigSnapshot,
+) -> String {
+    let body_command = format!(
+        "body=$(git show -s --format=%B {} | tail -n +2); printf '%s' \"$body\" | {}",
+        shell_quote(std::ffi::OsStr::new(commit_oid)),
+        clipboard_shell_command(std::ffi::OsStr::new("$(cat)"), os)
+    );
+    body_command.replace("'$(cat)'", "$(cat)")
 }
 
 fn selected_commit_browser_url(
@@ -8302,6 +8609,14 @@ fn external_difftool_command(path: &std::path::Path, pane: PaneId) -> String {
         ""
     };
     format!("git difftool {cached}--no-prompt -- {quoted}")
+}
+
+fn commit_external_difftool_command(commit_oid: &str) -> String {
+    format!(
+        "git difftool --no-prompt {}^ {}",
+        shell_quote(std::ffi::OsStr::new(commit_oid)),
+        shell_quote(std::ffi::OsStr::new(commit_oid)),
+    )
 }
 
 fn shell_quote(value: &std::ffi::OsStr) -> String {
@@ -10205,12 +10520,19 @@ fn load_repo_detail_effect(state: &AppState, repo_id: crate::state::RepoId) -> E
         .filter(|repo_mode| repo_mode.active_subview == crate::state::RepoSubview::Commits)
         .map(|repo_mode| repo_mode.commit_history_mode)
         .unwrap_or(CommitHistoryMode::Linear);
+    let show_branch_heads = state
+        .repo_mode
+        .as_ref()
+        .filter(|repo_mode| repo_mode.active_subview == crate::state::RepoSubview::Commits)
+        .map(|repo_mode| repo_mode.sub_commit_show_branch_heads)
+        .unwrap_or(false);
     Effect::LoadRepoDetail {
         repo_id,
         selected_path,
         diff_presentation,
         commit_ref,
         commit_history_mode,
+        show_branch_heads,
         ignore_whitespace_in_diff: state
             .repo_mode
             .as_ref()
@@ -10556,6 +10878,7 @@ fn job_suffix(command: &GitCommand) -> &'static str {
         GitCommand::AbortRebase => "abort-rebase",
         GitCommand::SkipRebase => "skip-rebase",
         GitCommand::StartBisect { .. } => "start-bisect",
+        GitCommand::StartBisectWithTerms { .. } => "start-bisect-with-terms",
         GitCommand::MarkBisect { .. } => "mark-bisect",
         GitCommand::SkipBisect { .. } => "skip-bisect",
         GitCommand::ResetBisect => "reset-bisect",
@@ -11145,6 +11468,100 @@ mod tests {
     }
 
     #[test]
+    fn selected_commit_copy_options_support_subject_author_and_tags() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        author_name: "Jane Smith".to_string(),
+                        author_email: "jane@example.com".to_string(),
+                        tags: vec!["v1.0.0".to_string(), "stable".to_string()],
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let (_, subject, _) =
+            super::selected_commit_clipboard_target(&state, super::CommitClipboardTarget::Subject)
+                .expect("subject target")
+                .expect("subject value");
+        assert_eq!(subject, "add lib");
+
+        let (_, author, _) =
+            super::selected_commit_clipboard_target(&state, super::CommitClipboardTarget::Author)
+                .expect("author target")
+                .expect("author value");
+        assert_eq!(author, "Jane Smith <jane@example.com>");
+
+        let (_, tags, _) =
+            super::selected_commit_clipboard_target(&state, super::CommitClipboardTarget::Tags)
+                .expect("tags target")
+                .expect("tags value");
+        assert_eq!(tags, "v1.0.0\nstable");
+    }
+
+    #[test]
+    fn selected_commit_copy_options_support_message_and_body_shell_commands() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let (_, message_command, summary) =
+            super::selected_commit_clipboard_target(&state, super::CommitClipboardTarget::Message)
+                .expect("message target")
+                .expect("message value");
+        assert!(message_command.contains("git show -s --format='%B' 'abcdef1234567890'"));
+        assert_eq!(summary, "Copy full commit message for abcdef1 add lib");
+
+        let (_, body_command, body_summary) = super::selected_commit_clipboard_target(
+            &state,
+            super::CommitClipboardTarget::MessageBody,
+        )
+        .expect("body target")
+        .expect("body value");
+        assert!(body_command.contains("git show -s --format=%B 'abcdef1234567890'"));
+        assert!(body_command.contains("tail -n +2"));
+        assert_eq!(body_summary, "Copy message body for abcdef1 add lib");
+    }
+
+    #[test]
     fn copy_selected_tag_name_queues_shell_job() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let state = AppState {
@@ -11178,6 +11595,210 @@ mod tests {
             [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
                 if actual_repo_id == &repo_id && command.contains("snapshot")
         ));
+    }
+
+    #[test]
+    fn open_selected_commit_in_external_diff_tool_queues_shell_job() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abcdef1234567890".to_string(),
+                        short_oid: "abcdef1".to_string(),
+                        summary: "add lib".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::OpenSelectedCommitInExternalDiffTool),
+        );
+
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::RunShellCommand(ShellCommandRequest { repo_id: actual_repo_id, command, .. })]
+                if actual_repo_id == &repo_id
+                    && command.contains("git difftool --no-prompt")
+                    && command.contains("abcdef1234567890")
+        ));
+    }
+
+    #[test]
+    fn select_commits_of_current_branch_sets_commit_selection_range() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: crate::state::CommitSubviewMode::History,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "c1".to_string(),
+                            short_oid: "c1".to_string(),
+                            summary: "head commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "c2".to_string(),
+                            short_oid: "c2".to_string(),
+                            summary: "feature commit".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "c3".to_string(),
+                            short_oid: "c3".to_string(),
+                            summary: "merge boundary".to_string(),
+                            status: crate::state::CommitStatus::Merged,
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(2),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::SelectCommitsOfCurrentBranch));
+
+        let commits_view = &result
+            .state
+            .repo_mode
+            .as_ref()
+            .expect("repo mode")
+            .commits_view;
+        assert_eq!(commits_view.selected_index, Some(0));
+        assert_eq!(commits_view.selection_anchor, Some(1));
+        assert!(result.effects.contains(&Effect::ScheduleRender));
+    }
+
+    #[test]
+    fn bisect_menu_includes_custom_terms_option_before_bisect_starts() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![CommitItem {
+                        oid: "abc".to_string(),
+                        short_oid: "abc1234".to_string(),
+                        summary: "commit".to_string(),
+                        ..CommitItem::default()
+                    }],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let entries = super::bisect_menu_entries(&state);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[2].label, "Choose custom bisect terms");
+    }
+
+    #[test]
+    fn bisect_custom_terms_prompt_chains_into_second_prompt() {
+        let repo_id = RepoId::new("repo-1");
+        let mut state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            modal_stack: vec![crate::state::Modal::new(
+                ModalKind::InputPrompt,
+                "Old bisect term".to_string(),
+            )],
+            pending_input_prompt: Some(crate::state::PendingInputPrompt {
+                repo_id: repo_id.clone(),
+                operation: InputPromptOperation::StartBisectTerms {
+                    commit: "abcdef1234567890".to_string(),
+                    summary: "abcdef1 add lib".to_string(),
+                    old_term: None,
+                },
+                value: "good".to_string(),
+                return_focus: PaneId::RepoDetail,
+                suggestion_provider: None,
+            }),
+            pending_suggestions: Some(crate::state::PendingSuggestions {
+                suggestions: Vec::new(),
+                selected_index: 0,
+                scroll_offset: 0,
+                allow_edit_suggestion: false,
+            }),
+            ..AppState::default()
+        };
+
+        assert!(super::submit_input_prompt(&mut state).is_none());
+
+        assert!(matches!(
+            state.pending_input_prompt.as_ref().map(|prompt| &prompt.operation),
+            Some(InputPromptOperation::StartBisectTerms {
+                commit,
+                summary,
+                old_term: Some(old_term),
+            }) if commit == "abcdef1234567890" && summary == "abcdef1 add lib" && old_term == "good"
+        ));
+    }
+
+    #[test]
+    fn open_selected_tag_commits_enables_branch_head_context() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id.clone(),
+                active_subview: RepoSubview::Tags,
+                detail: Some(RepoDetail {
+                    tags: vec![crate::state::TagItem {
+                        name: "v1.0.0".to_string(),
+                        target_oid: "1234567890abcdef".to_string(),
+                        target_short_oid: "1234567".to_string(),
+                        summary: "release v1.0.0".to_string(),
+                        annotated: true,
+                    }],
+                    ..RepoDetail::default()
+                }),
+                tags_view: crate::state::ListViewState {
+                    selected_index: Some(0),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(repo_id.clone())
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(state, Event::Action(Action::OpenSelectedTagCommits));
+        let repo_mode = result.state.repo_mode.as_ref().expect("repo mode");
+        assert_eq!(repo_mode.active_subview, RepoSubview::Commits);
+        assert_eq!(repo_mode.commit_history_ref.as_deref(), Some("v1.0.0"));
+        assert!(repo_mode.sub_commit_show_branch_heads);
     }
 
     #[test]
@@ -11478,11 +12099,69 @@ mod tests {
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
                 .map(|commit| (
-                    commit.oid.as_str(),
-                    commit.short_oid.as_str(),
+                    commit.oids.clone(),
+                    commit.short_label.as_str(),
                     commit.summary.as_str()
                 )),
-            Some(("abcdef1234567890", "abcdef1", "add lib"))
+            Some((vec!["abcdef1234567890".to_string()], "abcdef1", "add lib"))
+        );
+    }
+
+    #[test]
+    fn copy_selected_commit_for_cherry_pick_tracks_selected_commit_range() {
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            repo_mode: Some(RepoModeState {
+                current_repo_id: RepoId::new("repo-1"),
+                active_subview: RepoSubview::Commits,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        CommitItem {
+                            oid: "c1".to_string(),
+                            short_oid: "1111111".to_string(),
+                            summary: "first".to_string(),
+                            ..CommitItem::default()
+                        },
+                        CommitItem {
+                            oid: "c2".to_string(),
+                            short_oid: "2222222".to_string(),
+                            summary: "second".to_string(),
+                            ..CommitItem::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: crate::state::ListViewState {
+                    selected_index: Some(1),
+                    selection_anchor: Some(0),
+                },
+                ..RepoModeState::new(RepoId::new("repo-1"))
+            }),
+            ..AppState::default()
+        };
+
+        let result = reduce(
+            state,
+            Event::Action(Action::CopySelectedCommitForCherryPick),
+        );
+
+        assert_eq!(
+            result
+                .state
+                .repo_mode
+                .as_ref()
+                .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
+                .map(|commit| (
+                    commit.oids.clone(),
+                    commit.short_label.as_str(),
+                    commit.summary.as_str()
+                )),
+            Some((
+                vec!["c1".to_string(), "c2".to_string()],
+                "1111111..2222222",
+                "2 commits"
+            ))
         );
     }
 
@@ -11496,8 +12175,8 @@ mod tests {
                 current_repo_id: repo_id.clone(),
                 active_subview: RepoSubview::Commits,
                 copied_commit: Some(crate::state::CopiedCommit {
-                    oid: "copied".to_string(),
-                    short_oid: "copy123".to_string(),
+                    oids: vec!["copied".to_string(), "copied-2".to_string()],
+                    short_label: "copy123..copy456".to_string(),
                     summary: "copied commit".to_string(),
                 }),
                 ..RepoModeState::new(repo_id)
@@ -11514,8 +12193,8 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(ConfirmableOperation::CherryPickCommit {
-                commit: "copied".to_string(),
-                summary: "copy123 copied commit".to_string(),
+                commits: vec!["copied".to_string(), "copied-2".to_string()],
+                summary: "copy123..copy456 copied commit".to_string(),
             })
         );
     }
@@ -11528,8 +12207,8 @@ mod tests {
             repo_mode: Some(RepoModeState {
                 current_repo_id: RepoId::new("repo-1"),
                 copied_commit: Some(crate::state::CopiedCommit {
-                    oid: "copied".to_string(),
-                    short_oid: "copy123".to_string(),
+                    oids: vec!["copied".to_string()],
+                    short_label: "copy123".to_string(),
                     summary: "copied commit".to_string(),
                 }),
                 ..RepoModeState::new(RepoId::new("repo-1"))
@@ -11654,6 +12333,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -12150,6 +12830,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -12451,6 +13132,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("feature".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -13155,6 +13837,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("origin/feature".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -13394,6 +14077,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("snapshot".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: true,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -13470,6 +14154,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Graph { reverse: true },
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -14638,6 +15323,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Reflog,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -15358,8 +16044,6 @@ mod tests {
                 operation: InputPromptOperation::CreateBranch,
                 value: "feature/test".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState {
@@ -16725,6 +17409,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: true,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -17177,8 +17862,6 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateBranch,
                 value: "feature/new-ui".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17227,8 +17910,6 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CheckoutBranch,
                 value: "origin/feature/new-ui".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17279,8 +17960,6 @@ mod tests {
                 },
                 value: "feature/from-commit".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17332,8 +18011,6 @@ mod tests {
                 },
                 value: "feature-local".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17386,8 +18063,6 @@ mod tests {
                 },
                 value: "feature".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17437,9 +18112,10 @@ mod tests {
             prompt.suggestion_provider,
             Some(crate::state::PromptSuggestionProvider::CheckoutBranch)
         );
-        assert_eq!(prompt.suggestions.len(), 2);
-        assert_eq!(prompt.suggestions[0].value, "feature/demo");
-        assert_eq!(prompt.suggestions[1].value, "origin/feature/demo");
+        let suggestions = state.pending_suggestions.as_ref().expect("suggestions");
+        assert_eq!(suggestions.suggestions.len(), 2);
+        assert_eq!(suggestions.suggestions[0].value, "feature/demo");
+        assert_eq!(suggestions.suggestions[1].value, "origin/feature/demo");
     }
 
     #[test]
@@ -17471,9 +18147,9 @@ mod tests {
             &mut effects,
         );
 
-        let prompt = state.pending_input_prompt.as_ref().expect("prompt");
-        assert_eq!(prompt.suggestions.len(), 1);
-        assert_eq!(prompt.suggestions[0].value, "feature/demo");
+        let suggestions = state.pending_suggestions.as_ref().expect("suggestions");
+        assert_eq!(suggestions.suggestions.len(), 1);
+        assert_eq!(suggestions.suggestions[0].value, "feature/demo");
     }
 
     #[test]
@@ -17497,10 +18173,10 @@ mod tests {
 
         open_input_prompt(&mut state, repo_id, InputPromptOperation::CheckoutBranch);
         state
-            .pending_input_prompt
+            .pending_suggestions
             .as_mut()
-            .expect("prompt")
-            .selected_suggestion = 1;
+            .expect("suggestions")
+            .selected_index = 1;
 
         let submission = submit_input_prompt(&mut state).expect("submission");
         match submission {
@@ -17529,8 +18205,6 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateRemote,
                 value: "upstream".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17549,8 +18223,6 @@ mod tests {
                 },
                 value: String::new(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             })
         );
@@ -17574,8 +18246,6 @@ mod tests {
                 },
                 value: "git@github.com:example/upstream.git".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17627,8 +18297,6 @@ mod tests {
                 },
                 value: "alice:feature".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17680,8 +18348,6 @@ mod tests {
                 },
                 value: "mirror".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17701,8 +18367,6 @@ mod tests {
                 },
                 value: "git@github.com:example/upstream.git".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             })
         );
@@ -17728,8 +18392,6 @@ mod tests {
                 },
                 value: "git@github.com:example/mirror.git".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17868,8 +18530,6 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateTag,
                 value: "release-candidate".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17920,8 +18580,6 @@ mod tests {
                 },
                 value: "release-candidate".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -17973,8 +18631,6 @@ mod tests {
                 },
                 value: String::new(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -18023,8 +18679,6 @@ mod tests {
                 operation: crate::state::InputPromptOperation::CreateWorktree,
                 value: "../repo-feature main feature".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -18102,8 +18756,6 @@ mod tests {
                 },
                 value: "feature/from-stash".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -18148,8 +18800,6 @@ mod tests {
                 },
                 value: "reworded subject\n\nnew body".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -18192,8 +18842,6 @@ mod tests {
                 operation: crate::state::InputPromptOperation::ShellCommand,
                 value: "git status --short".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -18244,8 +18892,6 @@ mod tests {
                 },
                 value: "checkpoint".to_string(),
                 return_focus: PaneId::RepoStaged,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -18288,8 +18934,6 @@ mod tests {
                 },
                 value: "   ".to_string(),
                 return_focus: PaneId::RepoUnstaged,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -18762,7 +19406,7 @@ mod tests {
             pending_confirmation: Some(crate::state::PendingConfirmation {
                 repo_id: repo_id.clone(),
                 operation: ConfirmableOperation::CherryPickCommit {
-                    commit: "1234567890abcdef".to_string(),
+                    commits: vec!["1234567890abcdef".to_string()],
                     summary: "1234567 second".to_string(),
                 },
                 return_focus: PaneId::RepoUnstaged,
@@ -18780,7 +19424,7 @@ mod tests {
                 job_id,
                 repo_id,
                 command: GitCommand::CherryPickCommit {
-                    commit: "1234567890abcdef".to_string(),
+                    commits: vec!["1234567890abcdef".to_string()],
                 },
             })]
         );
@@ -19137,6 +19781,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -19189,6 +19834,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: Some("feature".to_string()),
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -19936,6 +20582,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -22170,8 +22817,6 @@ mod tests {
                 },
                 value: "rewritten subject".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             repo_mode: Some(RepoModeState::new(repo_id.clone())),
@@ -23585,7 +24230,7 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(ConfirmableOperation::CherryPickCommit {
-                commit: "older".to_string(),
+                commits: vec!["older".to_string()],
                 summary: "old1234 older commit".to_string(),
             })
         );
@@ -23841,6 +24486,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -23912,6 +24558,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -24012,6 +24659,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -24203,6 +24851,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -24322,6 +24971,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -24417,6 +25067,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,
@@ -24499,6 +25150,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: crate::state::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold: crate::state::DEFAULT_RENAME_SIMILARITY_THRESHOLD,

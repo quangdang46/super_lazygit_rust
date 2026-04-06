@@ -1615,11 +1615,13 @@ mod tests {
         harness.press("open selected tag commits", "enter");
         harness.assert_latest_contains("Detail: Commits");
         harness.assert_latest_contains("initial");
+        harness.assert_latest_contains("(HEAD -> main");
         harness.assert_state(
             |state| {
                 state.repo_mode.as_ref().is_some_and(|repo_mode| {
                     repo_mode.active_subview == RepoSubview::Commits
                         && repo_mode.commit_history_ref.as_deref() == Some("v1.0.0")
+                        && repo_mode.sub_commit_show_branch_heads
                 })
             },
             "enter from tags should drill into the selected tag history",

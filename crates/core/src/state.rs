@@ -12,6 +12,7 @@ pub struct AppState {
     pub modal_stack: Vec<Modal>,
     pub pending_confirmation: Option<PendingConfirmation>,
     pub pending_input_prompt: Option<PendingInputPrompt>,
+    pub pending_suggestions: Option<PendingSuggestions>,
     pub pending_menu: Option<PendingMenu>,
     pub return_context_stack: Vec<ReturnContext>,
     pub status_messages: VecDeque<StatusMessage>,
@@ -296,7 +297,7 @@ pub enum ConfirmableOperation {
         summary: String,
     },
     CherryPickCommit {
-        commit: String,
+        commits: Vec<String>,
         summary: String,
     },
     RevertCommit {
@@ -395,9 +396,15 @@ pub struct PendingInputPrompt {
     pub operation: InputPromptOperation,
     pub value: String,
     pub return_focus: PaneId,
-    pub suggestions: Vec<PromptSuggestion>,
-    pub selected_suggestion: usize,
     pub suggestion_provider: Option<PromptSuggestionProvider>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingSuggestions {
+    pub suggestions: Vec<PromptSuggestion>,
+    pub selected_index: usize,
+    pub scroll_offset: usize,
+    pub allow_edit_suggestion: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -430,6 +437,11 @@ pub enum InputPromptOperation {
     CreateBranch,
     StartGitFlow {
         branch_type: GitFlowBranchType,
+    },
+    StartBisectTerms {
+        commit: String,
+        summary: String,
+        old_term: Option<String>,
     },
     CreateRemote,
     CreateRemoteUrl {
@@ -2730,8 +2742,8 @@ impl GitRef for CommitItem {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopiedCommit {
-    pub oid: String,
-    pub short_oid: String,
+    pub oids: Vec<String>,
+    pub short_label: String,
     pub summary: String,
 }
 

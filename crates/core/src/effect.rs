@@ -27,6 +27,7 @@ pub enum Effect {
         diff_presentation: DiffPresentation,
         commit_ref: Option<String>,
         commit_history_mode: CommitHistoryMode,
+        show_branch_heads: bool,
         ignore_whitespace_in_diff: bool,
         diff_context_lines: u16,
         rename_similarity_threshold: u8,
@@ -404,6 +405,11 @@ pub enum GitCommand {
         commit: String,
         term: String,
     },
+    StartBisectWithTerms {
+        commit: String,
+        old_term: String,
+        new_term: String,
+    },
     MarkBisect {
         commit: String,
         term: String,
@@ -433,7 +439,7 @@ pub enum GitCommand {
         mode: RebaseStartMode,
     },
     CherryPickCommit {
-        commit: String,
+        commits: Vec<String>,
     },
     RevertCommit {
         commit: String,

@@ -1,6 +1,6 @@
 mod list_renderer;
 
-use std::{collections::BTreeMap, time::Instant};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use ratatui::{
     buffer::Buffer,
@@ -20,7 +20,6 @@ use super_lazygit_core::{
     RepoSubview, RepoSummary, ScreenMode, StashSubviewMode, StatusMessage,
 };
 
-#[derive(Debug)]
 pub struct TuiApp {
     state: AppState,
     config: AppConfig,
@@ -28,6 +27,53 @@ pub struct TuiApp {
     diagnostics: Diagnostics,
     viewport: Viewport,
     repo_scroll: BTreeMap<RepoListScrollTarget, ListViewportState>,
+    attach_registry: UiAttachRegistry,
+}
+
+impl std::fmt::Debug for TuiApp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TuiApp")
+            .field("state", &self.state)
+            .field("config", &self.config)
+            .field("keybinding_overrides", &self.keybinding_overrides)
+            .field("diagnostics", &self.diagnostics)
+            .field("viewport", &self.viewport)
+            .field("repo_scroll", &self.repo_scroll)
+            .finish_non_exhaustive()
+    }
+}
+
+type KeyHook = Arc<dyn Fn(&AppState, &KeyPress) -> Option<Action> + Send + Sync>;
+type MouseHook = Arc<dyn Fn(&AppState, u16, u16) -> Option<Vec<Action>> + Send + Sync>;
+type FocusHook = Arc<
+    dyn Fn(&AppState, super_lazygit_core::UiContextId) -> Option<super_lazygit_core::Effect>
+        + Send
+        + Sync,
+>;
+type RenderHook = Arc<dyn Fn(&AppState, Rect, &mut Buffer) + Send + Sync>;
+
+#[derive(Clone, Default)]
+struct UiAttachHooks {
+    keybindings: Vec<KeyHook>,
+    mouse_keybindings: Vec<MouseHook>,
+    on_double_click: Option<MouseHook>,
+    on_click: Option<MouseHook>,
+    on_click_focused_main_view: Option<MouseHook>,
+    on_render_to_main: Option<RenderHook>,
+    on_focus: Option<FocusHook>,
+    on_focus_lost: Option<FocusHook>,
+}
+
+#[derive(Clone, Default)]
+struct UiAttachRegistry {
+    keybindings: Vec<KeyHook>,
+    mouse_keybindings: Vec<MouseHook>,
+    on_double_click: Option<MouseHook>,
+    on_click: Option<MouseHook>,
+    on_click_focused_main_view: Option<MouseHook>,
+    on_render_to_main: Option<RenderHook>,
+    on_focus: Option<FocusHook>,
+    on_focus_lost: Option<FocusHook>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +326,32 @@ impl TuiApp {
             diagnostics: Diagnostics::default(),
             viewport: Viewport::default(),
             repo_scroll: BTreeMap::new(),
+            attach_registry: UiAttachRegistry::default(),
+        }
+    }
+
+    pub(crate) fn attach_hooks(&mut self, hooks: UiAttachHooks) {
+        self.attach_registry.keybindings.extend(hooks.keybindings);
+        self.attach_registry
+            .mouse_keybindings
+            .extend(hooks.mouse_keybindings);
+        if self.attach_registry.on_double_click.is_none() {
+            self.attach_registry.on_double_click = hooks.on_double_click;
+        }
+        if self.attach_registry.on_click.is_none() {
+            self.attach_registry.on_click = hooks.on_click;
+        }
+        if self.attach_registry.on_click_focused_main_view.is_none() {
+            self.attach_registry.on_click_focused_main_view = hooks.on_click_focused_main_view;
+        }
+        if self.attach_registry.on_render_to_main.is_none() {
+            self.attach_registry.on_render_to_main = hooks.on_render_to_main;
+        }
+        if self.attach_registry.on_focus.is_none() {
+            self.attach_registry.on_focus = hooks.on_focus;
+        }
+        if self.attach_registry.on_focus_lost.is_none() {
+            self.attach_registry.on_focus_lost = hooks.on_focus_lost;
         }
     }
 
@@ -357,6 +429,11 @@ impl TuiApp {
                 )
                 .alignment(Alignment::Left)
                 .render(modal_area, &mut buffer);
+            if matches!(modal.kind, super_lazygit_core::ModalKind::InputPrompt)
+                && self.state.pending_suggestions.is_some()
+            {
+                self.render_prompt_suggestions_popup(modal_area, &mut buffer, theme);
+            }
         }
 
         self.diagnostics
@@ -462,6 +539,17 @@ impl TuiApp {
                     self.apply_actions(actions)
                 }
             }
+            InputEvent::MouseDoubleLeft { column, row } => {
+                let actions = self.route_mouse_double_left(column, row);
+                if actions.is_empty() {
+                    ReduceResult {
+                        state: self.state.clone(),
+                        effects: Vec::new(),
+                    }
+                } else {
+                    self.apply_actions(actions)
+                }
+            }
             InputEvent::MouseWheelUp { column, row } => {
                 let (actions, local_changed) = self.route_mouse_wheel(column, row, true);
                 if actions.is_empty() {
@@ -553,6 +641,20 @@ impl TuiApp {
             let result = reduce(self.state.clone(), Event::Action(action));
             let after = result.state.clone();
             self.sync_repo_scroll_after_state_change(&before, &after);
+            let before_context = before.active_context_id();
+            let after_context = after.active_context_id();
+            if before_context != after_context {
+                if let Some(on_focus_lost) = &self.attach_registry.on_focus_lost {
+                    if let Some(hooked) = on_focus_lost(&before, before_context) {
+                        effects.push(hooked);
+                    }
+                }
+                if let Some(on_focus) = &self.attach_registry.on_focus {
+                    if let Some(hooked) = on_focus(&after, after_context) {
+                        effects.push(hooked);
+                    }
+                }
+            }
             self.state = after;
             effects.extend(result.effects);
         }
@@ -1262,8 +1364,12 @@ impl TuiApp {
     }
 
     fn route_mouse_left(&self, column: u16, row: u16) -> Vec<Action> {
-        if self.state.mode != AppMode::Repository || !self.state.modal_stack.is_empty() {
+        if self.state.mode != AppMode::Repository {
             return Vec::new();
+        }
+
+        if !self.state.modal_stack.is_empty() {
+            return self.route_modal_mouse_left(column, row);
         }
 
         let area = Rect::new(
@@ -1323,6 +1429,44 @@ impl TuiApp {
                 Vec::new()
             }
         }
+    }
+
+    fn route_mouse_double_left(&self, column: u16, row: u16) -> Vec<Action> {
+        if self.state.mode != AppMode::Repository || self.state.modal_stack.is_empty() {
+            return Vec::new();
+        }
+
+        if let Some(on_double_click) = &self.attach_registry.on_double_click {
+            if let Some(actions) = on_double_click(&self.state, column, row) {
+                return actions;
+            }
+        }
+
+        let Some(index) = self.prompt_suggestion_index_at(column, row) else {
+            return Vec::new();
+        };
+
+        vec![
+            Action::SelectPromptSuggestion { index },
+            Action::ConfirmPromptSuggestion,
+        ]
+    }
+
+    fn route_modal_mouse_left(&self, column: u16, row: u16) -> Vec<Action> {
+        for hook in &self.attach_registry.mouse_keybindings {
+            if let Some(actions) = hook(&self.state, column, row) {
+                return actions;
+            }
+        }
+        if let Some(on_click) = &self.attach_registry.on_click {
+            if let Some(actions) = on_click(&self.state, column, row) {
+                return actions;
+            }
+        }
+        if let Some(index) = self.prompt_suggestion_index_at(column, row) {
+            return vec![Action::SelectPromptSuggestion { index }];
+        }
+        Vec::new()
     }
 
     fn route_mouse_wheel(&mut self, column: u16, row: u16, up: bool) -> (Vec<Action>, bool) {
@@ -1629,6 +1773,11 @@ impl TuiApp {
         column: u16,
         row: u16,
     ) -> Vec<Action> {
+        if let Some(on_click_focused_main_view) = &self.attach_registry.on_click_focused_main_view {
+            if let Some(actions) = on_click_focused_main_view(&self.state, column, row) {
+                return actions;
+            }
+        }
         let Some(repo_mode) = self.state.repo_mode.as_ref() else {
             return vec![Action::SetFocusedPane(pane)];
         };
@@ -2092,6 +2241,12 @@ impl TuiApp {
     fn route_key(&self, key: KeyPress) -> Option<Action> {
         let raw = key.key.as_str();
         let normalized = raw.trim().to_ascii_lowercase();
+
+        for hook in &self.attach_registry.keybindings {
+            if let Some(action) = hook(&self.state, &key) {
+                return Some(action);
+            }
+        }
 
         if !self.state.modal_stack.is_empty() {
             return match self.state.modal_stack.last().map(|modal| modal.kind) {
@@ -3746,6 +3901,17 @@ impl TuiApp {
                             {
                                 return Some(Action::OpenSelectedCommitInBrowser);
                             }
+
+                            if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                                && self.binding_matches_action(
+                                    "open_selected_commit_in_external_diff_tool",
+                                    raw,
+                                    normalized,
+                                    &["D"],
+                                )
+                            {
+                                return Some(Action::OpenSelectedCommitInExternalDiffTool);
+                            }
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
@@ -3768,6 +3934,17 @@ impl TuiApp {
                             )
                         {
                             return Some(Action::CreateTagFromSelectedCommit);
+                        }
+
+                        if repo_mode.commit_subview_mode == CommitSubviewMode::History
+                            && self.binding_matches_action(
+                                "select_commits_of_current_branch",
+                                raw,
+                                normalized,
+                                &["3"],
+                            )
+                        {
+                            return Some(Action::SelectCommitsOfCurrentBranch);
                         }
 
                         if repo_mode.commit_subview_mode == CommitSubviewMode::History
@@ -4787,6 +4964,9 @@ impl TuiApp {
     }
 
     fn render_repo_main_cluster(&self, layout: RepoSplitLayout, buffer: &mut Buffer, theme: Theme) {
+        if let Some(on_render_to_main) = &self.attach_registry.on_render_to_main {
+            on_render_to_main(&self.state, layout.main_detail, buffer);
+        }
         self.render_repo_unstaged(layout.main_unstaged, buffer, theme);
         self.render_repo_staged(layout.main_staged, buffer, theme);
         self.render_repo_detail(layout.main_detail, buffer, theme);
@@ -5861,10 +6041,20 @@ impl TuiApp {
                     .get(index)
                     .cloned()
                     .unwrap_or_else(|| {
-                        format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
+                        format_commit_row(
+                            &commit.short_oid,
+                            &commit.author_name,
+                            &commit.extra_info,
+                            &commit.summary,
+                        )
                     })
             } else {
-                format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
+                format_commit_row(
+                    &commit.short_oid,
+                    &commit.author_name,
+                    &commit.extra_info,
+                    &commit.summary,
+                )
             };
             lines.push(Line::from(format!("{marker} {row}")));
         }
@@ -6102,19 +6292,15 @@ impl TuiApp {
                     lines.push(Line::from(input_prompt_copy(&prompt.operation)));
                     lines.push(Line::from(""));
                     lines.push(Line::from(format!("> {}_", prompt.value)));
-                    if !prompt.suggestions.is_empty() {
+                    if self
+                        .state
+                        .pending_suggestions
+                        .as_ref()
+                        .is_some_and(|suggestions| !suggestions.suggestions.is_empty())
+                    {
                         lines.push(Line::from(""));
-                        lines.push(Line::from("Suggestions:"));
-                        for (index, suggestion) in prompt.suggestions.iter().enumerate() {
-                            let prefix = if index == prompt.selected_suggestion {
-                                ">"
-                            } else {
-                                " "
-                            };
-                            lines.push(Line::from(format!("{prefix} {}", suggestion.label)));
-                        }
                         lines.push(Line::from(
-                            "Enter submits selected suggestion. j/k or up/down moves. Esc cancels.",
+                            "Suggestions appear in the popup below. Enter submits selected suggestion. j/k or up/down moves. Esc cancels.",
                         ));
                     } else {
                         lines.push(Line::from("Enter submits. Esc cancels. Backspace deletes."));
@@ -6140,6 +6326,83 @@ impl TuiApp {
         }
 
         lines
+    }
+}
+
+impl TuiApp {
+    fn prompt_suggestions_popup_area(&self) -> Option<Rect> {
+        if self.state.modal_stack.last().is_none() || self.state.pending_suggestions.is_none() {
+            return None;
+        }
+        let area = Rect::new(
+            0,
+            0,
+            self.viewport.width.max(1),
+            self.viewport.height.max(1),
+        );
+        let modal_area = centered_rect(area, 72, 45);
+        let inner = inner_rect(modal_area);
+        let height = inner.height.saturating_sub(6).clamp(3, 12);
+        Some(Rect::new(
+            inner.x.saturating_add(1),
+            inner.y.saturating_add(6),
+            inner.width.saturating_sub(2).max(3),
+            height,
+        ))
+    }
+
+    fn prompt_suggestion_index_at(&self, column: u16, row: u16) -> Option<usize> {
+        let popup = self.prompt_suggestions_popup_area()?;
+        let inner = inner_rect(popup);
+        if !point_in_rect(column, row, inner) {
+            return None;
+        }
+        let suggestions = self.state.pending_suggestions.as_ref()?;
+        let local_row = usize::from(row.saturating_sub(inner.y));
+        let index = suggestions.scroll_offset + local_row;
+        (index < suggestions.suggestions.len()).then_some(index)
+    }
+
+    fn render_prompt_suggestions_popup(&self, modal_area: Rect, buffer: &mut Buffer, theme: Theme) {
+        let Some(suggestions) = self.state.pending_suggestions.as_ref() else {
+            return;
+        };
+        if suggestions.suggestions.is_empty() {
+            return;
+        }
+
+        let inner = inner_rect(modal_area);
+        let popup_area = Rect::new(
+            inner.x.saturating_add(1),
+            inner.y.saturating_add(6),
+            inner.width.saturating_sub(2).max(3),
+            inner.height.saturating_sub(8).clamp(3, 12),
+        );
+        Clear.render(popup_area, buffer);
+        let visible_rows = usize::from(inner_rect(popup_area).height.max(1));
+        let start = suggestions
+            .scroll_offset
+            .min(suggestions.suggestions.len().saturating_sub(1));
+        let end = (start + visible_rows).min(suggestions.suggestions.len());
+        let mut lines = Vec::new();
+        for (offset, suggestion) in suggestions.suggestions[start..end].iter().enumerate() {
+            let index = start + offset;
+            let prefix = if index == suggestions.selected_index {
+                ">"
+            } else {
+                " "
+            };
+            lines.push(Line::from(format!("{prefix} {}", suggestion.label)));
+        }
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Suggestions")
+                    .border_style(self.pane_style(PaneId::Modal, theme)),
+            )
+            .alignment(Alignment::Left)
+            .render(popup_area, buffer);
     }
 }
 
@@ -7078,12 +7341,22 @@ fn author_with_length(author_name: &str, length: usize) -> String {
     truncated
 }
 
-fn format_commit_row(short_oid: &str, author_name: &str, summary: &str) -> String {
+fn format_commit_row(
+    short_oid: &str,
+    author_name: &str,
+    extra_info: &str,
+    summary: &str,
+) -> String {
     let author = author_with_length(author_name, 10);
-    if author.is_empty() {
-        format!("{short_oid} {summary}")
+    let info = if extra_info.is_empty() {
+        String::new()
     } else {
-        format!("{short_oid} {author} {summary}")
+        format!(" {extra_info}")
+    };
+    if author.is_empty() {
+        format!("{short_oid}{info} {summary}")
+    } else {
+        format!("{short_oid}{info} {author} {summary}")
     }
 }
 
@@ -8578,10 +8851,20 @@ fn repo_commit_lines(
                 .get(*index)
                 .cloned()
                 .unwrap_or_else(|| {
-                    format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
+                    format_commit_row(
+                        &commit.short_oid,
+                        &commit.author_name,
+                        &commit.extra_info,
+                        &commit.summary,
+                    )
                 })
         } else {
-            format_commit_row(&commit.short_oid, &commit.author_name, &commit.summary)
+            format_commit_row(
+                &commit.short_oid,
+                &commit.author_name,
+                &commit.extra_info,
+                &commit.summary,
+            )
         };
         let style = if *index == selected_index {
             selected_line_style(Style::default().fg(theme.foreground), true, theme)
@@ -9052,7 +9335,7 @@ fn copied_commit_line(repo_mode: &RepoModeState, theme: Theme) -> Option<Line<'s
         Line::from(vec![Span::styled(
             format!(
                 "Copied for cherry-pick: {} {}  V paste  Ctrl+R clear",
-                commit.short_oid, commit.summary
+                commit.short_label, commit.summary
             ),
             theme.cherry_picked_commit_style,
         )])
@@ -9814,6 +10097,20 @@ fn input_prompt_copy(operation: &super_lazygit_core::InputPromptOperation) -> St
                 branch_type.command_name()
             )
         }
+        super_lazygit_core::InputPromptOperation::StartBisectTerms {
+            summary,
+            old_term: None,
+            ..
+        } => format!(
+            "Enter the old term for bisecting from {summary}. For example: good. The next prompt will ask for the new term."
+        ),
+        super_lazygit_core::InputPromptOperation::StartBisectTerms {
+            summary,
+            old_term: Some(old_term),
+            ..
+        } => format!(
+            "Enter the new term for bisecting from {summary}. The old term is {old_term}. Bisect will start and mark the selected commit with the new term."
+        ),
         super_lazygit_core::InputPromptOperation::CreateRemote => {
             "Enter the new remote name. The next prompt will collect the remote URL."
                 .to_string()
@@ -10057,6 +10354,11 @@ fn menu_lines(
             "Copy short hash".to_string(),
             "Copy full hash".to_string(),
             "Copy summary".to_string(),
+            "Copy subject".to_string(),
+            "Copy full commit message".to_string(),
+            "Copy commit message body".to_string(),
+            "Copy author".to_string(),
+            "Copy tags".to_string(),
             "Copy diff".to_string(),
             "Copy browser URL".to_string(),
         ],
@@ -13178,6 +13480,154 @@ mod tests {
     }
 
     #[test]
+    fn attach_registry_is_noop_by_default_for_main_status_clicks() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = repo_test_state(&repo_id, RepoSubview::Status, sample_repo_detail());
+        let app = TuiApp::new(state, AppConfig::default());
+        let area = Rect::new(0, 0, 50, 8);
+        let inner = inner_rect(area);
+
+        let actions = app.route_repo_status_click(
+            area,
+            PaneId::RepoUnstaged,
+            inner.x.saturating_add(1),
+            inner.y.saturating_add(repo_status_header_lines() as u16),
+        );
+
+        assert_eq!(
+            actions,
+            vec![
+                Action::SetFocusedPane(PaneId::RepoUnstaged),
+                Action::SelectStatusEntry {
+                    pane: PaneId::RepoUnstaged,
+                    index: 0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn attached_focused_main_click_hook_overrides_default_status_click() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = repo_test_state(&repo_id, RepoSubview::Status, sample_repo_detail());
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.attach_hooks(UiAttachHooks {
+            on_click_focused_main_view: Some(Arc::new(|_, _, _| {
+                Some(vec![Action::OpenModal {
+                    kind: super_lazygit_core::ModalKind::Help,
+                    title: "Main Click Hook".to_string(),
+                }])
+            })),
+            ..UiAttachHooks::default()
+        });
+
+        let area = Rect::new(0, 0, 50, 8);
+        let inner = inner_rect(area);
+        let actions = app.route_repo_status_click(
+            area,
+            PaneId::RepoUnstaged,
+            inner.x.saturating_add(1),
+            inner.y.saturating_add(repo_status_header_lines() as u16),
+        );
+
+        assert_eq!(
+            actions,
+            vec![Action::OpenModal {
+                kind: super_lazygit_core::ModalKind::Help,
+                title: "Main Click Hook".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn attached_focus_hooks_fire_on_context_change() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = repo_test_state(&repo_id, RepoSubview::Status, sample_repo_detail());
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.attach_hooks(UiAttachHooks {
+            on_focus: Some(Arc::new(|_, _| {
+                Some(super_lazygit_core::Effect::ScheduleRender)
+            })),
+            ..UiAttachHooks::default()
+        });
+
+        let result = app.apply_actions([Action::SetFocusedPane(PaneId::RepoDetail)]);
+
+        assert_eq!(app.state.focused_pane, PaneId::RepoDetail);
+        assert!(result
+            .effects
+            .contains(&super_lazygit_core::Effect::ScheduleRender));
+    }
+
+    #[test]
+    fn attached_focus_lost_hook_fires_on_context_change() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = repo_test_state(&repo_id, RepoSubview::Status, sample_repo_detail());
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.attach_hooks(UiAttachHooks {
+            on_focus_lost: Some(Arc::new(|_, _| {
+                Some(super_lazygit_core::Effect::ScheduleRender)
+            })),
+            ..UiAttachHooks::default()
+        });
+
+        let result = app.apply_actions([Action::SetFocusedPane(PaneId::RepoDetail)]);
+
+        assert_eq!(app.state.focused_pane, PaneId::RepoDetail);
+        assert!(result
+            .effects
+            .contains(&super_lazygit_core::Effect::ScheduleRender));
+    }
+
+    #[test]
+    fn attached_double_click_hook_overrides_modal_prompt_default() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::Modal,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Status,
+                detail: Some(sample_repo_detail()),
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            modal_stack: vec![super_lazygit_core::Modal {
+                kind: super_lazygit_core::ModalKind::InputPrompt,
+                title: "Prompt".to_string(),
+            }],
+            ..Default::default()
+        };
+        let mut app = TuiApp::new(state, AppConfig::default());
+        app.attach_hooks(UiAttachHooks {
+            on_double_click: Some(Arc::new(|_, _, _| {
+                Some(vec![Action::OpenModal {
+                    kind: super_lazygit_core::ModalKind::Help,
+                    title: "Double Click Hook".to_string(),
+                }])
+            })),
+            ..UiAttachHooks::default()
+        });
+
+        let actions = app.route_mouse_double_left(1, 1);
+        assert_eq!(
+            actions,
+            vec![Action::OpenModal {
+                kind: super_lazygit_core::ModalKind::Help,
+                title: "Double Click Hook".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn footer_segments_compose_display_only_context_surfaces() {
         let segments = footer_segments("Options", "Busy", "Repository  v1.0.0");
         assert_eq!(
@@ -14408,6 +14858,113 @@ mod tests {
     }
 
     #[test]
+    fn route_repository_commit_history_shift_d_opens_selected_commit_in_external_diff_tool() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                detail: Some(sample_repo_detail()),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(1),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut app = TuiApp::new(state, AppConfig::default());
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "D".to_string(),
+        })));
+
+        assert!(result.effects.iter().any(|effect| matches!(
+            effect,
+            super_lazygit_core::Effect::RunShellCommand(super_lazygit_core::ShellCommandRequest { command, .. })
+                if command.contains("git difftool --no-prompt")
+        )));
+    }
+
+    #[test]
+    fn route_repository_commit_history_3_selects_current_branch_range() {
+        let repo_id = RepoId::new("/tmp/repo-1");
+        let state = AppState {
+            mode: AppMode::Repository,
+            focused_pane: PaneId::RepoDetail,
+            workspace: WorkspaceState {
+                discovered_repo_ids: vec![repo_id.clone()],
+                repo_summaries: std::collections::BTreeMap::from([(
+                    repo_id.clone(),
+                    workspace_repo_summary(&repo_id.0, "repo-1"),
+                )]),
+                selected_repo_id: Some(repo_id.clone()),
+                ..Default::default()
+            },
+            repo_mode: Some(RepoModeState {
+                current_repo_id: repo_id,
+                active_subview: RepoSubview::Commits,
+                commit_subview_mode: CommitSubviewMode::History,
+                detail: Some(RepoDetail {
+                    commits: vec![
+                        super_lazygit_core::CommitItem {
+                            oid: "c1".to_string(),
+                            short_oid: "c1".to_string(),
+                            summary: "head commit".to_string(),
+                            ..Default::default()
+                        },
+                        super_lazygit_core::CommitItem {
+                            oid: "c2".to_string(),
+                            short_oid: "c2".to_string(),
+                            summary: "feature commit".to_string(),
+                            ..Default::default()
+                        },
+                        super_lazygit_core::CommitItem {
+                            oid: "c3".to_string(),
+                            short_oid: "c3".to_string(),
+                            summary: "merge boundary".to_string(),
+                            status: super_lazygit_core::CommitStatus::Merged,
+                            ..Default::default()
+                        },
+                    ],
+                    ..RepoDetail::default()
+                }),
+                commits_view: super_lazygit_core::ListViewState {
+                    selected_index: Some(2),
+                    selection_anchor: None,
+                },
+                ..RepoModeState::new(RepoId::new("/tmp/repo-1"))
+            }),
+            ..Default::default()
+        };
+
+        let mut app = TuiApp::new(state, AppConfig::default());
+        let result = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
+            key: "3".to_string(),
+        })));
+
+        let commits_view = &result
+            .state
+            .repo_mode
+            .as_ref()
+            .expect("repo mode")
+            .commits_view;
+        assert_eq!(commits_view.selected_index, Some(0));
+        assert_eq!(commits_view.selection_anchor, Some(1));
+    }
+
+    #[test]
     fn route_repository_commit_copy_flow_keys() {
         let repo_id = RepoId::new("/tmp/repo-1");
         let base_state = AppState {
@@ -14445,7 +15002,7 @@ mod tests {
                 .repo_mode
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
-                .map(|commit| commit.short_oid.as_str()),
+                .map(|commit| commit.short_label.as_str()),
             Some("1234567")
         );
 
@@ -14460,7 +15017,7 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(super_lazygit_core::ConfirmableOperation::CherryPickCommit {
-                commit: "1234567890abcdef".to_string(),
+                commits: vec!["1234567890abcdef".to_string()],
                 summary: "1234567 second".to_string(),
             })
         );
@@ -15178,7 +15735,7 @@ mod tests {
         );
         let cherry_pick = confirmation_copy(
             &super_lazygit_core::ConfirmableOperation::CherryPickCommit {
-                commit: "1234567890abcdef".to_string(),
+                commits: vec!["1234567890abcdef".to_string()],
                 summary: "1234567 second".to_string(),
             },
         );
@@ -16095,11 +16652,11 @@ mod tests {
                 .as_ref()
                 .and_then(|repo_mode| repo_mode.copied_commit.as_ref())
                 .map(|commit| (
-                    commit.oid.as_str(),
-                    commit.short_oid.as_str(),
+                    commit.oids.clone(),
+                    commit.short_label.as_str(),
                     commit.summary.as_str(),
                 )),
-            Some(("1234567890abcdef", "1234567", "second"))
+            Some((vec!["1234567890abcdef".to_string()], "1234567", "second"))
         );
 
         let mut cherry_pick_app = TuiApp::new(copied.state.clone(), AppConfig::default());
@@ -16114,7 +16671,7 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(super_lazygit_core::ConfirmableOperation::CherryPickCommit {
-                commit: "1234567890abcdef".to_string(),
+                commits: vec!["1234567890abcdef".to_string()],
                 summary: "1234567 second".to_string(),
             })
         );
@@ -17267,8 +17824,6 @@ mod tests {
                 operation: super_lazygit_core::InputPromptOperation::CreateBranch,
                 value: "feature".to_string(),
                 return_focus: PaneId::RepoDetail,
-                suggestions: Vec::new(),
-                selected_suggestion: 0,
                 suggestion_provider: None,
             }),
             mode: AppMode::Repository,
@@ -17368,6 +17923,11 @@ mod tests {
                 operation: super_lazygit_core::InputPromptOperation::CheckoutBranch,
                 value: "fea".to_string(),
                 return_focus: PaneId::RepoDetail,
+                suggestion_provider: Some(
+                    super_lazygit_core::PromptSuggestionProvider::CheckoutBranch,
+                ),
+            }),
+            pending_suggestions: Some(super_lazygit_core::PendingSuggestions {
                 suggestions: vec![
                     super_lazygit_core::PromptSuggestion {
                         value: "feature/demo".to_string(),
@@ -17378,10 +17938,9 @@ mod tests {
                         label: "origin/feature/demo".to_string(),
                     },
                 ],
-                selected_suggestion: 0,
-                suggestion_provider: Some(
-                    super_lazygit_core::PromptSuggestionProvider::CheckoutBranch,
-                ),
+                selected_index: 0,
+                scroll_offset: 0,
+                allow_edit_suggestion: false,
             }),
             mode: AppMode::Repository,
             repo_mode: Some(RepoModeState::new(RepoId::new("repo-1"))),
@@ -17401,9 +17960,7 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(text.contains("Suggestions:"));
-        assert!(text.contains("> feature/demo"));
-        assert!(text.contains("origin/feature/demo"));
+        assert!(text.contains("Suggestions appear in the popup below"));
 
         let selected = app.dispatch(Event::Input(InputEvent::KeyPressed(KeyPress {
             key: "j".to_string(),
@@ -17411,9 +17968,9 @@ mod tests {
         assert_eq!(
             selected
                 .state
-                .pending_input_prompt
+                .pending_suggestions
                 .as_ref()
-                .map(|prompt| prompt.selected_suggestion),
+                .map(|suggestions| suggestions.selected_index),
             Some(1)
         );
     }
@@ -18064,7 +18621,7 @@ mod tests {
                 .as_ref()
                 .map(|pending| pending.operation.clone()),
             Some(super_lazygit_core::ConfirmableOperation::CherryPickCommit {
-                commit: "1234567890abcdef".to_string(),
+                commits: vec!["1234567890abcdef".to_string()],
                 summary: "1234567 commit: add repo-mode stash flows".to_string(),
             })
         );
@@ -18328,6 +18885,7 @@ mod tests {
                     diff_presentation: DiffPresentation::Unstaged,
                     commit_ref: None,
                     commit_history_mode: CommitHistoryMode::Linear,
+                    show_branch_heads: false,
                     ignore_whitespace_in_diff: false,
                     diff_context_lines: super_lazygit_core::DEFAULT_DIFF_CONTEXT_LINES,
                     rename_similarity_threshold:

@@ -30,6 +30,7 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const PERIODIC_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const PERIODIC_FETCH_INTERVAL: Duration = Duration::from_secs(60);
 const TOAST_EXPIRY_INTERVAL: Duration = Duration::from_millis(250);
+const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 
 pub fn run(runtime: &mut AppRuntime) -> Result<()> {
     #[cfg(windows)]
@@ -44,6 +45,7 @@ pub fn run(runtime: &mut AppRuntime) -> Result<()> {
     let mut last_refresh_tick = Instant::now();
     let mut last_fetch_tick = Instant::now();
     let mut last_toast_tick = Instant::now();
+    let mut last_left_click: Option<(u16, u16, Instant)> = None;
 
     loop {
         session
@@ -73,8 +75,12 @@ pub fn run(runtime: &mut AppRuntime) -> Result<()> {
                     runtime.run([Event::Input(InputEvent::Paste(text))]);
                 }
                 CrosstermEvent::Mouse(mouse) => {
-                    if let Some(input) = mouse_input_from_event(mouse.column, mouse.row, mouse.kind)
-                    {
+                    if let Some(input) = mouse_input_from_event(
+                        mouse.column,
+                        mouse.row,
+                        mouse.kind,
+                        &mut last_left_click,
+                    ) {
                         runtime.run([Event::Input(input)]);
                     }
                 }
@@ -559,9 +565,27 @@ fn keypress_from_event(key: KeyEvent) -> Option<KeyPress> {
     Some(KeyPress { key: rendered })
 }
 
-fn mouse_input_from_event(column: u16, row: u16, kind: MouseEventKind) -> Option<InputEvent> {
+fn mouse_input_from_event(
+    column: u16,
+    row: u16,
+    kind: MouseEventKind,
+    last_left_click: &mut Option<(u16, u16, Instant)>,
+) -> Option<InputEvent> {
     match kind {
-        MouseEventKind::Down(MouseButton::Left) => Some(InputEvent::MouseLeft { column, row }),
+        MouseEventKind::Down(MouseButton::Left) => {
+            let now = Instant::now();
+            let is_double = last_left_click.is_some_and(|(last_column, last_row, last_at)| {
+                last_column == column
+                    && last_row == row
+                    && now.duration_since(last_at) <= DOUBLE_CLICK_THRESHOLD
+            });
+            *last_left_click = Some((column, row, now));
+            if is_double {
+                Some(InputEvent::MouseDoubleLeft { column, row })
+            } else {
+                Some(InputEvent::MouseLeft { column, row })
+            }
+        }
         MouseEventKind::ScrollUp => Some(InputEvent::MouseWheelUp { column, row }),
         MouseEventKind::ScrollDown => Some(InputEvent::MouseWheelDown { column, row }),
         _ => None,
@@ -874,19 +898,51 @@ mod tests {
 
     #[test]
     fn maps_mouse_click_and_wheel_events_into_core_input_events() {
+        let mut last_left_click = None;
         assert_eq!(
-            mouse_input_from_event(4, 7, MouseEventKind::Down(MouseButton::Left)),
+            mouse_input_from_event(
+                4,
+                7,
+                MouseEventKind::Down(MouseButton::Left),
+                &mut last_left_click,
+            ),
             Some(InputEvent::MouseLeft { column: 4, row: 7 })
         );
         assert_eq!(
-            mouse_input_from_event(8, 3, MouseEventKind::ScrollUp),
+            mouse_input_from_event(8, 3, MouseEventKind::ScrollUp, &mut last_left_click),
             Some(InputEvent::MouseWheelUp { column: 8, row: 3 })
         );
         assert_eq!(
-            mouse_input_from_event(9, 2, MouseEventKind::ScrollDown),
+            mouse_input_from_event(9, 2, MouseEventKind::ScrollDown, &mut last_left_click),
             Some(InputEvent::MouseWheelDown { column: 9, row: 2 })
         );
-        assert_eq!(mouse_input_from_event(1, 1, MouseEventKind::Moved), None);
+        assert_eq!(
+            mouse_input_from_event(1, 1, MouseEventKind::Moved, &mut last_left_click),
+            None
+        );
+    }
+
+    #[test]
+    fn second_left_click_within_threshold_maps_to_double_click() {
+        let mut last_left_click = None;
+        assert_eq!(
+            mouse_input_from_event(
+                4,
+                7,
+                MouseEventKind::Down(MouseButton::Left),
+                &mut last_left_click,
+            ),
+            Some(InputEvent::MouseLeft { column: 4, row: 7 })
+        );
+        assert_eq!(
+            mouse_input_from_event(
+                4,
+                7,
+                MouseEventKind::Down(MouseButton::Left),
+                &mut last_left_click,
+            ),
+            Some(InputEvent::MouseDoubleLeft { column: 4, row: 7 })
+        );
     }
 
     #[test]
