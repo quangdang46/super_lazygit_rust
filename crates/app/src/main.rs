@@ -23,6 +23,7 @@ mod tasks_adapter;
 mod terminal;
 mod test_mode;
 pub mod types;
+mod updates;
 pub mod utils;
 mod watcher;
 
