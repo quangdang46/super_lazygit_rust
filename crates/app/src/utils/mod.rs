@@ -1,9 +1,12 @@
 pub mod color;
+pub mod errors;
 pub mod formatting;
 pub mod once_writer;
 pub mod rebase_todo;
 pub mod search;
 pub mod slice;
+pub mod string_pool;
+pub mod string_stack;
 pub mod template;
 pub mod thread_safe_map;
 pub mod utils;
