@@ -34,6 +34,7 @@ pub mod upstream_helper;
 pub mod view_helper;
 pub mod window_helper;
 pub mod working_tree_helper;
+pub mod worktree_helper;
 
 pub use amend_helper::*;
 pub use app_status_helper::*;
@@ -71,3 +72,4 @@ pub use upstream_helper::*;
 pub use view_helper::*;
 pub use window_helper::*;
 pub use working_tree_helper::*;
+pub use worktree_helper::*;
