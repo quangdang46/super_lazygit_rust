@@ -16,6 +16,7 @@ pub mod merge_and_rebase_helper;
 pub mod merge_conflicts_helper;
 pub mod mode_helper;
 pub mod patch_building_helper;
+pub mod record_directory_helper;
 pub mod refresh_helper;
 
 pub use amend_helper::*;
@@ -36,4 +37,5 @@ pub use merge_and_rebase_helper::*;
 pub use merge_conflicts_helper::*;
 pub use mode_helper::*;
 pub use patch_building_helper::*;
+pub use record_directory_helper::*;
 pub use refresh_helper::*;
