@@ -23,6 +23,7 @@ pub mod repos_helper;
 pub mod search_helper;
 pub mod signal_handling;
 pub mod signal_handling_windows;
+pub mod snake_helper;
 
 pub use amend_helper::*;
 pub use app_status_helper::*;
@@ -49,3 +50,4 @@ pub use repos_helper::*;
 pub use search_helper::*;
 pub use signal_handling::*;
 pub use signal_handling_windows::*;
+pub use snake_helper::*;
