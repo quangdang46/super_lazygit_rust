@@ -18,7 +18,11 @@ mod pty;
 mod recent_repos_panel;
 mod runtime;
 mod services;
+pub mod style;
+mod tasks_adapter;
 mod terminal;
+mod test_mode;
+pub mod types;
 pub mod utils;
 mod watcher;
 
