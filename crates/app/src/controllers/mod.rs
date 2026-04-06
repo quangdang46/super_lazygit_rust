@@ -43,6 +43,7 @@ pub mod sync_controller;
 pub mod tags_controller;
 pub mod toggle_whitespace_action;
 pub mod undo_controller;
+pub mod view_selection_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
