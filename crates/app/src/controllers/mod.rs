@@ -46,6 +46,7 @@ pub mod undo_controller;
 pub mod view_selection_controller;
 pub mod workspace_reset_controller;
 pub mod worktree_options_controller;
+pub mod worktrees_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
