@@ -8,6 +8,7 @@ pub mod item_operations;
 pub mod loader;
 pub mod reflog_commits;
 pub mod remote_branches;
+pub mod remotes;
 pub mod worktrees;
 
 pub use authors::{author_span, author_style, author_with_length};
