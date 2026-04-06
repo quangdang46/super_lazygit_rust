@@ -12,6 +12,7 @@ pub mod remotes;
 pub mod stash_entries;
 pub mod status;
 pub mod submodules;
+pub mod suggestions;
 pub mod worktrees;
 
 pub use authors::{author_span, author_style, author_with_length};
