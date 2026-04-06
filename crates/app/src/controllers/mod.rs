@@ -38,6 +38,7 @@ pub mod submodules_controller;
 pub mod suggestions_controller;
 pub mod switch_to_diff_files_controller;
 pub mod switch_to_focused_main_view_controller;
+pub mod switch_to_sub_commits_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
