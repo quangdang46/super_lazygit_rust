@@ -1,0 +1,281 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775454188765,
+  "projectRoot": "/home/quangdang/projects/tools/super_lazygit_rust",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Rust",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Cargo.toml"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "cargo",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test",
+    "lintCommand": "cargo clippy",
+    "devCommand": "cargo run",
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "crates": {
+      "path": "crates",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775454188749,
+      "keyFiles": []
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 4,
+      "lastAccessed": 1775454188758,
+      "keyFiles": [
+        "CONFIG.md",
+        "KEYBINDINGS.md",
+        "PARITY_MATRIX.md",
+        "TROUBLESHOOTING.md"
+      ]
+    },
+    "references": {
+      "path": "references",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775454188759,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 1,
+      "lastAccessed": 1775454188760,
+      "keyFiles": [
+        "run_lazygit_parity_regression.sh"
+      ]
+    },
+    "target": {
+      "path": "target",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1775454188762,
+      "keyFiles": [
+        "CACHEDIR.TAG"
+      ]
+    },
+    "crates/app": {
+      "path": "crates/app",
+      "purpose": "Application code",
+      "fileCount": 1,
+      "lastAccessed": 1775454188763,
+      "keyFiles": [
+        "Cargo.toml"
+      ]
+    },
+    "crates/config": {
+      "path": "crates/config",
+      "purpose": "Configuration files",
+      "fileCount": 1,
+      "lastAccessed": 1775454188763,
+      "keyFiles": [
+        "Cargo.toml"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "crates/git/src/lib.rs",
+      "accessCount": 20,
+      "lastAccessed": 1775457165846,
+      "type": "directory"
+    },
+    {
+      "path": "crates/tui/src/presentation/commits.rs",
+      "accessCount": 19,
+      "lastAccessed": 1775481272538,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/src/lib.rs",
+      "accessCount": 17,
+      "lastAccessed": 1775481663591,
+      "type": "file"
+    },
+    {
+      "path": "crates/core/src/state.rs",
+      "accessCount": 15,
+      "lastAccessed": 1775481442315,
+      "type": "file"
+    },
+    {
+      "path": "crates/core/src",
+      "accessCount": 4,
+      "lastAccessed": 1775481442375,
+      "type": "directory"
+    },
+    {
+      "path": "crates/tui/src/presentation/mod.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775481969157,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/src",
+      "accessCount": 3,
+      "lastAccessed": 1775455519551,
+      "type": "directory"
+    },
+    {
+      "path": "crates/core/src/reducer.rs",
+      "accessCount": 3,
+      "lastAccessed": 1775456367303,
+      "type": "directory"
+    },
+    {
+      "path": "crates/core/src/effect.rs",
+      "accessCount": 3,
+      "lastAccessed": 1775456615276,
+      "type": "directory"
+    },
+    {
+      "path": "",
+      "accessCount": 3,
+      "lastAccessed": 1775481244063,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/runtime.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775456479767,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 2,
+      "lastAccessed": 1775481214345,
+      "type": "file"
+    },
+    {
+      "path": "AGENTS.md",
+      "accessCount": 2,
+      "lastAccessed": 1775481215212,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/src/presentation/authors.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775481271642,
+      "type": "file"
+    },
+    {
+      "path": "crates/core/src/lib.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775481459878,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/src/presentation/branches.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775482121595,
+      "type": "file"
+    },
+    {
+      "path": "references/lazygit-master/pkg/gui/presentation/commits.go",
+      "accessCount": 1,
+      "lastAccessed": 1775455470025,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui",
+      "accessCount": 1,
+      "lastAccessed": 1775455497584,
+      "type": "directory"
+    },
+    {
+      "path": "crates/core/Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1775455530650,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1775455530730,
+      "type": "file"
+    },
+    {
+      "path": "references/lazygit-master/pkg/gui/presentation/authors/authors.go",
+      "accessCount": 1,
+      "lastAccessed": 1775455566777,
+      "type": "file"
+    },
+    {
+      "path": "crates/git/src/graph.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775455592075,
+      "type": "file"
+    },
+    {
+      "path": "references/lazygit-master/pkg/gui/presentation/files.go",
+      "accessCount": 1,
+      "lastAccessed": 1775481301439,
+      "type": "file"
+    },
+    {
+      "path": "references/lazygit-master/pkg/gui/presentation/worktrees.go",
+      "accessCount": 1,
+      "lastAccessed": 1775481301618,
+      "type": "file"
+    },
+    {
+      "path": "references/lazygit-master/pkg/gui/presentation/branches.go",
+      "accessCount": 1,
+      "lastAccessed": 1775481301730,
+      "type": "file"
+    },
+    {
+      "path": "crates/core/src/lines.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775481459833,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/src/presentation/worktrees.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775481766342,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/src/presentation/files.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775481861199,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

@@ -16684,6 +16684,7 @@ mod tests {
                         good_term: "good".to_string(),
                         current_commit: Some("candidate".to_string()),
                         current_summary: Some("candidate123 Candidate commit".to_string()),
+                        ..crate::state::BisectState::default()
                     }),
                     ..RepoDetail::default()
                 }),

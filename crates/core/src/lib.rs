@@ -6,6 +6,7 @@ mod hosting_service;
 pub mod lines;
 pub mod reducer;
 pub mod state;
+pub mod version_number;
 
 pub use action::Action;
 pub use diagnostics::{

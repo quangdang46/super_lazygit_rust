@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/home/quangdang/projects/tools/super_lazygit_rust/.beads/issues.jsonl\"}",
+  "error": "File content (3.2MB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "timestamp": "2026-04-06T13:13:34.338Z",
+  "retry_count": 1
+}

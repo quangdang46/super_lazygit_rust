@@ -1591,12 +1591,25 @@ pub enum RebaseKind {
     Apply,
 }
 
+/// Per-commit bisect status for tracking which commits have been marked.
+///
+/// Parity: `git_commands.BisectStatus` in lazygit Go.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BisectCommitStatus {
+    #[default]
+    New,
+    Old,
+    Skipped,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BisectState {
     pub bad_term: String,
     pub good_term: String,
     pub current_commit: Option<String>,
     pub current_summary: Option<String>,
+    /// Map from commit hash to bisect status for commits that have been marked.
+    pub commit_statuses: BTreeMap<String, BisectCommitStatus>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
