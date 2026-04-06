@@ -17,6 +17,7 @@ mod popup;
 mod pty;
 mod recent_repos_panel;
 mod runtime;
+mod services;
 mod terminal;
 pub mod utils;
 mod watcher;
