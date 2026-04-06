@@ -19,6 +19,7 @@ pub mod merge_conflicts_controller;
 pub mod options_menu_action;
 pub mod patch_building_controller;
 pub mod patch_explorer_controller;
+pub mod prompt_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
@@ -32,3 +33,4 @@ pub use merge_conflicts_controller::*;
 pub use options_menu_action::*;
 pub use patch_building_controller::*;
 pub use patch_explorer_controller::*;
+pub use prompt_controller::*;
