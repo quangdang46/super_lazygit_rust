@@ -21,6 +21,7 @@ pub mod patch_building_controller;
 pub mod patch_explorer_controller;
 pub mod prompt_controller;
 pub mod quit_actions;
+pub mod reflog_commits_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
@@ -36,3 +37,4 @@ pub use patch_building_controller::*;
 pub use patch_explorer_controller::*;
 pub use prompt_controller::*;
 pub use quit_actions::*;
+pub use reflog_commits_controller::*;
