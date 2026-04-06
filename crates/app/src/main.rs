@@ -8,6 +8,7 @@ use clap::{Parser, ValueEnum};
 mod async_handler;
 mod context;
 mod controllers;
+mod gui;
 mod runtime;
 mod terminal;
 pub mod utils;
