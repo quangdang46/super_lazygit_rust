@@ -27,3 +27,8 @@ pub fn is_term_env_var(env_var: &str) -> bool {
         || env_var.starts_with("TERMINAL_NAME=")
         || env_var.starts_with("TERMINAL_VERSION_")
 }
+
+// Windows-specific stub (pty_windows.go parity)
+pub fn windows_pty_resize(_width: u16, _height: u16) -> bool {
+    true
+}
