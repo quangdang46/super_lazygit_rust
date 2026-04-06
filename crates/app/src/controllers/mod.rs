@@ -42,6 +42,7 @@ pub mod switch_to_sub_commits_controller;
 pub mod sync_controller;
 pub mod tags_controller;
 pub mod toggle_whitespace_action;
+pub mod undo_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
