@@ -34,6 +34,7 @@ pub mod staging_controller;
 pub mod stash_controller;
 pub mod status_controller;
 pub mod sub_commits_controller;
+pub mod submodules_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
