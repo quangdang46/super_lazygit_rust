@@ -6,6 +6,9 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
+pub mod integration_test;
+pub use integration_test::*;
+
 pub fn temp_repo() -> io::Result<TempRepo> {
     TempRepo::new()
 }
