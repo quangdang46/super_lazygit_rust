@@ -31,6 +31,7 @@ pub mod shell_command_action;
 pub mod side_window_controller;
 pub mod snake_controller;
 pub mod staging_controller;
+pub mod stash_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
