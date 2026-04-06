@@ -11,14 +11,10 @@ pub mod filter_controller;
 pub mod filtering_menu_action;
 pub mod git_flow_controller;
 pub mod global_controller;
-pub mod helpers;
+pub mod jump_to_side_window_controller;
 
-pub use branches_controller::*;
-pub use common::*;
-pub use diffing_menu_action::*;
-pub use files_controller::*;
-pub use filter_controller::*;
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
 pub use global_controller::*;
 pub use helpers::*;
+pub use jump_to_side_window_controller::*;
