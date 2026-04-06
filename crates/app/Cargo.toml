@@ -20,6 +20,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 crossterm.workspace = true
+fuzzy-matcher = "0.3"
 ratatui.workspace = true
 regex.workspace = true
 unicode-segmentation = "1.11"
