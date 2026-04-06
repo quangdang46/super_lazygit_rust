@@ -5,6 +5,7 @@ pub mod rebase_todo;
 pub mod search;
 pub mod slice;
 pub mod template;
+pub mod thread_safe_map;
 
 use std::collections::VecDeque;
 
