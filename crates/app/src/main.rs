@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 
 mod async_handler;
+mod controllers;
 mod runtime;
 mod terminal;
 pub mod utils;
