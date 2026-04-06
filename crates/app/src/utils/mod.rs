@@ -1,4 +1,9 @@
+pub mod color;
+pub mod once_writer;
+
 use std::collections::VecDeque;
+
+pub use once_writer::OnceWriter;
 
 pub struct HistoryBuffer<T> {
     max_size: usize,

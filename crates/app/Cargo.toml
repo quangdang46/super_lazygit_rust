@@ -21,6 +21,7 @@ anyhow.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
+regex.workspace = true
 super-lazygit-config = { path = "../config" }
 super-lazygit-core = { path = "../core" }
 super-lazygit-git = { path = "../git" }
