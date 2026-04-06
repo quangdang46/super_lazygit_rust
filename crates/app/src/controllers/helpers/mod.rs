@@ -25,6 +25,7 @@ pub mod signal_handling;
 pub mod signal_handling_windows;
 pub mod snake_helper;
 pub mod staging_helper;
+pub mod sub_commits_helper;
 
 pub use amend_helper::*;
 pub use app_status_helper::*;
@@ -53,3 +54,4 @@ pub use signal_handling::*;
 pub use signal_handling_windows::*;
 pub use snake_helper::*;
 pub use staging_helper::*;
+pub use sub_commits_helper::*;
