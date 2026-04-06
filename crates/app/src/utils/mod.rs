@@ -3,6 +3,7 @@ pub mod formatting;
 pub mod once_writer;
 pub mod rebase_todo;
 pub mod search;
+pub mod slice;
 
 use std::collections::VecDeque;
 
