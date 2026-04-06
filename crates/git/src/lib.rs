@@ -28,6 +28,7 @@ use super_lazygit_core::{
 use thiserror::Error;
 
 mod graph;
+pub mod menu_generator;
 
 use crate::graph::{render_commit_graph, GraphCommit};
 
@@ -6785,6 +6786,7 @@ fn read_bisect_state(repo_path: &Path) -> Option<BisectState> {
         good_term,
         current_commit,
         current_summary,
+        ..BisectState::default()
     })
 }
 
@@ -12266,7 +12268,7 @@ index 9ce8efb33..0632e41b0 100644
                 job_id: JobId::new("git:cherry-pick"),
                 repo_id: repo_id.clone(),
                 command: GitCommand::CherryPickCommit {
-                    commit: commit.clone(),
+                    commits: vec![commit.clone()],
                 },
             })
             .expect("cherry-pick should succeed");
@@ -12343,7 +12345,9 @@ index 9ce8efb33..0632e41b0 100644
             .run_command(GitCommandRequest {
                 job_id: JobId::new("git:cherry-pick-conflict"),
                 repo_id: repo_id.clone(),
-                command: GitCommand::CherryPickCommit { commit },
+                command: GitCommand::CherryPickCommit {
+                    commits: vec![commit],
+                },
             })
             .expect_err("cherry-pick should conflict");
 
@@ -13909,7 +13913,8 @@ garbage\n";
         repo.commit_all("initial").expect("initial commit");
         repo.write_file("tracked.txt", "change\n")
             .expect("update tracked file");
-        let commit = repo.commit_all("second").expect("second commit");
+        repo.commit_all("second").expect("second commit");
+        let commit = repo.rev_parse("HEAD").expect("rev-parse HEAD");
 
         let backend = CliGitBackend;
         let summary = backend
@@ -13924,7 +13929,9 @@ garbage\n";
             })
             .expect("start bisect with terms succeeds");
 
-        assert!(summary.contains("Started bisect with terms good/bad"));
+        assert!(summary
+            .summary
+            .contains("Started bisect with terms good/bad"));
         let detail = backend
             .read_repo_detail(RepoDetailRequest {
                 repo_id: RepoId::new(repo.path().display().to_string()),

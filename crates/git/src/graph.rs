@@ -526,4 +526,100 @@ mod tests {
             vec!["⏣─┬─┬─╮", "│ │ ◯ │", "◯─│─╯ │", "⏣─│─╮ │", "│ │ ◯ │"]
         );
     }
+
+    #[test]
+    fn render_commit_graph_left_move_continues_with_merge_parent() {
+        // Go test: "with a path that has room to move to the left and continues"
+        // commits: 1→2, 2→{3,4}, 3→{5,4}, 5→{7,8}, 4→7, 7→11
+        let rows = render_rows(&[
+            ("1", &["2"]),
+            ("2", &["3", "4"]),
+            ("3", &["5", "4"]),
+            ("5", &["7", "8"]),
+            ("4", &["7"]),
+            ("7", &["11"]),
+        ]);
+
+        assert_eq!(
+            rows,
+            vec!["◯", "⏣─╮", "⏣─│─╮", "⏣─│─│─╮", "│ ◯─╯ │", "◯─╯ ╭─╯"]
+        );
+    }
+
+    #[test]
+    fn render_commit_graph_terminates_with_merge_into_same_pos() {
+        // Go test: "with a path that has room to move to the left and continues"
+        // commits: 1→{2,3}, 3→2, 2→{4,5}, 4→{6,7}, 6→8
+        let rows = render_rows(&[
+            ("1", &["2", "3"]),
+            ("3", &["2"]),
+            ("2", &["4", "5"]),
+            ("4", &["6", "7"]),
+            ("6", &["8"]),
+        ]);
+
+        assert_eq!(rows, vec!["⏣─╮", "│ ◯", "⏣─│", "⏣─│─╮", "◯ │ │"]);
+    }
+
+    #[test]
+    fn render_commit_graph_deep_chain_left_continue() {
+        // Go test: full 8-commit chain with deep left-moving continuations
+        let rows = render_rows(&[
+            ("1", &["2"]),
+            ("2", &["3", "4"]),
+            ("3", &["5", "4"]),
+            ("5", &["7", "8"]),
+            ("7", &["4", "A"]),
+            ("4", &["B"]),
+            ("B", &["C"]),
+            ("C", &["D"]),
+        ]);
+
+        assert_eq!(
+            rows,
+            vec![
+                "◯",
+                "⏣─╮",
+                "⏣─│─╮",
+                "⏣─│─│─╮",
+                "⏣─│─│─│─╮",
+                "◯─┴─╯ │ │",
+                "◯ ╭───╯ │",
+                "◯ │ ╭───╯",
+            ]
+        );
+    }
+
+    #[test]
+    fn render_commit_graph_deeper_chain_with_more_merges() {
+        // Go test: 10-commit chain with multiple merge parents and deep continuations
+        let rows = render_rows(&[
+            ("1", &["2"]),
+            ("2", &["3", "4"]),
+            ("3", &["5", "4"]),
+            ("5", &["7", "G"]),
+            ("7", &["8", "A"]),
+            ("8", &["4", "E"]),
+            ("4", &["B"]),
+            ("B", &["C"]),
+            ("C", &["D"]),
+            ("D", &["F"]),
+        ]);
+
+        assert_eq!(
+            rows,
+            vec![
+                "◯",
+                "⏣─╮",
+                "⏣─│─╮",
+                "⏣─│─│─╮",
+                "⏣─│─│─│─╮",
+                "⏣─│─│─│─│─╮",
+                "◯─┴─╯ │ │ │",
+                "◯ ╭───╯ │ │",
+                "◯ │ ╭───╯ │",
+                "◯ │ │ ╭───╯",
+            ]
+        );
+    }
 }

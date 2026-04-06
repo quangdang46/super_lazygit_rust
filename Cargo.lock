@@ -844,6 +844,7 @@ dependencies = [
 name = "super-lazygit-git"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "super-lazygit-core",
  "super-lazygit-test-support",
  "tempfile",

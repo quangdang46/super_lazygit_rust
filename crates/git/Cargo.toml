@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 super-lazygit-core = { path = "../core" }
+regex.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 
