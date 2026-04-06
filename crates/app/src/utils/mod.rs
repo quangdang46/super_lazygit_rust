@@ -7,6 +7,7 @@ pub mod slice;
 pub mod template;
 pub mod thread_safe_map;
 pub mod utils;
+pub mod yaml_utils;
 
 use std::collections::VecDeque;
 

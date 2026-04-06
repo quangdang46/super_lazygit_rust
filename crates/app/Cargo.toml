@@ -25,6 +25,7 @@ ratatui.workspace = true
 regex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+serde_yaml = "0.9"
 unicode-segmentation = "1.11"
 unicode-width = "0.2"
 super-lazygit-config = { path = "../config" }
