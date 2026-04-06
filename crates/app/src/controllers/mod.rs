@@ -16,6 +16,7 @@ pub mod local_commits_controller;
 pub mod main_view_controller;
 pub mod menu_controller;
 pub mod merge_conflicts_controller;
+pub mod options_menu_action;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
@@ -26,3 +27,4 @@ pub use local_commits_controller::*;
 pub use main_view_controller::*;
 pub use menu_controller::*;
 pub use merge_conflicts_controller::*;
+pub use options_menu_action::*;
