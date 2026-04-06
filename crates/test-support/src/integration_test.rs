@@ -282,6 +282,40 @@ impl TestDriver {
     pub fn set_caption(&self, _caption: &str) {}
     pub fn set_caption_prefix(&self, _prefix: &str) {}
     pub fn wait(&self, _ms: u64) {}
+    pub fn global_press(&self, _key: &str) {}
+    pub fn expect_popup(&self) -> PopupDriver {
+        PopupDriver
+    }
+}
+
+/// Stub for popup driver.
+pub struct PopupDriver;
+
+impl PopupDriver {
+    pub fn prompt(&self) -> PromptDriver {
+        PromptDriver
+    }
+}
+
+/// Stub for prompt driver.
+pub struct PromptDriver;
+
+impl PromptDriver {
+    pub fn title(&self, _t: &str) -> &Self {
+        self
+    }
+    pub fn suggestion_lines(&self, _matchers: &[&dyn Fn(&str) -> bool]) -> &Self {
+        self
+    }
+    pub fn r#type(&self, _content: &str) -> &Self {
+        self
+    }
+    pub fn confirm(&self) -> &Self {
+        self
+    }
+    pub fn cancel(&self) -> &Self {
+        self
+    }
 }
 
 /// Stub for GUI driver interface.
@@ -308,8 +342,18 @@ impl KeybindingConfig {
 }
 
 /// Stub for universal keybindings.
-#[derive(Debug, Clone, Default)]
-pub struct UniversalKeybindings;
+#[derive(Debug, Clone)]
+pub struct UniversalKeybindings {
+    pub execute_shell_command: String,
+}
+
+impl Default for UniversalKeybindings {
+    fn default() -> Self {
+        UniversalKeybindings {
+            execute_shell_command: "<c-e>".to_string(),
+        }
+    }
+}
 
 /// Stub for app config.
 /// This is a simplified version of the config.AppConfig from crates/config.
