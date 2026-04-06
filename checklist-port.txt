@@ -823,7 +823,7 @@
 [x] ./references/lazygit-master/pkg/integration/tests/shell_commands/history.go
 [x] ./references/lazygit-master/pkg/integration/tests/shell_commands/omit_from_history.go
 ./references/lazygit-master/pkg/integration/tests/staging/diff_change_screen_mode.go
-./references/lazygit-master/pkg/integration/tests/staging/diff_context_change.go
+[x] ./references/lazygit-master/pkg/integration/tests/staging/diff_context_change.go
 ./references/lazygit-master/pkg/integration/tests/staging/discard_all_changes.go
 ./references/lazygit-master/pkg/integration/tests/staging/search.go
 ./references/lazygit-master/pkg/integration/tests/staging/select_next_line_after_staging_in_two_hunk_diff.go
