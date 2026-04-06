@@ -8,6 +8,7 @@ use clap::{Parser, ValueEnum};
 mod async_handler;
 mod runtime;
 mod terminal;
+pub mod utils;
 mod watcher;
 
 use runtime::AppRuntime;
