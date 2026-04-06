@@ -27,6 +27,7 @@ pub mod snake_helper;
 pub mod staging_helper;
 pub mod sub_commits_helper;
 pub mod suggestions_helper;
+pub mod suspend_resume_helper;
 
 pub use amend_helper::*;
 pub use app_status_helper::*;
@@ -57,3 +58,4 @@ pub use snake_helper::*;
 pub use staging_helper::*;
 pub use sub_commits_helper::*;
 pub use suggestions_helper::*;
+pub use suspend_resume_helper::*;
