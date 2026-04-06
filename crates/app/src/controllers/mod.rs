@@ -29,6 +29,7 @@ pub mod search_controller;
 pub mod search_prompt_controller;
 pub mod shell_command_action;
 pub mod side_window_controller;
+pub mod snake_controller;
 
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
@@ -52,3 +53,4 @@ pub use search_controller::*;
 pub use search_prompt_controller::*;
 pub use shell_command_action::*;
 pub use side_window_controller::*;
+pub use snake_controller::*;
