@@ -74,13 +74,13 @@
       "id": "US-007",
       "title": "Port git loader files (branch_loader, commit_loader, file_loader, stash_loader, tag_loader, worktree_loader, reflog_commit_loader, remote_loader)",
       "priority": "P0",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Port references/lazygit-master/pkg/commands/git_commands/*_loader.go to Rust equivalents",
         "Each loader has a corresponding function/struct in crates/git/src/",
         "cargo check --all-targets compiles without E0432 errors for loader types"
       ],
-      "notes": "9 loader files not yet ported - these provide data loading for branches, commits, files, stashes, tags, worktrees, reflog, remote"
+      "notes": "All 9 loader files ported - branch_loader, commit_loader, file_loader, stash_loader, tag_loader, worktree_loader, reflog_commit_loader, remote_loader, commit_file_loader"
     },
     {
       "id": "US-008",
