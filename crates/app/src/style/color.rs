@@ -2,6 +2,7 @@
 
 use ratatui::style::Color;
 
+#[derive(Clone, Copy)]
 pub struct AppColor {
     rgb: Option<(u8, u8, u8)>,
     basic: Option<Color>,

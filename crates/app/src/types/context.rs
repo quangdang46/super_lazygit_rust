@@ -1,5 +1,7 @@
 // Ported from ./references/lazygit-master/pkg/gui/types/context.go
 
+use crate::types::common::HasUrn;
+
 #[derive(Clone, Copy)]
 pub enum ContextKind {
     SideContext,
@@ -12,8 +14,8 @@ pub enum ContextKind {
 }
 
 pub trait ParentContexter {
-    fn set_parent_context(&mut self, ctx: Context);
-    fn get_parent_context(&self) -> Option<Context>;
+    fn set_parent_context(&mut self, ctx: ());
+    fn get_parent_context(&self) -> Option<()>;
 }
 
 #[derive(Clone, Copy)]
@@ -162,11 +164,11 @@ pub trait ListItem {
 }
 
 pub trait IContextMgr {
-    fn push(&mut self, context: Context, opts: OnFocusOpts);
+    fn push(&mut self, context: (), opts: OnFocusOpts);
     fn pop(&mut self);
-    fn replace(&mut self, context: Context);
-    fn activate(&mut self, context: Context, opts: OnFocusOpts);
-    fn current(&self) -> &dyn Context;
+    fn replace(&mut self, context: ());
+    fn activate(&mut self, context: (), opts: OnFocusOpts);
+    fn current(&self) -> ();
 }
 
 pub struct Binding;

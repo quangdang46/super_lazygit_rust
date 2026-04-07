@@ -1,5 +1,8 @@
 // Ported from ./references/lazygit-master/pkg/gui/filetree/commit_file_tree.go
 
+use crate::filetree::collapsed_paths::CollapsedPaths;
+use crate::filetree::commit_file_node::CommitFileNode;
+
 pub struct CommitFileTree {
     get_files: fn() -> Vec<CommitFile>,
     tree: Option<CommitFileNode>,

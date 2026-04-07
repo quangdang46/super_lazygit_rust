@@ -1,7 +1,7 @@
 // Ported from ./references/lazygit-master/pkg/integration/types/types.go
 
 pub trait IntegrationTest {
-    fn run(&self, gui_driver: &GuiDriver);
+    fn run(&self, gui_driver: &dyn GuiDriver);
     fn setup_config(&self, config: &AppConfig);
     fn requires_headless(&self) -> bool;
     fn headless_dimensions(&self) -> (i32, i32);

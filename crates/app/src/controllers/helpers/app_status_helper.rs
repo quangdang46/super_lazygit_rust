@@ -22,15 +22,11 @@ pub enum ToastKind {
 }
 
 impl AppStatusHelper {
-    pub fn new(
-        context: HelperCommon,
-        status_mgr: fn() -> Box<dyn StatusManager>,
-        mode_helper: ModeHelper,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            context,
-            status_mgr,
-            mode_helper,
+            context: HelperCommon,
+            status_mgr: || Box::new(MockStatusManager),
+            mode_helper: ModeHelper,
         }
     }
 
@@ -65,17 +61,7 @@ impl AppStatusHelper {
 
     fn render_app_status(&self) {}
 
-    fn render_app_status_sync(&self, _stop: chan<()>) {}
-}
-
-impl AppStatusHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-            status_mgr: || Box::new(MockStatusManager),
-            mode_helper: ModeHelper,
-        }
-    }
+    fn render_app_status_sync(&self, _stop: std::sync::mpsc::Receiver<()>) {}
 }
 
 impl Default for AppStatusHelper {

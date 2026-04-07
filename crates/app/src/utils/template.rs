@@ -3,7 +3,7 @@ use std::collections::HashMap;
 pub fn resolve_placeholder_string(s: &str, arguments: &HashMap<String, String>) -> String {
     let mut old_news = Vec::with_capacity(arguments.len() * 4);
     for (key, value) in arguments {
-        old_news.push(format!("{{{{{key}}}}"));
+        old_news.push(format!("{{{{{key}}}}}", key = key));
         old_news.push(value.clone());
         old_news.push(format!("{{.{key}}}"));
         old_news.push(value.clone());

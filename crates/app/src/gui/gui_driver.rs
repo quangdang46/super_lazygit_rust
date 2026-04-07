@@ -1,5 +1,7 @@
 // Ported from ./references/lazygit-master/pkg/gui/gui_driver.go
 
+use crate::gui::gui::Gui;
+
 pub struct GuiDriver {
     gui: Gui,
 }

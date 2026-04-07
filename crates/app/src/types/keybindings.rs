@@ -1,5 +1,7 @@
 // Ported from ./references/lazygit-master/pkg/gui/types/keybindings.go
 
+use crate::types::common::DisabledReason;
+
 pub type Key = Box<dyn std::any::Any>;
 
 pub struct Binding {

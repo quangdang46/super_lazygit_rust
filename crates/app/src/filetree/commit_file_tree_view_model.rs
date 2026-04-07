@@ -1,5 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/filetree/commit_file_tree_view_model.go
 
+use crate::filetree::commit_file_node::CommitFileNode;
+use crate::filetree::commit_file_tree::CommitFileTree;
+use crate::filetree::file_filter::CommitFile;
+
 pub struct CommitFileTreeViewModel {
     commit_file_tree: CommitFileTree,
     r#ref: Option<Ref>,

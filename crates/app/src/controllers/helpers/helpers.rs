@@ -72,6 +72,13 @@ pub struct InlineStatusHelper;
 pub struct WindowArrangementHelper;
 pub struct SearchHelper;
 pub struct SubCommitsHelper;
+pub struct BisectHelper;
+pub struct BranchesHelper;
+pub struct AmendHelper;
+pub struct DiffHelper;
+pub struct ModeHelper;
+pub struct AppStatusHelper;
+pub struct WorktreeHelper;
 
 impl Helpers {
     pub fn new_stub() -> Self {

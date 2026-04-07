@@ -1,8 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/types/rendering.go
 
+// Context is a trait in types/context.rs but we need a concrete type here
+// Using a placeholder struct for now
 pub struct MainContextPair {
-    pub main: Context,
-    pub secondary: Context,
+    pub main: (),
+    pub secondary: (),
 }
 
 pub struct MainViewPairs {

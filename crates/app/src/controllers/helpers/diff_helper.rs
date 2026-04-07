@@ -56,7 +56,7 @@ impl DiffHelper {
         String::new()
     }
 
-    pub fn open_diff_tool_for_ref(&self, _selected_ref: &Ref) -> Result<(), String> {
+    pub fn open_diff_tool_for_ref(&self, _selected_ref: &dyn Ref) -> Result<(), String> {
         Ok(())
     }
 
@@ -128,8 +128,6 @@ pub struct DiffToolCmdOptions {
     pub is_directory: bool,
     pub staged: bool,
 }
-
-pub struct Ref;
 
 impl DiffHelper {
     pub fn new() -> Self {
