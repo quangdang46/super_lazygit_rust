@@ -1,11 +1,23 @@
+pub mod add_co_author;
+pub mod add_co_author_range;
 pub mod amend;
+pub mod amend_when_there_are_conflicts_and_amend;
+pub mod checkout;
 pub mod commit;
+pub mod commit_multiline;
+pub mod copy_author_to_clipboard;
 pub mod new_branch;
 pub mod revert;
 pub mod reword;
 
+pub use add_co_author::ADD_CO_AUTHOR;
+pub use add_co_author_range::ADD_CO_AUTHOR_RANGE;
 pub use amend::AMEND;
+pub use amend_when_there_are_conflicts_and_amend::AMEND_WHEN_THERE_ARE_CONFLICTS_AND_AMEND;
+pub use checkout::CHECKOUT;
 pub use commit::COMMIT;
+pub use commit_multiline::COMMIT_MULTILINE;
+pub use copy_author_to_clipboard::COPY_AUTHOR_TO_CLIPBOARD;
 pub use new_branch::NEW_BRANCH;
 pub use revert::REVERT;
 pub use reword::REWORD;
