@@ -6,6 +6,9 @@ pub mod pop;
 pub mod stash;
 pub mod stash_all;
 pub mod stash_including_untracked_files;
+pub mod stash_staged;
+pub mod stash_staged_partial_file;
+pub mod stash_unstaged;
 
 pub use apply::APPLY;
 pub use apply_patch::APPLY_PATCH;
@@ -15,3 +18,6 @@ pub use pop::POP;
 pub use stash::STASH;
 pub use stash_all::STASH_ALL;
 pub use stash_including_untracked_files::STASH_INCLUDING_UNTRACKED_FILES;
+pub use stash_staged::STASH_STAGED;
+pub use stash_staged_partial_file::STASH_STAGED_PARTIAL_FILE;
+pub use stash_unstaged::STASH_UNSTAGED;
