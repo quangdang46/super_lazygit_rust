@@ -6,8 +6,10 @@ pub struct FilteringMenuAction {
 }
 
 impl FilteringMenuAction {
-    pub fn new(context: ControllerCommon) -> Self {
-        Self { context }
+    pub fn new() -> Self {
+        Self {
+            context: ControllerCommon::default(),
+        }
     }
 
     pub fn call(&self) -> Result<(), String> {
@@ -24,14 +26,6 @@ impl FilteringMenuAction {
 
     fn set_filtering(&self) -> Result<(), String> {
         Ok(())
-    }
-}
-
-impl FilteringMenuAction {
-    pub fn new() -> Self {
-        Self {
-            context: ControllerCommon::default(),
-        }
     }
 }
 

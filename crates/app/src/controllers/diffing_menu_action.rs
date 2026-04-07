@@ -129,8 +129,10 @@ impl Default for ControllerCommon {
 }
 
 impl DiffingMenuAction {
-    pub fn new(context: ControllerCommon) -> Self {
-        Self { context }
+    pub fn new() -> Self {
+        Self {
+            context: ControllerCommon::new(),
+        }
     }
 
     pub fn call(&self) -> Result<(), String> {
@@ -177,14 +179,6 @@ impl DiffingMenuAction {
 
     fn is_diffing_active(&self) -> bool {
         false
-    }
-}
-
-impl DiffingMenuAction {
-    pub fn new() -> Self {
-        Self {
-            context: ControllerCommon::new(),
-        }
     }
 }
 
