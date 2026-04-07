@@ -92,13 +92,14 @@ impl SearchHelper {
     pub fn confirm_search(&self) {}
 
     pub fn cancel_prompt(&self) -> Result<(), String> {
-        self.cancel()?;
-        Ok(())
+        self.cancel()
     }
 
     pub fn scroll_history(&self, _scroll_increment: i32) {}
 
-    pub fn cancel(&self) {}
+    pub fn cancel(&self) -> Result<(), String> {
+        Ok(())
+    }
 
     pub fn on_prompt_content_changed(&self, _search_string: &str) {}
 

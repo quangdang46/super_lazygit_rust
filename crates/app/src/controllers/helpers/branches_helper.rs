@@ -1,19 +1,34 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/branches_helper.go
 
-pub struct BranchesHelper {
-    context: HelperCommon,
-    worktree_helper: WorktreeHelper,
+pub struct Branch {
+    pub name: String,
+    pub upstream_branch: Option<String>,
+    pub upstream_remote: Option<String>,
+}
+
+pub struct RemoteBranch {
+    pub name: String,
+    pub remote_name: String,
+}
+
+pub struct Worktree {
+    pub name: String,
 }
 
 pub struct HelperCommon;
 
 pub struct WorktreeHelper;
 
+pub struct BranchesHelper {
+    context: HelperCommon,
+    worktree_helper: WorktreeHelper,
+}
+
 impl BranchesHelper {
-    pub fn new(context: HelperCommon, worktree_helper: WorktreeHelper) -> Self {
+    pub fn new() -> Self {
         Self {
-            context,
-            worktree_helper,
+            context: HelperCommon,
+            worktree_helper: WorktreeHelper,
         }
     }
 
@@ -60,30 +75,6 @@ impl BranchesHelper {
 
 pub fn short_branch_name(full_branch_name: &str) -> String {
     full_branch_name.to_string()
-}
-
-pub struct Branch {
-    pub name: String,
-    pub upstream_branch: Option<String>,
-    pub upstream_remote: Option<String>,
-}
-
-pub struct RemoteBranch {
-    pub name: String,
-    pub remote_name: String,
-}
-
-pub struct Worktree {
-    pub name: String,
-}
-
-impl BranchesHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-            worktree_helper: WorktreeHelper,
-        }
-    }
 }
 
 impl Default for BranchesHelper {

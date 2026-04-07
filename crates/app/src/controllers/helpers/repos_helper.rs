@@ -14,6 +14,10 @@ pub struct ReposHelper {
 pub struct HelperCommon;
 pub struct RecordDirectoryHelper;
 
+impl RecordDirectoryHelper {
+    pub fn record_current_directory(&self) {}
+}
+
 pub struct StartArgs;
 pub struct SubmoduleConfig;
 

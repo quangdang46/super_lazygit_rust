@@ -1,24 +1,17 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
-static DECOLORISE_CACHE: RwLock<Option<HashMap<String, String>>> = RwLock::new(None);
-
-fn get_cache() -> std::sync::MutexGuard<'static, HashMap<String, String>> {
-    let mut guard = DECOLORISE_CACHE.write().unwrap();
-    if guard.is_none() {
-        *guard = Some(HashMap::new());
-    }
-    std::sync::Mutex::new(guard.as_mut().unwrap())
-}
+static DECOLORISE_CACHE: LazyLock<
+    RwLock<HashMap<String, String>>,
+    fn() -> RwLock<HashMap<String, String>>,
+> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub fn decolorise(input: &str) -> String {
     // Check cache first
     {
         let cache = DECOLORISE_CACHE.read().unwrap();
-        if let Some(ref c) = *cache {
-            if let Some(cached) = c.get(input) {
-                return cached.clone();
-            }
+        if let Some(cached) = cache.get(input) {
+            return cached.clone();
         }
     }
 
@@ -31,7 +24,7 @@ pub fn decolorise(input: &str) -> String {
 
     // Store in cache
     {
-        let mut cache = get_cache();
+        let mut cache = DECOLORISE_CACHE.write().unwrap();
         cache.insert(input.to_string(), result.clone());
     }
 

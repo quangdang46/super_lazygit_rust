@@ -49,17 +49,3 @@ pub enum RefreshableView {
     Worktrees,
     Submodules,
 }
-
-impl GpgHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
-    }
-}
-
-impl Default for GpgHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

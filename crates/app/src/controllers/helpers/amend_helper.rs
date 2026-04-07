@@ -1,22 +1,12 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/amend_helper.go
 
-pub struct AmendHelper {
-    context: HelperCommon,
-    gpg: GpgHelper,
-}
+pub struct GpgHelper;
 
 pub struct HelperCommon;
 
-pub struct GpgHelper;
-
-impl AmendHelper {
-    pub fn new(context: HelperCommon, gpg: GpgHelper) -> Self {
-        Self { context, gpg }
-    }
-
-    pub fn amend_head(&self) -> Result<(), String> {
-        Ok(())
-    }
+pub struct AmendHelper {
+    context: HelperCommon,
+    gpg: GpgHelper,
 }
 
 impl AmendHelper {
@@ -25,6 +15,10 @@ impl AmendHelper {
             context: HelperCommon,
             gpg: GpgHelper,
         }
+    }
+
+    pub fn amend_head(&self) -> Result<(), String> {
+        Ok(())
     }
 }
 

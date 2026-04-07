@@ -27,17 +27,3 @@ impl CredentialsHelper {
         (String::new(), false)
     }
 }
-
-impl CredentialsHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
-    }
-}
-
-impl Default for CredentialsHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

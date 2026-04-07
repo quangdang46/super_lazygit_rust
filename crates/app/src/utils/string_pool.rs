@@ -19,8 +19,8 @@ impl StringPool {
         if let Some(existing) = map.get(&s) {
             return existing.clone();
         }
-        let arc = Arc::new(s);
-        map.insert(arc.clone(), arc.clone());
+        let arc = Arc::new(s.clone());
+        map.insert(s, arc.clone());
         arc
     }
 }

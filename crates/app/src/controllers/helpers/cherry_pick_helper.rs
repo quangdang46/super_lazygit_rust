@@ -1,25 +1,27 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/cherry_pick_helper.go
 
+pub struct Commit {
+    pub hash: String,
+}
+
+pub struct ListContext;
+
+pub struct CherryPicking;
+
+pub struct MergeAndRebaseHelper;
+
+pub struct HelperCommon;
+
 pub struct CherryPickHelper {
     context: HelperCommon,
     rebase_helper: MergeAndRebaseHelper,
 }
 
-pub struct HelperCommon;
-
-pub struct MergeAndRebaseHelper;
-
-pub struct Commit {
-    pub hash: String,
-}
-
-pub struct CherryPicking;
-
 impl CherryPickHelper {
-    pub fn new(context: HelperCommon, rebase_helper: MergeAndRebaseHelper) -> Self {
+    pub fn new() -> Self {
         Self {
-            context,
-            rebase_helper,
+            context: HelperCommon,
+            rebase_helper: MergeAndRebaseHelper,
         }
     }
 
@@ -27,11 +29,7 @@ impl CherryPickHelper {
         CherryPicking
     }
 
-    pub fn copy_range(
-        &self,
-        commits_list: &[Commit],
-        _context: &ListContext,
-    ) -> Result<(), String> {
+    pub fn copy_range(&self, _commits: &[Commit], _context: &ListContext) -> Result<(), String> {
         Ok(())
     }
 
@@ -52,17 +50,6 @@ impl CherryPickHelper {
     }
 
     fn rerender(&self) {}
-}
-
-pub struct ListContext;
-
-impl CherryPickHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-            rebase_helper: MergeAndRebaseHelper,
-        }
-    }
 }
 
 impl Default for CherryPickHelper {

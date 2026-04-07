@@ -1,15 +1,6 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/commits_helper.go
 
-pub struct CommitsHelper {
-    context: HelperCommon,
-    get_commit_summary: fn() -> String,
-    set_commit_summary: fn(String),
-    get_commit_description: fn() -> String,
-    get_unwrapped_commit_description: fn() -> String,
-    set_commit_description: fn(String),
-}
-
-pub struct HelperCommon;
+pub struct Suggestion;
 
 pub struct OpenCommitMessagePanelOpts {
     pub commit_index: i64,
@@ -21,22 +12,26 @@ pub struct OpenCommitMessagePanelOpts {
     pub skip_hooks_prefix: String,
 }
 
+pub struct HelperCommon;
+
+pub struct CommitsHelper {
+    context: HelperCommon,
+    get_commit_summary: fn() -> String,
+    set_commit_summary: fn(String),
+    get_commit_description: fn() -> String,
+    get_unwrapped_commit_description: fn() -> String,
+    set_commit_description: fn(String),
+}
+
 impl CommitsHelper {
-    pub fn new(
-        context: HelperCommon,
-        get_commit_summary: fn() -> String,
-        set_commit_summary: fn(String),
-        get_commit_description: fn() -> String,
-        get_unwrapped_commit_description: fn() -> String,
-        set_commit_description: fn(String),
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            context,
-            get_commit_summary,
-            set_commit_summary,
-            get_commit_description,
-            get_unwrapped_commit_description,
-            set_commit_description,
+            context: HelperCommon,
+            get_commit_summary: || String::new(),
+            set_commit_summary: |_| {},
+            get_commit_description: || String::new(),
+            get_unwrapped_commit_description: || String::new(),
+            set_commit_description: |_| {},
         }
     }
 
@@ -53,7 +48,7 @@ impl CommitsHelper {
         String::new()
     }
 
-    pub fn try_remove_hard_line_breaks(message: &str, auto_wrap_width: i64) -> String {
+    pub fn try_remove_hard_line_breaks(message: &str, _auto_wrap_width: i64) -> String {
         message.to_string()
     }
 
@@ -61,7 +56,7 @@ impl CommitsHelper {
         Ok(())
     }
 
-    pub fn update_commit_panel_view(&self, message: &str) {}
+    pub fn update_commit_panel_view(&self, _message: &str) {}
 
     pub fn open_commit_message_panel(&self, _opts: &OpenCommitMessagePanelOpts) {}
 
@@ -86,21 +81,6 @@ impl CommitsHelper {
 
     fn paste_commit_message_from_clipboard(&self) -> Result<(), String> {
         Ok(())
-    }
-}
-
-pub struct Suggestion;
-
-impl CommitsHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-            get_commit_summary: || String::new(),
-            set_commit_summary: |_| {},
-            get_commit_description: || String::new(),
-            get_unwrapped_commit_description: || String::new(),
-            set_commit_description: |_| {},
-        }
     }
 }
 

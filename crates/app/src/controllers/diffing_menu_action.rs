@@ -55,7 +55,6 @@ pub struct RefreshOptions {
     pub mode: RefreshMode,
 }
 
-#[derive(Debug, Clone)]
 pub struct CreateMenuOptions {
     pub title: String,
     pub prompt: Option<String>,

@@ -54,19 +54,3 @@ impl InlineStatusHelper {
 
     fn render_context(&self, _context_key: &str) {}
 }
-
-impl InlineStatusHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-            window_helper: WindowHelper,
-            contexts_with_inline_status: Vec::new(),
-        }
-    }
-}
-
-impl Default for InlineStatusHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

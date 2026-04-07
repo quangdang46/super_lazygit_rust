@@ -135,7 +135,7 @@ pub fn prepend<T: Clone>(slice: &[T], values: &[T]) -> Vec<T> {
     result
 }
 
-pub fn remove<T>(slice: &[T], index: usize) -> Vec<T> {
+pub fn remove<T: Clone>(slice: &[T], index: usize) -> Vec<T> {
     if index >= slice.len() {
         return slice.to_vec();
     }

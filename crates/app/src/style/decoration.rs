@@ -34,16 +34,16 @@ impl Decoration {
     pub fn to_modifiers(&self) -> Vec<Modifier> {
         let mut modifiers = Vec::with_capacity(4);
         if self.bold {
-            modifiers.push(Modifier::Bold);
+            modifiers.push(Modifier::BOLD);
         }
         if self.underline {
-            modifiers.push(Modifier::Underlined);
+            modifiers.push(Modifier::UNDERLINED);
         }
         if self.reverse {
-            modifiers.push(Modifier::Reverse);
+            modifiers.push(Modifier::REVERSED);
         }
         if self.strikethrough {
-            modifiers.push(Modifier::CrossedOut);
+            modifiers.push(Modifier::CROSSED_OUT);
         }
         modifiers
     }

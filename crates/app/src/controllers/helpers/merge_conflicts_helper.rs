@@ -49,17 +49,3 @@ impl MergeConflictsHelper {
 pub struct MergeConflictsContext;
 
 pub struct MergeConflictsState;
-
-impl MergeConflictsHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
-    }
-}
-
-impl Default for MergeConflictsHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

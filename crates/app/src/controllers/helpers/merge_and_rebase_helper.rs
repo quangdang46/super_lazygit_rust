@@ -1,10 +1,32 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/merge_and_rebase_helper.go
 
-pub struct MergeAndRebaseHelper {
-    context: HelperCommon,
+pub enum MergeVariant {
+    Regular,
+    NonFastForward,
+    FastForward,
+    Squash,
 }
 
-pub struct HelperCommon;
+pub struct RefreshOptions {
+    pub mode: RefreshMode,
+    pub scope: Vec<RefreshableView>,
+}
+
+pub enum RefreshMode {
+    Sync,
+    Async,
+}
+
+pub enum RefreshableView {
+    Files,
+    Branches,
+    Commits,
+    Stash,
+    Remotes,
+    Tags,
+    Worktrees,
+    Submodules,
+}
 
 pub enum RebaseOption {
     Continue,
@@ -12,9 +34,17 @@ pub enum RebaseOption {
     Skip,
 }
 
+pub struct HelperCommon;
+
+pub struct MergeAndRebaseHelper {
+    context: HelperCommon,
+}
+
 impl MergeAndRebaseHelper {
-    pub fn new(context: HelperCommon) -> Self {
-        Self { context }
+    pub fn new() -> Self {
+        Self {
+            context: HelperCommon,
+        }
     }
 
     pub fn create_rebase_options_menu(&self) -> Result<(), String> {
@@ -25,7 +55,7 @@ impl MergeAndRebaseHelper {
         self.generic_merge_command("continue")
     }
 
-    pub fn generic_merge_command(&self, command: &str) -> Result<(), String> {
+    pub fn generic_merge_command(&self, _command: &str) -> Result<(), String> {
         Ok(())
     }
 
@@ -91,42 +121,6 @@ impl MergeAndRebaseHelper {
 
     pub fn reset_marked_base_commit(&self) -> Result<(), String> {
         Ok(())
-    }
-}
-
-pub enum MergeVariant {
-    Regular,
-    NonFastForward,
-    FastForward,
-    Squash,
-}
-
-pub struct RefreshOptions {
-    pub mode: RefreshMode,
-    pub scope: Vec<RefreshableView>,
-}
-
-pub enum RefreshMode {
-    Sync,
-    Async,
-}
-
-pub enum RefreshableView {
-    Files,
-    Branches,
-    Commits,
-    Stash,
-    Remotes,
-    Tags,
-    Worktrees,
-    Submodules,
-}
-
-impl MergeAndRebaseHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
     }
 }
 

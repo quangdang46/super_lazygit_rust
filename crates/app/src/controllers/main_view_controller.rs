@@ -7,6 +7,7 @@ pub struct MainViewController {
     other_context: MainContext,
 }
 
+#[derive(Clone)]
 pub struct MainContext;
 pub struct ViewMouseBindingOpts {
     pub y: i32,

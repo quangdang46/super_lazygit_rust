@@ -101,7 +101,7 @@ pub fn remove_element<T>(vec: Vec<T>, index: usize) -> Vec<T> {
     result
 }
 
-pub fn move_element<T>(vec: Vec<T>, from: usize, to: usize) -> Vec<T> {
+pub fn move_element<T: Clone>(vec: Vec<T>, from: usize, to: usize) -> Vec<T> {
     if from >= vec.len() || to >= vec.len() || from == to {
         return vec;
     }

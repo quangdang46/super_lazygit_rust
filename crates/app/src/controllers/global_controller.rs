@@ -1,4 +1,18 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/global_controller.go
+
+pub struct Binding {
+    pub key: String,
+    pub description: String,
+    pub modifier: String,
+    pub opens_menu: bool,
+}
+
+pub struct Context;
+
+pub struct DisabledReason {
+    pub text: String,
+}
+
 use crate::controllers::ControllerCommon;
 
 pub struct GlobalController {
@@ -6,8 +20,10 @@ pub struct GlobalController {
 }
 
 impl GlobalController {
-    pub fn new(context: ControllerCommon) -> Self {
-        Self { context }
+    pub fn new() -> Self {
+        Self {
+            context: ControllerCommon::default(),
+        }
     }
 
     pub fn get_keybindings(&self) -> Vec<Binding> {
@@ -88,27 +104,6 @@ impl GlobalController {
 
     pub fn can_show_rebase_options(&self) -> Option<DisabledReason> {
         None
-    }
-}
-
-pub struct Binding {
-    pub key: String,
-    pub description: String,
-    pub modifier: String,
-    pub opens_menu: bool,
-}
-
-pub struct Context;
-
-pub struct DisabledReason {
-    pub text: String,
-}
-
-impl GlobalController {
-    pub fn new() -> Self {
-        Self {
-            context: ControllerCommon::default(),
-        }
     }
 }
 

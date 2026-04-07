@@ -26,6 +26,7 @@ pub struct State {
     pub user_enabled_hunk_mode: bool,
 }
 
+#[derive(Clone)]
 pub struct Patch;
 
 impl Patch {

@@ -2,7 +2,6 @@
 
 use crate::filetree::commit_file_node::CommitFileNode;
 use crate::filetree::commit_file_tree::CommitFileTree;
-use crate::filetree::file_filter::CommitFile;
 
 pub struct CommitFileTreeViewModel {
     commit_file_tree: CommitFileTree,
@@ -12,7 +11,7 @@ pub struct CommitFileTreeViewModel {
 }
 
 impl CommitFileTreeViewModel {
-    pub fn new(_get_files: fn() -> Vec<CommitFile>, _show_tree: bool) -> Self {
+    pub fn new(_get_files: fn() -> Vec<CommitFileNode>, _show_tree: bool) -> Self {
         Self {
             commit_file_tree: CommitFileTree::new(_get_files, _show_tree),
             r#ref: None,
@@ -51,7 +50,7 @@ impl CommitFileTreeViewModel {
         (Vec::new(), 0, 0)
     }
 
-    pub fn get_selected_file(&self) -> Option<CommitFile> {
+    pub fn get_selected_file(&self) -> Option<CommitFileNode> {
         None
     }
 
@@ -86,5 +85,8 @@ impl CommitFileTreeViewModel {
     }
 }
 
+#[derive(Clone)]
 pub struct Ref;
+
+#[derive(Clone)]
 pub struct RefRange;

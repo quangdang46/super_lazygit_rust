@@ -36,7 +36,7 @@ impl PatchBuildingController {
     }
 
     pub fn get_on_focus_lost(&self) -> Box<dyn Fn(OnFocusLostOpts)> {
-        Box::new(|_| {});
+        Box::new(|_| {})
     }
 
     pub fn open_file(&self) -> Result<(), String> {
@@ -64,4 +64,5 @@ impl PatchBuildingController {
     }
 }
 
+#[derive(Clone)]
 pub struct PatchExplorerContext;

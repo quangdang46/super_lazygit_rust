@@ -23,17 +23,3 @@ impl PatchBuildingHelper {
 }
 
 pub struct OnFocusOpts;
-
-impl PatchBuildingHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
-    }
-}
-
-impl Default for PatchBuildingHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

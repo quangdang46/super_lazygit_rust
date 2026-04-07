@@ -1,7 +1,9 @@
+#[derive(Clone)]
 pub struct ControllerCommon {
     pub helper_common: HelperCommon,
 }
 
+#[derive(Clone)]
 pub struct HelperCommon {
     pub context: String,
 }

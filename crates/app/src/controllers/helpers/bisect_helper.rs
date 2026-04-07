@@ -1,21 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/bisect_helper.go
 
-pub struct BisectHelper {
-    context: HelperCommon,
-}
-
 pub struct HelperCommon;
 
-impl BisectHelper {
-    pub fn new(context: HelperCommon) -> Self {
-        Self { context }
-    }
-
-    pub fn reset(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    pub fn post_bisect_command_refresh(&self) {}
+pub struct BisectHelper {
+    context: HelperCommon,
 }
 
 impl BisectHelper {
@@ -24,6 +12,12 @@ impl BisectHelper {
             context: HelperCommon,
         }
     }
+
+    pub fn reset(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn post_bisect_command_refresh(&self) {}
 }
 
 impl Default for BisectHelper {

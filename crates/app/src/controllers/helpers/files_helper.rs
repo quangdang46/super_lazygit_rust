@@ -39,17 +39,3 @@ impl FilesHelper {
         Ok(())
     }
 }
-
-impl FilesHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
-    }
-}
-
-impl Default for FilesHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

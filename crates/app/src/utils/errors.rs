@@ -5,27 +5,25 @@ use std::fmt;
 
 pub struct WrappedError {
     msg: String,
-    source: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl WrappedError {
-    pub fn new(err: &dyn Error, msg: &str) -> Self {
+    pub fn new(_err: &dyn Error, msg: &str) -> Self {
         Self {
             msg: msg.to_string(),
-            source: Some(Box::new(err)),
         }
     }
 }
 
 impl fmt::Display for WrappedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}: {:?}", self.msg, self.source)
+        write!(f, "{}", self.msg)
     }
 }
 
 impl fmt::Debug for WrappedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}: {:?}", self.msg, self.source)
+        write!(f, "WrappedError({})", self.msg)
     }
 }
 

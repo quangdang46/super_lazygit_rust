@@ -15,10 +15,13 @@ pub fn lookup_key<'a>(node: &'a Value, key: &str) -> Option<(&'a str, &'a Value)
 
 pub fn remove_key(node: &mut Value, key: &str) -> Option<Value> {
     if let Some(mapping) = node.as_mapping_mut() {
-        if let Some((k, v)) = mapping.iter().find(|(k, _)| k.as_str() == Some(key)) {
-            let removed = v.clone();
-            mapping.remove(k);
-            return Some(removed);
+        let key_to_remove = mapping
+            .iter()
+            .find(|(k, _)| k.as_str() == Some(key))
+            .map(|(k, v)| (k.clone(), v.clone()));
+        if let Some((k, v)) = key_to_remove {
+            mapping.remove(&k);
+            return Some(v);
         }
     }
     None
@@ -29,35 +32,40 @@ pub fn rename_yaml_key(root: &mut Value, path: &[String], new_key: &str) -> Resu
         return Ok(false);
     }
 
-    let mut current = root;
-    for (i, key) in path.iter().enumerate() {
-        if i == path.len() - 1 {
+    fn rename_at_path(current: &mut Value, path: &[String], new_key: &str) -> Result<bool, String> {
+        if path.is_empty() {
+            return Ok(false);
+        }
+
+        let key = &path[0];
+        if path.len() == 1 {
             if let Some(mapping) = current.as_mapping_mut() {
                 if mapping.contains_key(&Value::String(new_key.to_string())) {
                     return Err(format!("new key '{}' already exists", new_key));
                 }
-                if let Some((k, _)) = mapping
+                let key_to_remove = mapping
                     .iter()
                     .find(|(k, _)| k.as_str() == Some(key.as_str()))
-                {
-                    let v = mapping.remove(k).unwrap();
+                    .map(|(k, v)| (k.clone(), v.clone()));
+                if let Some((k, v)) = key_to_remove {
+                    mapping.remove(&k);
                     mapping.insert(Value::String(new_key.to_string()), v);
                     return Ok(true);
                 }
             }
         } else {
-            if let Some(mapping) = current.as_mapping() {
-                if let Some((_, next)) = lookup_key(mapping, key) {
-                    current = next;
-                } else {
-                    return Ok(false);
+            if let Some(mapping) = current.as_mapping_mut() {
+                for (_, v) in mapping.iter_mut() {
+                    if rename_at_path(v, &path[1..], new_key)? {
+                        return Ok(true);
+                    }
                 }
-            } else {
-                return Ok(false);
             }
         }
+        Ok(false)
     }
-    Ok(false)
+
+    rename_at_path(root, path, new_key)
 }
 
 pub fn walk<F>(node: &Value, path: &str, callback: &mut F) -> Result<(), String>

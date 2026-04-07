@@ -27,21 +27,13 @@ impl AppColor {
         self.rgb.is_some()
     }
 
-    pub fn to_ratatui_color(&self, is_bg: bool) -> Color {
+    pub fn to_ratatui_color(&self, _is_bg: bool) -> Color {
         if let Some((r, g, b)) = self.rgb {
             return Color::Rgb(r, g, b);
         }
 
         if let Some(c) = self.basic {
-            if is_bg {
-                if let Some(rgb) = c.into_rgb() {
-                    return Color::Rgb(rgb.0, rgb.1, rgb.2);
-                }
-            } else {
-                if let Some(rgb) = c.into_rgb() {
-                    return Color::Rgb(rgb.0, rgb.1, rgb.2);
-                }
-            }
+            return c;
         }
         Color::Reset
     }

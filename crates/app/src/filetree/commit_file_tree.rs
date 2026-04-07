@@ -4,7 +4,7 @@ use crate::filetree::collapsed_paths::CollapsedPaths;
 use crate::filetree::commit_file_node::CommitFileNode;
 
 pub struct CommitFileTree {
-    get_files: fn() -> Vec<CommitFile>,
+    get_files: fn() -> Vec<CommitFileNode>,
     tree: Option<CommitFileNode>,
     show_tree: bool,
     collapsed_paths: CollapsedPaths,
@@ -13,7 +13,7 @@ pub struct CommitFileTree {
 }
 
 impl CommitFileTree {
-    pub fn new(_get_files: fn() -> Vec<CommitFile>, _show_tree: bool) -> Self {
+    pub fn new(_get_files: fn() -> Vec<CommitFileNode>, _show_tree: bool) -> Self {
         Self {
             get_files: _get_files,
             tree: None,

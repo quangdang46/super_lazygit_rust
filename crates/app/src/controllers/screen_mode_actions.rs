@@ -5,6 +5,7 @@ pub struct ScreenModeActions {
     common: ControllerCommon,
 }
 
+#[derive(PartialEq, Clone, Copy)]
 pub enum ScreenMode {
     Normal,
     Half,

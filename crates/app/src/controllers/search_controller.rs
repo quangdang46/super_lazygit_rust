@@ -10,6 +10,7 @@ pub struct SearchController {
     context: SearchableContext,
 }
 
+#[derive(Clone)]
 pub struct SearchableContext;
 
 impl SearchControllerFactory {
@@ -19,7 +20,7 @@ impl SearchControllerFactory {
 
     pub fn create(&self, context: SearchableContext) -> SearchController {
         SearchController {
-            common: self.common,
+            common: self.common.clone(),
             context,
         }
     }

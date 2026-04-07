@@ -70,23 +70,3 @@ impl ModeHelper {
 
     pub fn set_suppress_rebasing_mode(&self, _value: bool) {}
 }
-
-impl ModeHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-            diff_helper: DiffHelper,
-            patch_building_helper: PatchBuildingHelper,
-            cherry_pick_helper: CherryPickHelper,
-            merge_and_rebase_helper: MergeAndRebaseHelper,
-            bisect_helper: BisectHelper,
-            suppress_rebasing_mode: false,
-        }
-    }
-}
-
-impl Default for ModeHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

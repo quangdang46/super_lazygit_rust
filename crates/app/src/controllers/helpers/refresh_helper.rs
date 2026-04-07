@@ -90,7 +90,7 @@ impl RefreshHelper {
 
         let start = Instant::now();
 
-        self.refresh_internal(options.clone());
+        self.refresh_internal(options);
 
         let _elapsed = start.elapsed();
     }

@@ -1,74 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/diff_helper.go
 
-pub struct DiffHelper {
-    context: HelperCommon,
-}
-
-pub struct HelperCommon;
-
-impl DiffHelper {
-    pub fn new(context: HelperCommon) -> Self {
-        Self { context }
-    }
-
-    pub fn diff_args(&self) -> Vec<String> {
-        let mut output = vec!["--stat".to_string(), "-p".to_string()];
-        output
-    }
-
-    pub fn get_update_task_for_rendering_commits_diff(
-        &self,
-        _commit: &Commit,
-        _ref_range: Option<&RefRange>,
-    ) -> UpdateTask {
-        UpdateTask
-    }
-
-    pub fn filter_paths_for_commit(&self, _commit: &Commit) -> Vec<String> {
-        Vec::new()
-    }
-
-    pub fn exit_diff_mode(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    pub fn render_diff(&self) {}
-
-    pub fn current_diff_terminals(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    pub fn current_diff_terminal(&self) -> String {
-        String::new()
-    }
-
-    pub fn currently_selected_filename(&self) -> String {
-        String::new()
-    }
-
-    pub fn with_diff_mode_check<F>(&self, _f: F)
-    where
-        F: Fn(),
-    {
-    }
-
-    pub fn ignoring_whitespace_sub_title(&self) -> String {
-        String::new()
-    }
-
-    pub fn open_diff_tool_for_ref(&self, _selected_ref: &dyn Ref) -> Result<(), String> {
-        Ok(())
-    }
-
-    pub fn adjust_line_number(&self, path: &str, linenumber: i64, viewname: &str) -> i64 {
-        linenumber
-    }
-
-    fn adjust_line_number_internal(&self, linenumber: i64, _diff_args: &[String]) -> i64 {
-        linenumber
-    }
-}
-
 pub struct Commit {
     pub hash: String,
     pub filter_paths: Vec<String>,
@@ -129,11 +60,73 @@ pub struct DiffToolCmdOptions {
     pub staged: bool,
 }
 
+pub struct HelperCommon;
+
+pub struct DiffHelper {
+    context: HelperCommon,
+}
+
 impl DiffHelper {
     pub fn new() -> Self {
         Self {
             context: HelperCommon,
         }
+    }
+
+    pub fn diff_args(&self) -> Vec<String> {
+        vec!["--stat".to_string(), "-p".to_string()]
+    }
+
+    pub fn get_update_task_for_rendering_commits_diff(
+        &self,
+        _commit: &Commit,
+        _ref_range: Option<&RefRange>,
+    ) -> UpdateTask {
+        UpdateTask
+    }
+
+    pub fn filter_paths_for_commit(&self, _commit: &Commit) -> Vec<String> {
+        Vec::new()
+    }
+
+    pub fn exit_diff_mode(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn render_diff(&self) {}
+
+    pub fn current_diff_terminals(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    pub fn current_diff_terminal(&self) -> String {
+        String::new()
+    }
+
+    pub fn currently_selected_filename(&self) -> String {
+        String::new()
+    }
+
+    pub fn with_diff_mode_check<F>(&self, _f: F)
+    where
+        F: Fn(),
+    {
+    }
+
+    pub fn ignoring_whitespace_sub_title(&self) -> String {
+        String::new()
+    }
+
+    pub fn open_diff_tool_for_ref(&self, _selected_ref: &dyn Ref) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn adjust_line_number(&self, _path: &str, linenumber: i64, _viewname: &str) -> i64 {
+        linenumber
+    }
+
+    fn adjust_line_number_internal(&self, linenumber: i64, _diff_args: &[String]) -> i64 {
+        linenumber
     }
 }
 

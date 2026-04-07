@@ -290,18 +290,3 @@ impl Default for TrStrings {
         }
     }
 }
-
-impl FilesController {
-    pub fn new() -> Self {
-        Self {
-            context: ControllerCommon::default(),
-            list_trait: ListControllerTrait,
-        }
-    }
-}
-
-impl Default for FilesController {
-    fn default() -> Self {
-        Self::new()
-    }
-}

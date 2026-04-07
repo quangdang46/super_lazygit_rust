@@ -10,6 +10,7 @@ pub struct PatchExplorerController {
     context: PatchExplorerContext,
 }
 
+#[derive(Clone)]
 pub struct PatchExplorerContext;
 pub struct ViewMouseBinding;
 pub struct Binding;
@@ -22,7 +23,7 @@ impl PatchExplorerControllerFactory {
 
     pub fn create(&self, context: PatchExplorerContext) -> PatchExplorerController {
         PatchExplorerController {
-            common: self.common,
+            common: self.common.clone(),
             context,
         }
     }

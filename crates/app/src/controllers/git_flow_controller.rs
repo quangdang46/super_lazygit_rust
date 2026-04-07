@@ -32,17 +32,3 @@ pub struct Binding {
 pub struct Branch {
     pub name: String,
 }
-
-impl GitFlowController {
-    pub fn new() -> Self {
-        Self {
-            context: ControllerCommon::default(),
-        }
-    }
-}
-
-impl Default for GitFlowController {
-    fn default() -> Self {
-        Self::new()
-    }
-}

@@ -1,20 +1,39 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/confirmation_helper.go
 
-pub struct ConfirmationHelper {
-    context: HelperCommon,
+pub struct Context;
+
+pub struct ConfirmOpts {
+    pub title: String,
+    pub prompt: String,
+}
+
+pub struct CreatePopupPanelOpts {
+    pub title: String,
+    pub prompt: String,
+    pub editable: bool,
+}
+
+pub struct MenuItem {
+    pub label: String,
 }
 
 pub struct HelperCommon;
 
+pub struct ConfirmationHelper {
+    context: HelperCommon,
+}
+
 impl ConfirmationHelper {
-    pub fn new(context: HelperCommon) -> Self {
-        Self { context }
+    pub fn new() -> Self {
+        Self {
+            context: HelperCommon,
+        }
     }
 
     fn close_and_call_confirmation_function(
         &self,
         _cancel: fn(),
-        _function: fn() -> Result<(), String>,
+        _function: Box<dyn Fn() -> Result<(), String>>,
     ) -> Result<(), String> {
         Ok(())
     }
@@ -23,8 +42,11 @@ impl ConfirmationHelper {
         &self,
         cancel: fn(),
         function: fn() -> Result<(), String>,
-    ) -> fn() -> Result<(), String> {
-        move || self.close_and_call_confirmation_function(cancel, function)
+    ) -> Box<dyn Fn() -> Result<(), String>> {
+        Box::new(move || {
+            cancel();
+            function()
+        })
     }
 
     fn wrapped_prompt_confirmation_function(
@@ -33,15 +55,16 @@ impl ConfirmationHelper {
         function: fn(String) -> Result<(), String>,
         get_response: fn() -> String,
         allow_empty_input: bool,
-        preserve_whitespace: bool,
-    ) -> fn() -> Result<(), String> {
-        move || {
+        _preserve_whitespace: bool,
+    ) -> Box<dyn Fn() -> Result<(), String>> {
+        Box::new(move || {
             let response = get_response();
             if response.is_empty() && !allow_empty_input {
                 return Ok(());
             }
-            self.close_and_call_confirmation_function(cancel, || function(response))
-        }
+            cancel();
+            function(response)
+        })
     }
 
     pub fn deactivate_confirmation(&self) {}
@@ -50,18 +73,18 @@ impl ConfirmationHelper {
 
     fn get_popup_panel_dimensions_for_content_height(
         &self,
-        content_width: i64,
-        content_height: i64,
-        parent_popup_context: &Context,
+        _content_width: i64,
+        _content_height: i64,
+        _parent_popup_context: &Context,
     ) -> (i64, i64, i64, i64) {
         (0, 0, 0, 0)
     }
 
     fn get_popup_panel_dimensions_aux(
         &self,
-        content_width: i64,
-        content_height: i64,
-        parent_popup_context: &Context,
+        _content_width: i64,
+        _content_height: i64,
+        _parent_popup_context: &Context,
     ) -> (i64, i64, i64, i64) {
         (0, 0, 0, 0)
     }
@@ -76,9 +99,9 @@ impl ConfirmationHelper {
 
     pub fn create_popup_panel(&self, _opts: &CreatePopupPanelOpts) {}
 
-    fn set_confirmation_key_bindings(&self, cancel: fn(), _opts: &CreatePopupPanelOpts) {}
+    fn set_confirmation_key_bindings(&self, _cancel: fn(), _opts: &CreatePopupPanelOpts) {}
 
-    fn set_prompt_key_bindings(&self, cancel: fn(), _opts: &CreatePopupPanelOpts) {}
+    fn set_prompt_key_bindings(&self, _cancel: fn(), _opts: &CreatePopupPanelOpts) {}
 
     fn clear_confirmation_view_key_bindings(&self) {}
 
@@ -112,31 +135,6 @@ impl ConfirmationHelper {
 
     pub fn tooltip_for_menu_item(&self, _menu_item: &MenuItem) -> String {
         String::new()
-    }
-}
-
-pub struct Context;
-
-pub struct ConfirmOpts {
-    pub title: String,
-    pub prompt: String,
-}
-
-pub struct CreatePopupPanelOpts {
-    pub title: String,
-    pub prompt: String,
-    pub editable: bool,
-}
-
-pub struct MenuItem {
-    pub label: String,
-}
-
-impl ConfirmationHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
     }
 }
 

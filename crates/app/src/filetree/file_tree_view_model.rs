@@ -67,6 +67,12 @@ impl FileTreeViewModel {
 }
 
 pub struct FileTree;
+
+impl FileTree {
+    pub fn new(_get_files: fn() -> Vec<File>, _show_tree: bool) -> Self {
+        Self
+    }
+}
 pub struct FileNode;
 pub struct File;
 pub enum FileTreeDisplayFilter {

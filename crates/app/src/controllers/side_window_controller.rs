@@ -19,7 +19,7 @@ impl SideWindowControllerFactory {
 
     pub fn create(&self, context: Context) -> SideWindowController {
         SideWindowController {
-            common: self.common,
+            common: self.common.clone(),
             context,
         }
     }

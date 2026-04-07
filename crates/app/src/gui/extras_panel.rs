@@ -54,6 +54,6 @@ impl PrefixWriter {
     }
 
     pub fn write(&mut self, _data: &[u8]) -> (usize, Result<(), String>) {
-        Ok((0, Ok(())))
+        (0, Ok(()))
     }
 }

@@ -25,17 +25,3 @@ impl HostHelper {
 }
 
 pub struct HostingServiceMgr;
-
-impl HostHelper {
-    pub fn new() -> Self {
-        Self {
-            context: HelperCommon,
-        }
-    }
-}
-
-impl Default for HostHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}

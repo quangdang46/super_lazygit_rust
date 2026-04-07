@@ -41,9 +41,6 @@ impl PatchExplorerState {
     pub fn get_diff(&self) -> String {
         String::new()
     }
-    pub fn selecting_range(&self) -> bool {
-        false
-    }
     pub fn selected_view_range(&self) -> (usize, usize) {
         (0, 0)
     }
