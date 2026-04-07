@@ -110,14 +110,14 @@
   "hotPaths": [
     {
       "path": "crates/git/src/lib.rs",
-      "accessCount": 89,
-      "lastAccessed": 1775577649888,
+      "accessCount": 90,
+      "lastAccessed": 1775578970574,
       "type": "directory"
     },
     {
       "path": "crates/core/src/state.rs",
-      "accessCount": 33,
-      "lastAccessed": 1775577649272,
+      "accessCount": 35,
+      "lastAccessed": 1775578901286,
       "type": "file"
     },
     {
@@ -140,8 +140,8 @@
     },
     {
       "path": "crates/core/src",
-      "accessCount": 15,
-      "lastAccessed": 1775577200059,
+      "accessCount": 17,
+      "lastAccessed": 1775578886724,
       "type": "directory"
     },
     {

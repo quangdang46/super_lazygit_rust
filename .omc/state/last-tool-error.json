@@ -1,7 +1,7 @@
 {
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cargo check -p super-lazygit-git 2>&1\",\"timeout\":120000,\"description\":\"Check git crate compiles\"}",
-  "error": "Exit code 101\nwarning: /home/quangdang/projects/tools/super_lazygit_rust/crates/app/Cargo.toml: file `/home/quangdang/projects/tools/super_lazygit_rust/crates/app/src/main.rs` found to be present in multiple build targets:\n  * `bin` target `slg`\n  * `bin` target `super-lazygit`\n    Checking super-lazygit-git v0.1.0 (/home/quangdang/projects/tools/super_lazygit_rust/crates/git)\nerror[E0432]: unresolved import `parking_lot`\n --> crates/git/src/main_branches.rs:8:5\n  |\n8 | use parking_lot::Mutex;\n ...",
-  "timestamp": "2026-04-07T16:00:56.414Z",
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/home/quangdang/projects/tools/super_lazygit_rust/crates/git/src/lib.rs\"}",
+  "error": "File content (537.7KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "timestamp": "2026-04-07T16:22:46.641Z",
   "retry_count": 1
 }
