@@ -1,10 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/prompt_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct PromptController {
     common: ControllerCommon,
 }
 
-pub struct ControllerCommon;
 pub struct ViewMouseBinding;
 pub struct Binding;
 pub struct KeybindingsOpts;

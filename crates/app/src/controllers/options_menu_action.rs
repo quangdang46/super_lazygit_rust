@@ -1,10 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/options_menu_action.go
+use crate::controllers::ControllerCommon;
 
 pub struct OptionsMenuAction {
     common: ControllerCommon,
 }
 
-pub struct ControllerCommon;
 pub struct MenuItem;
 pub struct MenuSection {
     pub title: String,

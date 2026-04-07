@@ -1,10 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/patch_building_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct PatchBuildingController {
     common: ControllerCommon,
 }
 
-pub struct ControllerCommon;
 pub struct ViewMouseBinding;
 pub struct Binding;
 pub struct KeybindingsOpts;

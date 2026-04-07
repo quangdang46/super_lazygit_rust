@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/filter_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct FilterControllerFactory {
     context: ControllerCommon,
@@ -37,20 +38,6 @@ impl FilterController {
 
     pub fn open_filter_prompt(&self) -> Result<(), String> {
         Ok(())
-    }
-}
-
-pub struct ControllerCommon;
-
-impl Clone for ControllerCommon {
-    fn clone(&self) -> Self {
-        ControllerCommon
-    }
-}
-
-impl Default for ControllerCommon {
-    fn default() -> Self {
-        ControllerCommon
     }
 }
 

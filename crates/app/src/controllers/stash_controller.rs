@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/stash_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct StashController {
     common: ControllerCommon,
@@ -82,7 +83,6 @@ impl<T> ListControllerTrait<T> {
 }
 
 pub struct StashContext;
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

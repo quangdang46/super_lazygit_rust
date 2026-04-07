@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/sync_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SyncController {
     common: ControllerCommon,
@@ -78,7 +79,6 @@ impl SyncController {
 }
 
 pub struct Branch;
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

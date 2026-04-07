@@ -1,10 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/reflog_commits_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct ReflogCommitsController {
     common: ControllerCommon,
 }
 
-pub struct ControllerCommon;
 pub struct ListControllerTrait;
 
 impl ReflogCommitsController {

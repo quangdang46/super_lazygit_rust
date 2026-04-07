@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::RwLock;
 
 pub struct ThreadSafeMap<K: Eq + Hash, V> {
     inner: RwLock<HashMap<K, V>>,

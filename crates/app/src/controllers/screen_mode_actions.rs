@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/screen_mode_actions.go
+use crate::controllers::ControllerCommon;
 
 pub struct ScreenModeActions {
     common: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 pub enum ScreenMode {
     Normal,

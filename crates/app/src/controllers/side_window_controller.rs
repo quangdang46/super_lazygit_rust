@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/side_window_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SideWindowControllerFactory {
     common: ControllerCommon,
@@ -9,7 +10,6 @@ pub struct SideWindowController {
     context: Context,
 }
 
-pub struct ControllerCommon;
 pub struct Context;
 
 impl SideWindowControllerFactory {

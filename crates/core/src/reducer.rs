@@ -18090,8 +18090,10 @@ mod tests {
     #[test]
     fn open_checkout_branch_prompt_populates_branch_suggestions() {
         let repo_id = RepoId::new("repo-1");
-        let mut state = AppState::default();
-        state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
+        let mut state = AppState {
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
         let repo_mode = state.repo_mode.as_mut().expect("repo mode");
         repo_mode.detail = Some(RepoDetail {
             branches: vec![crate::state::BranchItem {
@@ -18122,8 +18124,10 @@ mod tests {
     #[test]
     fn append_prompt_input_refreshes_checkout_suggestions() {
         let repo_id = RepoId::new("repo-1");
-        let mut state = AppState::default();
-        state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
+        let mut state = AppState {
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
         let repo_mode = state.repo_mode.as_mut().expect("repo mode");
         repo_mode.detail = Some(RepoDetail {
             branches: vec![crate::state::BranchItem {
@@ -18156,8 +18160,10 @@ mod tests {
     #[test]
     fn submit_prompt_input_prefers_selected_checkout_suggestion() {
         let repo_id = RepoId::new("repo-1");
-        let mut state = AppState::default();
-        state.repo_mode = Some(RepoModeState::new(repo_id.clone()));
+        let mut state = AppState {
+            repo_mode: Some(RepoModeState::new(repo_id.clone())),
+            ..Default::default()
+        };
         let repo_mode = state.repo_mode.as_mut().expect("repo mode");
         repo_mode.detail = Some(RepoDetail {
             branches: vec![crate::state::BranchItem {

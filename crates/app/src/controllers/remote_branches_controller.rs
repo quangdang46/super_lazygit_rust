@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/remote_branches_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct RemoteBranchesController {
     common: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl RemoteBranchesController {
     pub fn new(common: ControllerCommon) -> Self {

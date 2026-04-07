@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/snake_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SnakeController {
     common: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 pub enum Direction {
     Up,

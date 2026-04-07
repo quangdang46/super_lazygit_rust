@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/switch_to_focused_main_view_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SwitchToFocusedMainViewController {
     common: ControllerCommon,
@@ -39,7 +40,6 @@ impl SwitchToFocusedMainViewController {
     }
 }
 
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/staging_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct StagingController {
     common: ControllerCommon,
@@ -141,7 +142,6 @@ impl StagingController {
     }
 }
 
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct OnFocusOpts;
 pub struct OnFocusLostOpts;

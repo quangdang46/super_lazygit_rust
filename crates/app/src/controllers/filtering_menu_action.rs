@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/filtering_menu_action.go
+use crate::controllers::ControllerCommon;
 
 pub struct FilteringMenuAction {
     context: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl FilteringMenuAction {
     pub fn new(context: ControllerCommon) -> Self {
@@ -31,7 +30,7 @@ impl FilteringMenuAction {
 impl FilteringMenuAction {
     pub fn new() -> Self {
         Self {
-            context: ControllerCommon,
+            context: ControllerCommon::default(),
         }
     }
 }

@@ -128,14 +128,56 @@
     },
     {
       "path": "crates/core/src/state.rs",
-      "accessCount": 15,
-      "lastAccessed": 1775481442315,
+      "accessCount": 16,
+      "lastAccessed": 1775516571352,
       "type": "file"
     },
     {
+      "path": "crates/core/src/reducer.rs",
+      "accessCount": 14,
+      "lastAccessed": 1775516624632,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/controllers/staging_controller.rs",
+      "accessCount": 9,
+      "lastAccessed": 1775515713995,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/utils/utils.rs",
+      "accessCount": 7,
+      "lastAccessed": 1775516952875,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/controllers/mod.rs",
+      "accessCount": 6,
+      "lastAccessed": 1775516003739,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/view_selection_controller.rs",
+      "accessCount": 6,
+      "lastAccessed": 1775516083870,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/utils/yaml_utils.rs",
+      "accessCount": 6,
+      "lastAccessed": 1775516416603,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/controllers/diffing_menu_action.rs",
+      "accessCount": 5,
+      "lastAccessed": 1775516172042,
+      "type": "directory"
+    },
+    {
       "path": "crates/core/src",
-      "accessCount": 4,
-      "lastAccessed": 1775481442375,
+      "accessCount": 5,
+      "lastAccessed": 1775516564807,
       "type": "directory"
     },
     {
@@ -145,15 +187,33 @@
       "type": "file"
     },
     {
-      "path": "crates/tui/src",
-      "accessCount": 3,
-      "lastAccessed": 1775455519551,
+      "path": "",
+      "accessCount": 4,
+      "lastAccessed": 1775515332213,
       "type": "directory"
     },
     {
-      "path": "crates/core/src/reducer.rs",
+      "path": "crates/app/src/controllers",
+      "accessCount": 4,
+      "lastAccessed": 1775515883894,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/controllers/filter_controller.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775516101742,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/controllers/common.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775516145457,
+      "type": "file"
+    },
+    {
+      "path": "crates/tui/src",
       "accessCount": 3,
-      "lastAccessed": 1775456367303,
+      "lastAccessed": 1775455519551,
       "type": "directory"
     },
     {
@@ -163,9 +223,15 @@
       "type": "directory"
     },
     {
-      "path": "",
+      "path": "AGENTS.md",
       "accessCount": 3,
-      "lastAccessed": 1775481244063,
+      "lastAccessed": 1775515352362,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/utils/thread_safe_map.rs",
+      "accessCount": 3,
+      "lastAccessed": 1775516388826,
       "type": "directory"
     },
     {
@@ -178,12 +244,6 @@
       "path": "README.md",
       "accessCount": 2,
       "lastAccessed": 1775481214345,
-      "type": "file"
-    },
-    {
-      "path": "AGENTS.md",
-      "accessCount": 2,
-      "lastAccessed": 1775481215212,
       "type": "file"
     },
     {
@@ -202,6 +262,30 @@
       "path": "crates/tui/src/presentation/branches.rs",
       "accessCount": 2,
       "lastAccessed": 1775482121595,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/bisect_controller.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775515839491,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/commit_message_controller.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775515839716,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/commit_description_controller.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775515839843,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/files_controller.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775516298650,
       "type": "file"
     },
     {
@@ -274,6 +358,54 @@
       "path": "crates/tui/src/presentation/files.rs",
       "accessCount": 1,
       "lastAccessed": 1775481861199,
+      "type": "file"
+    },
+    {
+      "path": "checklist-port.txt",
+      "accessCount": 1,
+      "lastAccessed": 1775515343913,
+      "type": "file"
+    },
+    {
+      "path": "PLAN.md",
+      "accessCount": 1,
+      "lastAccessed": 1775515345595,
+      "type": "file"
+    },
+    {
+      "path": "docs/PARITY_MATRIX.md",
+      "accessCount": 1,
+      "lastAccessed": 1775515352310,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src",
+      "accessCount": 1,
+      "lastAccessed": 1775515407355,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/controllers/helpers/mod.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775515420593,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/status_controller.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775515622417,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/commits_files_controller.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775515839395,
+      "type": "file"
+    },
+    {
+      "path": "crates/app/src/controllers/custom_patch_options_menu_action.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775515839619,
       "type": "file"
     }
   ],

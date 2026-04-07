@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/quit_actions.go
+use crate::controllers::ControllerCommon;
 
 pub struct QuitActions {
     common: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl QuitActions {
     pub fn new(common: ControllerCommon) -> Self {

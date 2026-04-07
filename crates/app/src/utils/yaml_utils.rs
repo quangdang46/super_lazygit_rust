@@ -95,7 +95,6 @@ pub fn yaml_marshal(node: &Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_yaml::Mapping;
 
     #[test]
     fn test_lookup_key() {

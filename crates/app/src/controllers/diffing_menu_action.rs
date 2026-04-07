@@ -1,76 +1,15 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/diffing_menu_action.go
 
+// Uses a local ControllerCommon to avoid ambiguity with the canonical type from common.rs.
+// This file is a partial stub implementation.
+
 pub struct DiffingMenuAction {
     context: ControllerCommon,
 }
 
+// Local stub ControllerCommon for this controller's partial implementation
 pub struct ControllerCommon {
     helpers: HelperCommon,
-}
-
-pub struct HelperCommon {
-    diff_helper: DiffHelper,
-    tr: TrStrings,
-}
-
-pub struct DiffHelper;
-
-impl DiffHelper {
-    pub fn current_diff_terminals(&self) -> Vec<String> {
-        Vec::new()
-    }
-}
-
-impl DiffingMenuAction {
-    pub fn new(context: ControllerCommon) -> Self {
-        Self { context }
-    }
-
-    pub fn call(&self) -> Result<(), String> {
-        let names = self.context.helpers.diff_helper.current_diff_terminals();
-        let mut menu_items: Vec<MenuItem> = Vec::new();
-
-        for name in &names {
-            let label = format!("{} {}", self.context.tr.diff, name);
-            let menu_item = MenuItem {
-                label,
-                on_press: Box::new(|| Ok(())),
-            };
-            menu_items.push(menu_item);
-        }
-
-        let enter_ref_menu_item = MenuItem {
-            label: self.context.tr.enter_ref_to_diff.clone(),
-            on_press: Box::new(|| Ok(())),
-        };
-        menu_items.push(enter_ref_menu_item);
-
-        if self.is_diffing_active() {
-            let swap_menu_item = MenuItem {
-                label: self.context.tr.swap_diff.clone(),
-                on_press: Box::new(|| Ok(())),
-            };
-            menu_items.push(swap_menu_item);
-
-            let exit_menu_item = MenuItem {
-                label: self.context.tr.exit_diff_mode.clone(),
-                on_press: Box::new(|| Ok(())),
-            };
-            menu_items.push(exit_menu_item);
-        }
-
-        let options = CreateMenuOptions {
-            title: self.context.tr.diffing_menu_title.clone(),
-            items: menu_items,
-            ..Default::default()
-        };
-
-        self.context.menu(options)
-    }
-
-    fn is_diffing_active(&self) -> bool {
-        false
-    }
 }
 
 pub struct TrStrings {
@@ -147,6 +86,19 @@ impl ControllerCommon {
     }
 }
 
+pub struct HelperCommon {
+    pub diff_helper: DiffHelper,
+    pub tr: TrStrings,
+}
+
+pub struct DiffHelper;
+
+impl DiffHelper {
+    pub fn current_diff_terminals(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
 impl HelperCommon {
     pub fn new() -> Self {
         Self {
@@ -162,12 +114,76 @@ impl Default for HelperCommon {
     }
 }
 
+impl ControllerCommon {
+    pub fn new() -> Self {
+        Self {
+            helpers: HelperCommon::new(),
+        }
+    }
+}
+
+impl Default for ControllerCommon {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DiffingMenuAction {
+    pub fn new(context: ControllerCommon) -> Self {
+        Self { context }
+    }
+
+    pub fn call(&self) -> Result<(), String> {
+        let names = self.context.helpers.diff_helper.current_diff_terminals();
+        let mut menu_items: Vec<MenuItem> = Vec::new();
+
+        for name in &names {
+            let label = format!("{} {}", self.context.helpers.tr.diff, name);
+            let menu_item = MenuItem {
+                label,
+                on_press: Box::new(|| Ok(())),
+            };
+            menu_items.push(menu_item);
+        }
+
+        let enter_ref_menu_item = MenuItem {
+            label: self.context.helpers.tr.enter_ref_to_diff.clone(),
+            on_press: Box::new(|| Ok(())),
+        };
+        menu_items.push(enter_ref_menu_item);
+
+        if self.is_diffing_active() {
+            let swap_menu_item = MenuItem {
+                label: self.context.helpers.tr.swap_diff.clone(),
+                on_press: Box::new(|| Ok(())),
+            };
+            menu_items.push(swap_menu_item);
+
+            let exit_menu_item = MenuItem {
+                label: self.context.helpers.tr.exit_diff_mode.clone(),
+                on_press: Box::new(|| Ok(())),
+            };
+            menu_items.push(exit_menu_item);
+        }
+
+        let options = CreateMenuOptions {
+            title: self.context.helpers.tr.diffing_menu_title.clone(),
+            items: menu_items,
+            ..Default::default()
+        };
+
+        self.context.menu(options)
+    }
+
+    fn is_diffing_active(&self) -> bool {
+        false
+    }
+}
+
 impl DiffingMenuAction {
     pub fn new() -> Self {
         Self {
-            context: ControllerCommon {
-                helpers: HelperCommon::new(),
-            },
+            context: ControllerCommon::new(),
         }
     }
 }

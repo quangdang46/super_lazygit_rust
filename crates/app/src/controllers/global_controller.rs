@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/global_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct GlobalController {
     context: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl GlobalController {
     pub fn new(context: ControllerCommon) -> Self {
@@ -108,7 +107,7 @@ pub struct DisabledReason {
 impl GlobalController {
     pub fn new() -> Self {
         Self {
-            context: ControllerCommon,
+            context: ControllerCommon::default(),
         }
     }
 }

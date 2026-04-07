@@ -1,11 +1,11 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/local_commits_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct LocalCommitsController {
     common: ControllerCommon,
     pull_files: PullFilesFn,
 }
 
-pub struct ControllerCommon;
 pub struct ListControllerTrait;
 
 pub struct Commit;

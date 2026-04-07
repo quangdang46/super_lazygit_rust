@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/files_controller.go
+use crate::controllers::ControllerCommon;
 
 use std::collections::HashMap;
 
@@ -6,8 +7,6 @@ pub struct FilesController {
     context: ControllerCommon,
     list_trait: ListControllerTrait,
 }
-
-pub struct ControllerCommon;
 
 pub struct ListControllerTrait;
 
@@ -295,7 +294,7 @@ impl Default for TrStrings {
 impl FilesController {
     pub fn new() -> Self {
         Self {
-            context: ControllerCommon,
+            context: ControllerCommon::default(),
             list_trait: ListControllerTrait,
         }
     }

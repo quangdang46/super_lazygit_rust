@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/submodules_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SubmodulesController {
     common: ControllerCommon,
@@ -77,7 +78,6 @@ impl<T> ListControllerTrait<T> {
 }
 
 pub struct SubmodulesContext;
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

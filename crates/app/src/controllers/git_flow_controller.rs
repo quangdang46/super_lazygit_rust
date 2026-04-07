@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/git_flow_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct GitFlowController {
     context: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl GitFlowController {
     pub fn new(context: ControllerCommon) -> Self {
@@ -37,7 +36,7 @@ pub struct Branch {
 impl GitFlowController {
     pub fn new() -> Self {
         Self {
-            context: ControllerCommon,
+            context: ControllerCommon::default(),
         }
     }
 }

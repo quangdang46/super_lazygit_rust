@@ -1,10 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/merge_conflicts_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct MergeConflictsController {
     common: ControllerCommon,
 }
 
-pub struct ControllerCommon;
 pub struct MergeConflictsContext;
 pub struct ViewMouseBinding {
     pub view_name: String,

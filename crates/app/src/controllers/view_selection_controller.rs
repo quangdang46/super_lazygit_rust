@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/view_selection_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct ViewSelectionControllerFactory {
     common: ControllerCommon,
@@ -63,14 +64,6 @@ impl ViewSelectionController {
 
     pub fn handle_goto_bottom(&self) -> Result<(), String> {
         Ok(())
-    }
-}
-
-pub struct ControllerCommon;
-
-impl Clone for ControllerCommon {
-    fn clone(&self) -> Self {
-        ControllerCommon
     }
 }
 

@@ -400,7 +400,7 @@ impl RefresherConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PagingConfig {
     #[serde(alias = "pager", skip_serializing_if = "String::is_empty")]
@@ -414,17 +414,6 @@ pub struct PagingConfig {
     pub external_diff_command: String,
     #[serde(alias = "useExternalDiffGitConfig")]
     pub use_external_diff_git_config: bool,
-}
-
-impl Default for PagingConfig {
-    fn default() -> Self {
-        Self {
-            pager: String::new(),
-            color_arg: String::new(),
-            external_diff_command: String::new(),
-            use_external_diff_git_config: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -697,7 +686,7 @@ pub struct CustomCommandAfterHook {
     pub check_for_conflicts: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct CustomCommand {
     pub key: String,
@@ -715,24 +704,7 @@ pub struct CustomCommand {
     pub after: Option<CustomCommandAfterHook>,
 }
 
-impl Default for CustomCommand {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            command_menu: Vec::new(),
-            context: String::new(),
-            command: String::new(),
-            prompts: Vec::new(),
-            loading_text: String::new(),
-            description: String::new(),
-            output: String::new(),
-            output_title: String::new(),
-            after: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct CustomCommandPrompt {
     #[serde(alias = "type")]
@@ -752,24 +724,6 @@ pub struct CustomCommandPrompt {
     pub label_format: String,
 }
 
-impl Default for CustomCommandPrompt {
-    fn default() -> Self {
-        Self {
-            kind: String::new(),
-            key: String::new(),
-            title: String::new(),
-            initial_value: String::new(),
-            suggestions: CustomCommandSuggestions::default(),
-            body: String::new(),
-            options: Vec::new(),
-            command: String::new(),
-            filter: String::new(),
-            value_format: String::new(),
-            label_format: String::new(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CustomCommandSuggestions {
@@ -786,17 +740,12 @@ pub struct CustomCommandMenuOption {
     pub key: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollOffBehavior {
+    #[default]
     Margin,
     Jump,
-}
-
-impl Default for ScrollOffBehavior {
-    fn default() -> Self {
-        Self::Margin
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

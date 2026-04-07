@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/status_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct StatusController {
     common: ControllerCommon,
@@ -57,7 +58,6 @@ impl StatusController {
     }
 }
 
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct ViewMouseBinding;
 pub struct Binding {

@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/suggestions_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SuggestionsController {
     common: ControllerCommon,
@@ -49,7 +50,6 @@ impl<T> ListControllerTrait<T> {
 }
 
 pub struct SuggestionsContext;
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct ViewMouseBinding;
 pub struct OnFocusLostOpts;

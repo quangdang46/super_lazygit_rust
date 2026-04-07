@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/shell_command_action.go
+use crate::controllers::ControllerCommon;
 
 pub struct ShellCommandAction {
     common: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl ShellCommandAction {
     pub fn new(common: ControllerCommon) -> Self {

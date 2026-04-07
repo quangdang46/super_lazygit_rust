@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/switch_to_sub_commits_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SwitchToSubCommitsController {
     common: ControllerCommon,
@@ -47,7 +48,6 @@ impl<T> ListControllerTrait<T> {
     }
 }
 
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

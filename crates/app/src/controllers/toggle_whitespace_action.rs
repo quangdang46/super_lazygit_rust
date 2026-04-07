@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/toggle_whitespace_action.go
+use crate::controllers::ControllerCommon;
 
 pub struct ToggleWhitespaceAction {
     common: ControllerCommon,
@@ -13,5 +14,3 @@ impl ToggleWhitespaceAction {
         Ok(())
     }
 }
-
-pub struct ControllerCommon;

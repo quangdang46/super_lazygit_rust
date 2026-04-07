@@ -1,11 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/jump_to_side_window_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct JumpToSideWindowController {
     common: ControllerCommon,
     next_tab_func: fn() -> Result<(), String>,
 }
-
-pub struct ControllerCommon;
 
 impl JumpToSideWindowController {
     pub fn new(common: ControllerCommon, next_tab_func: fn() -> Result<(), String>) -> Self {

@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/rename_similarity_threshold_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct RenameSimilarityThresholdController {
     common: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl RenameSimilarityThresholdController {
     pub fn new(common: ControllerCommon) -> Self {

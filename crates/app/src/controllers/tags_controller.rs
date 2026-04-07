@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/tags_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct TagsController {
     common: ControllerCommon,
@@ -77,7 +78,6 @@ impl<T> ListControllerTrait<T> {
 }
 
 pub struct TagsContext;
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

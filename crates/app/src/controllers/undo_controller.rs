@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/undo_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct UndoController {
     common: ControllerCommon,
@@ -59,7 +60,6 @@ pub struct HardResetOptions {
     pub env_vars: Vec<String>,
 }
 
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

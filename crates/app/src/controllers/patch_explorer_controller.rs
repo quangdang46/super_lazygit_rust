@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/patch_explorer_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct PatchExplorerControllerFactory {
     common: ControllerCommon,
@@ -9,7 +10,6 @@ pub struct PatchExplorerController {
     context: PatchExplorerContext,
 }
 
-pub struct ControllerCommon;
 pub struct PatchExplorerContext;
 pub struct ViewMouseBinding;
 pub struct Binding;

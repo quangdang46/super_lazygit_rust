@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/switch_to_diff_files_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SwitchToDiffFilesController {
     common: ControllerCommon,
@@ -40,7 +41,6 @@ impl SwitchToDiffFilesController {
     }
 }
 
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

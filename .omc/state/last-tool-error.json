@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/home/quangdang/projects/tools/super_lazygit_rust/.beads/issues.jsonl\"}",
-  "error": "File content (3.2MB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
-  "timestamp": "2026-04-06T13:13:34.338Z",
+  "tool_name": "mcp__linehash__linehash_delete",
+  "tool_input_preview": "{\"anchor\":\"725-743\",\"file\":\"/home/quangdang/projects/tools/super_lazygit_rust/crates/config/src/lib.rs\"}",
+  "error": "MCP error -32001: invalid anchor '725-743'",
+  "timestamp": "2026-04-06T23:18:32.951Z",
   "retry_count": 1
 }

@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/main_view_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct MainViewController {
     common: ControllerCommon,
@@ -6,7 +7,6 @@ pub struct MainViewController {
     other_context: MainContext,
 }
 
-pub struct ControllerCommon;
 pub struct MainContext;
 pub struct ViewMouseBindingOpts {
     pub y: i32,

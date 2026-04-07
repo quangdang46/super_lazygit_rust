@@ -11,6 +11,7 @@ pub mod filter_controller;
 pub mod filtering_menu_action;
 pub mod git_flow_controller;
 pub mod global_controller;
+pub mod helpers;
 pub mod jump_to_side_window_controller;
 pub mod local_commits_controller;
 pub mod main_view_controller;
@@ -48,6 +49,7 @@ pub mod workspace_reset_controller;
 pub mod worktree_options_controller;
 pub mod worktrees_controller;
 
+pub use common::ControllerCommon;
 pub use filtering_menu_action::*;
 pub use git_flow_controller::*;
 pub use global_controller::*;

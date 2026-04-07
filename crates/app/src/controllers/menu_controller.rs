@@ -1,10 +1,10 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/menu_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct MenuController {
     common: ControllerCommon,
 }
 
-pub struct ControllerCommon;
 pub struct ListControllerTrait;
 pub struct MenuItem;
 pub struct MenuContext;

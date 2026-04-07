@@ -1,5 +1,4 @@
 use regex::Regex;
-use std::collections::HashMap;
 
 pub fn sort_range(x: i32, y: i32) -> (i32, i32) {
     if x < y {
@@ -53,6 +52,7 @@ pub fn must_convert_to_int(s: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_sort_range() {

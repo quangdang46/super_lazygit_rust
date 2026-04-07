@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/workspace_reset_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct FilesController {
     common: ControllerCommon,
@@ -17,5 +18,3 @@ impl FilesController {
 fn get_explode_image(_width: i32, _height: i32, _frame: i32, _max: i32) -> String {
     String::new()
 }
-
-pub struct ControllerCommon;

@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/search_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SearchControllerFactory {
     common: ControllerCommon,
@@ -9,7 +10,6 @@ pub struct SearchController {
     context: SearchableContext,
 }
 
-pub struct ControllerCommon;
 pub struct SearchableContext;
 
 impl SearchControllerFactory {

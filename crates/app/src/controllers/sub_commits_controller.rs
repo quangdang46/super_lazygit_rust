@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/sub_commits_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SubCommitsController {
     common: ControllerCommon,
@@ -45,5 +46,4 @@ impl<T> ListControllerTrait<T> {
 }
 
 pub struct SubCommitsContext;
-pub struct ControllerCommon;
 pub struct OnFocusOpts;

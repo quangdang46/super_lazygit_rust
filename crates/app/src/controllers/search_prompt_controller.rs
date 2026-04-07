@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/search_prompt_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct SearchPromptController {
     common: ControllerCommon,
 }
-
-pub struct ControllerCommon;
 
 impl SearchPromptController {
     pub fn new(common: ControllerCommon) -> Self {

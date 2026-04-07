@@ -1,4 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/worktrees_controller.go
+use crate::controllers::ControllerCommon;
 
 pub struct WorktreesController {
     common: ControllerCommon,
@@ -69,7 +70,6 @@ impl<T> ListControllerTrait<T> {
 }
 
 pub struct WorktreesContext;
-pub struct ControllerCommon;
 pub struct KeybindingsOpts;
 pub struct Binding {
     pub key: char,

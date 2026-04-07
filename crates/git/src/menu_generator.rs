@@ -1,6 +1,8 @@
 use regex::Regex;
 use std::collections::HashMap;
 
+type LineParser = Box<dyn Fn(&str) -> Result<CommandMenuItem, String>>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandMenuItem {
     pub label: String,
@@ -33,7 +35,7 @@ impl MenuGenerator {
         filter: &str,
         value_format: &str,
         label_format: &str,
-    ) -> Result<Box<dyn Fn(&str) -> Result<CommandMenuItem, String>>, String> {
+    ) -> Result<LineParser, String> {
         if filter.is_empty() && value_format.is_empty() && label_format.is_empty() {
             return Ok(Box::new(|line: &str| {
                 Ok(CommandMenuItem {
