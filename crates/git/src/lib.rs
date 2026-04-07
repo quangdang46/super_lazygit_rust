@@ -28,7 +28,17 @@ use super_lazygit_core::{
 use thiserror::Error;
 
 mod graph;
+pub mod main_branches;
 pub mod menu_generator;
+pub mod remote_loader;
+pub mod worktree_loader;
+pub mod branch_loader;
+pub mod file_loader;
+pub mod commit_file_loader;
+pub mod tag_loader;
+pub mod commit_loader;
+pub mod stash_loader;
+pub mod reflog_commit_loader;
 
 use crate::graph::{render_commit_graph, GraphCommit};
 
@@ -3586,7 +3596,7 @@ where
     Ok(())
 }
 
-fn git_stdout<I, S>(repo_path: &Path, args: I) -> GitResult<String>
+pub(crate) fn git_stdout<I, S>(repo_path: &Path, args: I) -> GitResult<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -3598,7 +3608,7 @@ where
     stdout_string(output)
 }
 
-fn git_stdout_allow_failure<I, S>(repo_path: &Path, args: I) -> GitResult<String>
+pub(crate) fn git_stdout_allow_failure<I, S>(repo_path: &Path, args: I) -> GitResult<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,

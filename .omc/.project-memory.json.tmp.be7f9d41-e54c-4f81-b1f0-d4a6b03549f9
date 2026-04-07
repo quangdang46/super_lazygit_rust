@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1775576163959,
+  "lastScanned": 1775570347841,
   "projectRoot": "/home/quangdang/projects/tools/super_lazygit_rust",
   "techStack": {
     "languages": [
@@ -48,14 +48,14 @@
       "path": "crates",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1775576163931,
+      "lastAccessed": 1775570347834,
       "keyFiles": []
     },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 4,
-      "lastAccessed": 1775576163934,
+      "lastAccessed": 1775570347837,
       "keyFiles": [
         "CONFIG.md",
         "KEYBINDINGS.md",
@@ -67,14 +67,14 @@
       "path": "references",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1775576163935,
+      "lastAccessed": 1775570347838,
       "keyFiles": []
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 1,
-      "lastAccessed": 1775576163936,
+      "lastAccessed": 1775570347839,
       "keyFiles": [
         "run_lazygit_parity_regression.sh"
       ]
@@ -83,7 +83,7 @@
       "path": "target",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1775576163938,
+      "lastAccessed": 1775570347839,
       "keyFiles": [
         "CACHEDIR.TAG"
       ]
@@ -92,7 +92,7 @@
       "path": "crates/app",
       "purpose": "Application code",
       "fileCount": 1,
-      "lastAccessed": 1775576163944,
+      "lastAccessed": 1775570347840,
       "keyFiles": [
         "Cargo.toml"
       ]
@@ -101,7 +101,7 @@
       "path": "crates/config",
       "purpose": "Configuration files",
       "fileCount": 1,
-      "lastAccessed": 1775576163944,
+      "lastAccessed": 1775570347840,
       "keyFiles": [
         "Cargo.toml"
       ]
@@ -109,15 +109,21 @@
   },
   "hotPaths": [
     {
+      "path": "checklist-port.txt",
+      "accessCount": 51,
+      "lastAccessed": 1775575137069,
+      "type": "file"
+    },
+    {
       "path": "crates/git/src/lib.rs",
-      "accessCount": 89,
-      "lastAccessed": 1775577649888,
+      "accessCount": 43,
+      "lastAccessed": 1775574275906,
       "type": "directory"
     },
     {
       "path": "crates/core/src/state.rs",
-      "accessCount": 33,
-      "lastAccessed": 1775577649272,
+      "accessCount": 22,
+      "lastAccessed": 1775572234740,
       "type": "file"
     },
     {
@@ -133,15 +139,9 @@
       "type": "file"
     },
     {
-      "path": "checklist-port.txt",
-      "accessCount": 17,
-      "lastAccessed": 1775575897703,
-      "type": "file"
-    },
-    {
-      "path": "crates/core/src",
+      "path": "crates/app/src",
       "accessCount": 15,
-      "lastAccessed": 1775577200059,
+      "lastAccessed": 1775575036597,
       "type": "directory"
     },
     {
@@ -152,8 +152,8 @@
     },
     {
       "path": "",
-      "accessCount": 10,
-      "lastAccessed": 1775576987249,
+      "accessCount": 14,
+      "lastAccessed": 1775574936049,
       "type": "directory"
     },
     {
@@ -163,16 +163,22 @@
       "type": "directory"
     },
     {
+      "path": "crates/app/src/controllers/mod.rs",
+      "accessCount": 9,
+      "lastAccessed": 1775574409528,
+      "type": "file"
+    },
+    {
       "path": "crates/app/src/utils/utils.rs",
       "accessCount": 7,
       "lastAccessed": 1775516952875,
       "type": "directory"
     },
     {
-      "path": "crates/app/src/controllers/mod.rs",
-      "accessCount": 6,
-      "lastAccessed": 1775516003739,
-      "type": "file"
+      "path": "crates/app/src/controllers",
+      "accessCount": 7,
+      "lastAccessed": 1775571890562,
+      "type": "directory"
     },
     {
       "path": "crates/app/src/controllers/view_selection_controller.rs",
@@ -193,9 +199,15 @@
       "type": "directory"
     },
     {
-      "path": "crates/core/src/lib.rs",
+      "path": "crates/core/src",
       "accessCount": 5,
-      "lastAccessed": 1775577303232,
+      "lastAccessed": 1775516564807,
+      "type": "directory"
+    },
+    {
+      "path": "crates/app/src/controllers/common.rs",
+      "accessCount": 5,
+      "lastAccessed": 1775571890731,
       "type": "file"
     },
     {
@@ -205,33 +217,21 @@
       "type": "file"
     },
     {
-      "path": "crates/app/src/controllers",
-      "accessCount": 4,
-      "lastAccessed": 1775515883894,
-      "type": "directory"
-    },
-    {
       "path": "crates/app/src/controllers/filter_controller.rs",
       "accessCount": 4,
       "lastAccessed": 1775516101742,
       "type": "directory"
     },
     {
-      "path": "crates/app/src/controllers/common.rs",
-      "accessCount": 4,
-      "lastAccessed": 1775516145457,
-      "type": "file"
-    },
-    {
-      "path": "crates/core/src/effect.rs",
-      "accessCount": 4,
-      "lastAccessed": 1775576889008,
-      "type": "directory"
-    },
-    {
       "path": "crates/tui/src",
       "accessCount": 3,
       "lastAccessed": 1775455519551,
+      "type": "directory"
+    },
+    {
+      "path": "crates/core/src/effect.rs",
+      "accessCount": 3,
+      "lastAccessed": 1775456615276,
       "type": "directory"
     },
     {
@@ -248,8 +248,8 @@
     },
     {
       "path": "crates/app/src/runtime.rs",
-      "accessCount": 2,
-      "lastAccessed": 1775456479767,
+      "accessCount": 3,
+      "lastAccessed": 1775574170333,
       "type": "file"
     },
     {
@@ -262,6 +262,12 @@
       "path": "crates/tui/src/presentation/authors.rs",
       "accessCount": 2,
       "lastAccessed": 1775481271642,
+      "type": "file"
+    },
+    {
+      "path": "crates/core/src/lib.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775481459878,
       "type": "file"
     },
     {
@@ -295,18 +301,6 @@
       "type": "file"
     },
     {
-      "path": "crates/git/src/graph.rs",
-      "accessCount": 2,
-      "lastAccessed": 1775576830417,
-      "type": "file"
-    },
-    {
-      "path": "crates/core/Cargo.toml",
-      "accessCount": 2,
-      "lastAccessed": 1775576875374,
-      "type": "file"
-    },
-    {
       "path": "references/lazygit-master/pkg/gui/presentation/commits.go",
       "accessCount": 1,
       "lastAccessed": 1775455470025,
@@ -319,6 +313,12 @@
       "type": "directory"
     },
     {
+      "path": "crates/core/Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1775455530650,
+      "type": "file"
+    },
+    {
       "path": "crates/tui/Cargo.toml",
       "accessCount": 1,
       "lastAccessed": 1775455530730,
@@ -328,6 +328,12 @@
       "path": "references/lazygit-master/pkg/gui/presentation/authors/authors.go",
       "accessCount": 1,
       "lastAccessed": 1775455566777,
+      "type": "file"
+    },
+    {
+      "path": "crates/git/src/graph.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775455592075,
       "type": "file"
     },
     {
@@ -377,12 +383,6 @@
       "accessCount": 1,
       "lastAccessed": 1775515352310,
       "type": "file"
-    },
-    {
-      "path": "crates/app/src",
-      "accessCount": 1,
-      "lastAccessed": 1775515407355,
-      "type": "directory"
     },
     {
       "path": "crates/app/src/controllers/helpers/mod.rs",

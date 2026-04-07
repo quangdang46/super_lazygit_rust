@@ -69,15 +69,55 @@
         "cargo clippy passes for git crate"
       ],
       "notes": "Added LineParser type alias in menu_generator.rs"
+    },
+    {
+      "id": "US-007",
+      "title": "Port git loader files (branch_loader, commit_loader, file_loader, stash_loader, tag_loader, worktree_loader, reflog_commit_loader, remote_loader)",
+      "priority": "P0",
+      "passes": false,
+      "acceptanceCriteria": [
+        "Port references/lazygit-master/pkg/commands/git_commands/*_loader.go to Rust equivalents",
+        "Each loader has a corresponding function/struct in crates/git/src/",
+        "cargo check --all-targets compiles without E0432 errors for loader types"
+      ],
+      "notes": "9 loader files not yet ported - these provide data loading for branches, commits, files, stashes, tags, worktrees, reflog, remote"
+    },
+    {
+      "id": "US-008",
+      "title": "Port git model files (author, branch, commit_file, file, ref, remote_branch, stash_entry, submodule_config, tag, working_tree_state)",
+      "priority": "P0",
+      "passes": false,
+      "acceptanceCriteria": [
+        "Port references/lazygit-master/pkg/commands/models/*.go to Rust equivalents",
+        "Each model struct has a corresponding struct in crates/git/src/",
+        "cargo check --all-targets compiles without E0425 errors for model types"
+      ],
+      "notes": "11 model files not yet ported - these define data structures for git entities"
+    },
+    {
+      "id": "US-009",
+      "title": "Port oscommands layer (cmd_obj, cmd_obj_builder, cmd_obj_runner, os, fake_cmd_obj_runner)",
+      "priority": "P1",
+      "passes": false,
+      "acceptanceCriteria": [
+        "Port references/lazygit-master/pkg/commands/oscommands/*.go to Rust equivalents",
+        "OS command execution abstraction exists in crates/app/src/",
+        "cargo check compiles without errors"
+      ],
+      "notes": "oscommands layer handles platform-specific command execution - ~9 files"
+    },
+    {
+      "id": "US-010",
+      "title": "Port remaining GUI context/controller files",
+      "priority": "P2",
+      "passes": false,
+      "acceptanceCriteria": [
+        "Port remaining context and controller Go files to Rust equivalents",
+        "Controllers live in crates/app/src/controllers/",
+        "cargo check compiles without E0432 errors"
+      ],
+      "notes": "~82 GUI context/controller files - many may be consolidated or architecturally different"
     }
   ],
-  "blocking_issues": [
-    {
-      "id": "BK-001",
-      "title": "Remaining compilation errors in app crate",
-      "description": "40+ E0425 errors for missing types (CommitFileNode, CollapsedPaths, BisectHelper, etc.)",
-      "files": ["crates/app/src/controllers/*.rs"],
-      "notes": "These are pre-existing issues from incomplete port - not introduced by recent changes"
-    }
-  ]
+  "blocking_issues": []
 }
