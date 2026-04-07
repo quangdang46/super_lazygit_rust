@@ -45,6 +45,8 @@ pub use cherry_pick::CHERRY_PICK_MERGE;
 pub use cherry_pick::CHERRY_PICK_RANGE;
 pub use commit::COMMIT;
 pub use config::CUSTOM_COMMANDS_IN_PER_REPO_CONFIG;
+pub use config::NEGATIVE_REFSPEC;
+pub use config::REMOTE_NAMED_STAR;
 pub use conflicts::FILTER;
 pub use conflicts::MERGE_FILE_BOTH;
 pub use conflicts::MERGE_FILE_CURRENT;
