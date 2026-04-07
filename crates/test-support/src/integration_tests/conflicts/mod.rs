@@ -1,5 +1,21 @@
+pub mod filter;
+pub mod merge_file_both;
 pub mod merge_file_current;
+pub mod merge_file_incoming;
+pub mod resolve_externally;
+pub mod resolve_multiple_files;
+pub mod resolve_no_auto_stage;
+pub mod resolve_non_textual_conflicts;
+pub mod resolve_without_trailing_lf;
 pub mod undo_choose_hunk;
 
+pub use filter::FILTER;
+pub use merge_file_both::MERGE_FILE_BOTH;
 pub use merge_file_current::MERGE_FILE_CURRENT;
+pub use merge_file_incoming::MERGE_FILE_INCOMING;
+pub use resolve_externally::RESOLVE_EXTERNALLY;
+pub use resolve_multiple_files::RESOLVE_MULTIPLE_FILES;
+pub use resolve_no_auto_stage::RESOLVE_NO_AUTO_STAGE;
+pub use resolve_non_textual_conflicts::RESOLVE_NON_TEXTUAL_CONFLICTS;
+pub use resolve_without_trailing_lf::RESOLVE_WITHOUT_TRAILING_LF;
 pub use undo_choose_hunk::UNDO_CHOOSE_HUNK;
