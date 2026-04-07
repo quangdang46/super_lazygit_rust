@@ -9,6 +9,9 @@ pub mod discard_unstaged_file_changes;
 pub mod discard_unstaged_range_select;
 pub mod discard_various_changes;
 pub mod gitignore;
+pub mod rename_similarity_threshold_change;
+pub mod renamed_files;
+pub mod stage_range_select;
 
 pub use click_arrow_to_collapse::CLICK_ARROW_TO_COLLAPSE;
 pub use collapse_expand::COLLAPSE_EXPAND;
@@ -21,3 +24,6 @@ pub use discard_unstaged_file_changes::DISCARD_UNSTAGED_FILE_CHANGES;
 pub use discard_unstaged_range_select::DISCARD_UNSTAGED_RANGE_SELECT;
 pub use discard_various_changes::DISCARD_VARIOUS_CHANGES;
 pub use gitignore::GITIGNORE;
+pub use rename_similarity_threshold_change::RENAME_SIMILARITY_THRESHOLD_CHANGE;
+pub use renamed_files::RENAMED_FILES;
+pub use stage_range_select::STAGE_RANGE_SELECT;
