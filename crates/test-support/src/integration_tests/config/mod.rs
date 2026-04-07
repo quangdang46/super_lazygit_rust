@@ -1,0 +1,3 @@
+pub mod custom_commands_in_per_repo_config;
+
+pub use custom_commands_in_per_repo_config::CUSTOM_COMMANDS_IN_PER_REPO_CONFIG;
