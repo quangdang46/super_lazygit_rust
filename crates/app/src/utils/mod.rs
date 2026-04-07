@@ -1,8 +1,12 @@
 pub mod color;
+pub mod date;
 pub mod errors;
 pub mod formatting;
+pub mod io;
+pub mod keynames;
 pub mod once_writer;
 pub mod rebase_todo;
+pub mod regexp;
 pub mod search;
 pub mod slice;
 pub mod string_pool;

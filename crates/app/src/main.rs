@@ -20,6 +20,7 @@ mod pty;
 mod recent_repos_panel;
 mod runtime;
 mod services;
+pub mod snake;
 pub mod style;
 mod tasks_adapter;
 mod terminal;
