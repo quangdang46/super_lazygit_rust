@@ -104,7 +104,7 @@
         "OS command execution abstraction exists in crates/app/src/",
         "cargo check compiles without errors"
       ],
-      "notes": "oscommands layer handles platform-specific command execution - ~9 files"
+      "notes": "BLOCKED: Circular deps between oscommands<->cmd_obj<->cmd_obj_runner. Needs architect decision - either flatten or use trait indirection."
     },
     {
       "id": "US-010",
