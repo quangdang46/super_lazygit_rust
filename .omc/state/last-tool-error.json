@@ -1,7 +1,7 @@
 {
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/home/quangdang/projects/tools/super_lazygit_rust/crates/git/src/lib.rs\"}",
-  "error": "File content (537.7KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
-  "timestamp": "2026-04-07T16:22:46.641Z",
-  "retry_count": 1
+  "tool_name": "mcp__filesystem__read_text_file",
+  "tool_input_preview": "{\"path\":\"/home/quangdang/projects/tools/super_lazygit_rust/references/lazygit-master/pkg/gui/context/commits_context.go\"}",
+  "error": "ENOENT: no such file or directory, open '/home/quangdang/projects/tools/super_lazygit_rust/references/lazygit-master/pkg/gui/context/commits_context.go'",
+  "timestamp": "2026-04-07T16:25:18.307Z",
+  "retry_count": 2
 }

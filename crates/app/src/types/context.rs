@@ -103,16 +103,19 @@ pub trait IViewTrait {
     fn selected_line_idx(&self) -> i32;
 }
 
+#[derive(Clone)]
 pub struct OnFocusOpts {
     pub clicked_window_name: String,
     pub clicked_view_line_idx: i32,
     pub scroll_selection_into_view: bool,
 }
 
+#[derive(Clone)]
 pub struct OnFocusLostOpts {
     pub new_context_key: ContextKey,
 }
 
+#[derive(Clone)]
 pub struct ContextKey(pub String);
 
 pub struct KeybindingsOpts;
