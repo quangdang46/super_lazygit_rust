@@ -98,13 +98,13 @@
       "id": "US-009",
       "title": "Port oscommands layer (cmd_obj, cmd_obj_builder, cmd_obj_runner, os, fake_cmd_obj_runner)",
       "priority": "P1",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Port references/lazygit-master/pkg/commands/oscommands/*.go to Rust equivalents",
         "OS command execution abstraction exists in crates/app/src/",
         "cargo check compiles without errors"
       ],
-      "notes": "BLOCKED: Circular deps between oscommands<->cmd_obj<->cmd_obj_runner. Needs architect decision - either flatten or use trait indirection."
+      "notes": "Solved: Use traits (CmdRunner trait) to break circular deps. Modules moved to oscommands/ subdir with traits.rs, cmd_obj.rs, cmd_obj_runner.rs, mod.rs"
     },
     {
       "id": "US-010",

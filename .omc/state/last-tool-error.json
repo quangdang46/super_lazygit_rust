@@ -1,7 +1,7 @@
 {
-  "tool_name": "mcp__filesystem__read_text_file",
-  "tool_input_preview": "{\"path\":\"/home/quangdang/projects/tools/super_lazygit_rust/references/lazygit-master/pkg/gui/context/commits_context.go\"}",
-  "error": "ENOENT: no such file or directory, open '/home/quangdang/projects/tools/super_lazygit_rust/references/lazygit-master/pkg/gui/context/commits_context.go'",
-  "timestamp": "2026-04-07T16:25:18.307Z",
-  "retry_count": 2
+  "tool_name": "mcp__filesystem__edit_file",
+  "tool_input_preview": "{\"path\":\"/home/quangdang/projects/tools/super_lazygit_rust/crates/app/src/lib.rs\",\"edits\":[{\"oldText\":\"mod async_handler;\\nmod context;\\nmod controllers;\\nmod filetree;\\nmod gui;\\nmod integration;\\nmo...",
+  "error": "ENOENT: no such file or directory, open '/home/quangdang/projects/tools/super_lazygit_rust/crates/app/src/lib.rs'",
+  "timestamp": "2026-04-07T23:48:54.370Z",
+  "retry_count": 1
 }

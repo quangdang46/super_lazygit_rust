@@ -14,6 +14,7 @@ mod integration;
 mod logs;
 mod mergeconflicts;
 mod modes;
+mod oscommands;
 mod patch_exploring;
 mod popup;
 mod pty;
