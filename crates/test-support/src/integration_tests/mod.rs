@@ -1,3 +1,4 @@
+pub mod bisect;
 pub mod branch;
 pub mod commit;
 pub mod diff;
@@ -13,9 +14,12 @@ pub mod shell_commands;
 pub mod staging;
 pub mod stash;
 pub mod status;
+pub mod sync;
 pub mod tag;
+pub mod undo;
 pub mod worktree;
 
+pub use bisect::BASIC;
 pub use branch::CHECKOUT_BY_NAME;
 pub use branch::DELETE;
 pub use branch::REBASE;
@@ -35,5 +39,7 @@ pub use staging::DIFF_CHANGE_SCREEN_MODE;
 pub use staging::DIFF_CONTEXT_CHANGE;
 pub use stash::STASH;
 pub use status::CLICK_REPO_NAME_TO_OPEN_REPOS_MENU;
+pub use sync::PUSH;
 pub use tag::CRUD_ANNOTATED;
+pub use undo::UNDO_COMMIT;
 pub use worktree::CRUD;
