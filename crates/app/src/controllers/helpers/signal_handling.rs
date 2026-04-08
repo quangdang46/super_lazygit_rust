@@ -1,9 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/signal_handling.go
 
-#[cfg(not(windows))]
-use std::os::unix::process::CommandExt;
-#[cfg(not(windows))]
-use std::process;
 
 #[cfg(not(windows))]
 pub fn can_suspend_app() -> bool {
@@ -29,7 +25,7 @@ where
 }
 
 #[cfg(not(windows))]
-pub fn install_resume_signal_handler<F>(on_resume: F)
+pub fn install_resume_signal_handler<F>(_on_resume: F)
 where
     F: FnOnce() -> Result<(), String> + Send + 'static,
 {

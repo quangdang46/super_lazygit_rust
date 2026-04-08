@@ -16,7 +16,7 @@ fn worktree_path_missing(path: &Path) -> bool {
 fn worktree_git_dir(worktree_path: &Path) -> Option<PathBuf> {
     git_stdout_allow_failure(
         worktree_path,
-        &["rev-parse", "--path-format=absolute", "--absolute-git-dir"],
+        ["rev-parse", "--path-format=absolute", "--absolute-git-dir"],
     )
     .ok()
     .filter(|value| !value.is_empty())
@@ -144,11 +144,12 @@ fn normalized_path_segments(path: &str) -> Vec<String> {
 
 /// Get all worktrees.
 pub fn get_worktrees(repo_path: &Path) -> Result<Vec<WorktreeItem>, GitError> {
-    let output = git_stdout(repo_path, &["worktree", "list", "--porcelain"])?;
+    let output = git_stdout(repo_path, ["worktree", "list", "--porcelain"])?;
 
-    let repo_paths = crate::RepoPaths::resolve(repo_path).map_err(|e| GitError::OperationFailed {
-        message: format!("failed to resolve repo paths: {e}"),
-    })?;
+    let repo_paths =
+        crate::RepoPaths::resolve(repo_path).map_err(|e| GitError::OperationFailed {
+            message: format!("failed to resolve repo paths: {e}"),
+        })?;
 
     let mut items = Vec::new();
     let mut current: Option<WorktreeItem> = None;
@@ -283,7 +284,10 @@ mod tests {
     fn test_short_head_name() {
         assert_eq!(short_head_name("refs/heads/main"), "main");
         assert_eq!(short_head_name("main"), "main");
-        assert_eq!(short_head_name("  refs/heads/feature/test  "), "feature/test");
+        assert_eq!(
+            short_head_name("  refs/heads/feature/test  "),
+            "feature/test"
+        );
     }
 
     #[test]

@@ -1,9 +1,8 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/repos_helper.go
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub struct ReposHelper {
     common: HelperCommon,
@@ -74,11 +73,11 @@ impl ReposHelper {
 
     pub fn dispatch_switch_to(
         &self,
-        path: &str,
-        err_msg: &str,
+        _path: &str,
+        _err_msg: &str,
         _context_key: String,
     ) -> Result<(), String> {
-        let _ = self.record_directory_helper.record_current_directory();
+        self.record_directory_helper.record_current_directory();
         Ok(())
     }
 }

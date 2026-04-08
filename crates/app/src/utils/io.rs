@@ -3,13 +3,13 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 /// Iterates over each line in a file, calling the provided function for each line.
-pub fn for_each_line_in_file<F>(path: &Path, mut f: F) -> io::Result<()>
+pub fn for_each_line_in_file<F>(path: &Path, f: F) -> io::Result<()>
 where
     F: FnMut(String, usize),
 {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    for_each_line_in_stream(reader, |line, i| f(line, i));
+    for_each_line_in_stream(reader, f);
     Ok(())
 }
 

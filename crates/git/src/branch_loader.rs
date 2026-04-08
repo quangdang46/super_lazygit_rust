@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::process::Command;
 
-use super_lazygit_core::{BranchItem, GitRef, RepoId, ReflogItem};
 use crate::GitError;
 use crate::GitResult;
+use super_lazygit_core::{BranchItem, GitRef, ReflogItem, RepoId};
 
 /// BranchInfo holds information about the current branch state.
 #[derive(Debug, Clone)]
@@ -244,11 +244,14 @@ impl BranchLoader {
         let commit_hash = split[6];
         let _commit_date = split[7];
 
-        let name = full_name.strip_prefix("heads/").unwrap_or(full_name).to_string();
+        let name = full_name
+            .strip_prefix("heads/")
+            .unwrap_or(full_name)
+            .to_string();
         let (ahead_for_pull, behind_for_pull, gone) =
-            Self::parse_upstream_info(&upstream_name, &track);
+            Self::parse_upstream_info(upstream_name, track);
         let (ahead_for_push, behind_for_push, _) =
-            Self::parse_upstream_info(&upstream_name, &push_track);
+            Self::parse_upstream_info(upstream_name, push_track);
 
         BranchItem {
             name,
@@ -481,12 +484,18 @@ mod tests {
 
     #[test]
     fn test_parse_difference() {
-        assert_eq!(BranchLoader::parse_difference("ahead 5", r"ahead \(\d+\)"), "5");
+        assert_eq!(
+            BranchLoader::parse_difference("ahead 5", r"ahead \(\d+\)"),
+            "5"
+        );
         assert_eq!(
             BranchLoader::parse_difference("behind 10", r"behind \(\d+\)"),
             "10"
         );
-        assert_eq!(BranchLoader::parse_difference("nothing", r"ahead \(\d+\)"), "0");
+        assert_eq!(
+            BranchLoader::parse_difference("nothing", r"ahead \(\d+\)"),
+            "0"
+        );
     }
 
     #[test]

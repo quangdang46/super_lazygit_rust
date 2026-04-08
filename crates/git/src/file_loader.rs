@@ -70,12 +70,16 @@ impl FileLoader {
 
                 let derived = FileStatus::derived_status_fields(&status.change);
                 file.staged_kind = if derived.has_staged_changes {
-                    Some(kind_from_status_char(status.change.chars().next().unwrap_or(' ')))
+                    Some(kind_from_status_char(
+                        status.change.chars().next().unwrap_or(' '),
+                    ))
                 } else {
                     None
                 };
                 file.unstaged_kind = if derived.has_unstaged_changes {
-                    Some(kind_from_status_char(status.change.chars().nth(1).unwrap_or(' ')))
+                    Some(kind_from_status_char(
+                        status.change.chars().nth(1).unwrap_or(' '),
+                    ))
                 } else {
                     None
                 };
@@ -242,27 +246,18 @@ where
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_path).args(args);
 
-    cmd.output()
-        .map_err(|e| crate::GitError::OperationFailed {
-            message: format!("failed to execute git: {}", e),
-        })
+    cmd.output().map_err(|e| crate::GitError::OperationFailed {
+        message: format!("failed to execute git: {}", e),
+    })
 }
 
+#[derive(Default)]
 pub struct GetStatusFileOptions {
     pub no_renames: bool,
     /// If true, we'll show untracked files even if the user has set the config to hide them.
     /// This is useful for users with bare repos for dotfiles who default to hiding untracked files,
     /// but want to occasionally see them to `git add` a new file.
     pub force_show_untracked: bool,
-}
-
-impl Default for GetStatusFileOptions {
-    fn default() -> Self {
-        Self {
-            no_renames: false,
-            force_show_untracked: false,
-        }
-    }
 }
 
 struct GitStatusOptions {
@@ -289,12 +284,27 @@ mod tests {
 
     #[test]
     fn test_kind_from_status_char() {
-        assert!(matches!(kind_from_status_char('M'), FileStatusKind::Modified));
+        assert!(matches!(
+            kind_from_status_char('M'),
+            FileStatusKind::Modified
+        ));
         assert!(matches!(kind_from_status_char('A'), FileStatusKind::Added));
-        assert!(matches!(kind_from_status_char('D'), FileStatusKind::Deleted));
-        assert!(matches!(kind_from_status_char('R'), FileStatusKind::Renamed));
-        assert!(matches!(kind_from_status_char('?'), FileStatusKind::Untracked));
-        assert!(matches!(kind_from_status_char('U'), FileStatusKind::Conflicted));
+        assert!(matches!(
+            kind_from_status_char('D'),
+            FileStatusKind::Deleted
+        ));
+        assert!(matches!(
+            kind_from_status_char('R'),
+            FileStatusKind::Renamed
+        ));
+        assert!(matches!(
+            kind_from_status_char('?'),
+            FileStatusKind::Untracked
+        ));
+        assert!(matches!(
+            kind_from_status_char('U'),
+            FileStatusKind::Conflicted
+        ));
     }
 
     #[test]

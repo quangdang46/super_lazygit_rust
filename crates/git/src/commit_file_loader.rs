@@ -24,7 +24,13 @@ impl CommitFileLoader {
     ) -> GitResult<Vec<CommitFileItem>> {
         let mut builder = GitCommandBuilder::new("diff")
             .config("diff.noprefix=false")
-            .arg(["--submodule", "--no-ext-diff", "--name-status", "-z", "--no-renames"]);
+            .arg([
+                "--submodule",
+                "--no-ext-diff",
+                "--name-status",
+                "-z",
+                "--no-renames",
+            ]);
 
         if reverse {
             builder = builder.arg(["-R"]);
@@ -98,10 +104,9 @@ fn git_builder_output(
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_path).args(&argv);
 
-    cmd.output()
-        .map_err(|e| crate::GitError::OperationFailed {
-            message: format!("failed to execute git: {}", e),
-        })
+    cmd.output().map_err(|e| crate::GitError::OperationFailed {
+        message: format!("failed to execute git: {}", e),
+    })
 }
 
 #[cfg(test)]
@@ -134,12 +139,33 @@ mod tests {
 
     #[test]
     fn test_kind_from_change_status() {
-        assert!(matches!(kind_from_change_status("A"), FileStatusKind::Added));
-        assert!(matches!(kind_from_change_status("M"), FileStatusKind::Modified));
-        assert!(matches!(kind_from_change_status("D"), FileStatusKind::Deleted));
-        assert!(matches!(kind_from_change_status("R"), FileStatusKind::Renamed));
-        assert!(matches!(kind_from_change_status("C"), FileStatusKind::Renamed));
-        assert!(matches!(kind_from_change_status("U"), FileStatusKind::Conflicted));
-        assert!(matches!(kind_from_change_status("X"), FileStatusKind::Modified)); // Unknown defaults to Modified
+        assert!(matches!(
+            kind_from_change_status("A"),
+            FileStatusKind::Added
+        ));
+        assert!(matches!(
+            kind_from_change_status("M"),
+            FileStatusKind::Modified
+        ));
+        assert!(matches!(
+            kind_from_change_status("D"),
+            FileStatusKind::Deleted
+        ));
+        assert!(matches!(
+            kind_from_change_status("R"),
+            FileStatusKind::Renamed
+        ));
+        assert!(matches!(
+            kind_from_change_status("C"),
+            FileStatusKind::Renamed
+        ));
+        assert!(matches!(
+            kind_from_change_status("U"),
+            FileStatusKind::Conflicted
+        ));
+        assert!(matches!(
+            kind_from_change_status("X"),
+            FileStatusKind::Modified
+        )); // Unknown defaults to Modified
     }
 }

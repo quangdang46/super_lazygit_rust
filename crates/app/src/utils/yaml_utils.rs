@@ -40,7 +40,7 @@ pub fn rename_yaml_key(root: &mut Value, path: &[String], new_key: &str) -> Resu
         let key = &path[0];
         if path.len() == 1 {
             if let Some(mapping) = current.as_mapping_mut() {
-                if mapping.contains_key(&Value::String(new_key.to_string())) {
+                if mapping.contains_key(Value::String(new_key.to_string())) {
                     return Err(format!("new key '{}' already exists", new_key));
                 }
                 let key_to_remove = mapping
@@ -53,12 +53,10 @@ pub fn rename_yaml_key(root: &mut Value, path: &[String], new_key: &str) -> Resu
                     return Ok(true);
                 }
             }
-        } else {
-            if let Some(mapping) = current.as_mapping_mut() {
-                for (_, v) in mapping.iter_mut() {
-                    if rename_at_path(v, &path[1..], new_key)? {
-                        return Ok(true);
-                    }
+        } else if let Some(mapping) = current.as_mapping_mut() {
+            for (_, v) in mapping.iter_mut() {
+                if rename_at_path(v, &path[1..], new_key)? {
+                    return Ok(true);
                 }
             }
         }

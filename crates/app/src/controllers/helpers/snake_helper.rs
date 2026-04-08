@@ -57,7 +57,7 @@ impl SnakeHelper {
 
     pub fn exit_game(&mut self) {}
 
-    pub fn set_direction(&mut self, direction: Direction) {}
+    pub fn set_direction(&mut self, _direction: Direction) {}
 
     fn render_snake_game(&self, _cells: [[CellType; 0]; 0], _alive: bool) -> Result<(), String> {
         Ok(())

@@ -44,7 +44,7 @@ pub fn is_valid_hex_value(value: &str) -> bool {
 
     value[1..]
         .chars()
-        .all(|c| matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F'))
+        .all(|c: char| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

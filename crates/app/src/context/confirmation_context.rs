@@ -57,7 +57,7 @@ impl ConfirmationContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_confirmation_context_new() {

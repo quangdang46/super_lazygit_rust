@@ -22,8 +22,8 @@ impl StashLoader {
         }
 
         let filter_path = filter_path.unwrap();
-        let cmd = GitCommandBuilder::new("stash")
-            .arg(["list", "--name-only", "--pretty=%gd:%H|%ct|%gs"]);
+        let cmd =
+            GitCommandBuilder::new("stash").arg(["list", "--name-only", "--pretty=%gd:%H|%ct|%gs"]);
 
         let output = git_builder_output(&self.repo_path, cmd)?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -61,8 +61,7 @@ impl StashLoader {
     }
 
     fn get_unfiltered_stash_entries(&self) -> GitResult<Vec<StashItem>> {
-        let cmd = GitCommandBuilder::new("stash")
-            .arg(["list", "-z", "--pretty=%H|%ct|%gs"]);
+        let cmd = GitCommandBuilder::new("stash").arg(["list", "-z", "--pretty=%H|%ct|%gs"]);
 
         let output = git_builder_output(&self.repo_path, cmd)?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -155,7 +154,8 @@ mod tests {
 
     #[test]
     fn test_stash_entry_from_line() {
-        let entry = stash_entry_from_line("abc123|1700000000|WIP on main: 1234567 commit message", 0);
+        let entry =
+            stash_entry_from_line("abc123|1700000000|WIP on main: 1234567 commit message", 0);
 
         assert_eq!(entry.index, 0);
         assert_eq!(entry.hash, "abc123");

@@ -42,7 +42,7 @@ impl CommitsHelper {
         (msg, description)
     }
 
-    pub fn set_message_and_description_in_view(&self, message: &str) {}
+    pub fn set_message_and_description_in_view(&self, _message: &str) {}
 
     pub fn join_commit_message_and_unwrapped_description(&self) -> String {
         String::new()

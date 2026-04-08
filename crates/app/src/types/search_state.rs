@@ -12,6 +12,12 @@ pub struct SearchState {
     pub prev_search_index: i32,
 }
 
+impl Default for SearchState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SearchState {
     pub fn new() -> Self {
         Self {

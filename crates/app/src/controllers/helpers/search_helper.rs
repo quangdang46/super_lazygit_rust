@@ -1,6 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/search_helper.go
 
-use std::sync::Mutex;
 
 pub struct SearchHelper {
     common: HelperCommon,

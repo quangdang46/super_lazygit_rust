@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 pub struct BranchesController {
     context: String,
@@ -71,6 +70,7 @@ pub struct Binding {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct DisabledReason {
     pub text: String,
 }
@@ -100,13 +100,6 @@ impl Default for RefreshOptions {
     }
 }
 
-impl Default for DisabledReason {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-        }
-    }
-}
 
 impl MenuItem {
     pub fn new(label: &str) -> Self {

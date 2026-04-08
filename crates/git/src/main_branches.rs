@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
 use std::sync::Mutex;
 
@@ -108,7 +107,11 @@ impl MainBranches {
         let upstream_output = Command::new("git")
             .arg("-C")
             .arg(repo_path)
-            .args(["rev-parse", "--symbolic-full-name", &format!("{branch_name}@{{u}}")])
+            .args([
+                "rev-parse",
+                "--symbolic-full-name",
+                &format!("{branch_name}@{{u}}"),
+            ])
             .output();
 
         if let Ok(output) = upstream_output {
@@ -161,12 +164,7 @@ mod tests {
 
     #[test]
     fn test_main_branches_empty_config() {
-        let main_branches = MainBranches::new(
-            RepoId::Standalone {
-                path: "/tmp/nonexistent".into(),
-            },
-            vec![],
-        );
+        let main_branches = MainBranches::new(RepoId("/tmp/nonexistent".into()), vec![]);
         assert!(main_branches.get().is_empty());
     }
 }

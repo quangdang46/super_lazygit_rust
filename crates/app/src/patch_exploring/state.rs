@@ -1,17 +1,14 @@
 // Ported from ./references/lazygit-master/pkg/gui/patch_exploring/state.go
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum SelectMode {
+    #[default]
     Line,
     Range,
     Hunk,
 }
 
-impl Default for SelectMode {
-    fn default() -> Self {
-        SelectMode::Line
-    }
-}
 
 #[derive(Clone, Default)]
 pub struct State {
@@ -536,7 +533,7 @@ pub fn calculate_origin(
     origin
 }
 
-pub fn wrap_patch_lines(diff: &str, view: &View) -> (Vec<i32>, Vec<i32>) {
+pub fn wrap_patch_lines(diff: &str, _view: &View) -> (Vec<i32>, Vec<i32>) {
     let trimmed = diff.trim_end_matches('\n');
     let view_line_indices: Vec<i32> = (0..trimmed.lines().count() as i32).collect();
     let patch_line_indices: Vec<i32> = (0..trimmed.lines().count() as i32).collect();

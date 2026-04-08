@@ -84,19 +84,19 @@ impl GitVersionRestriction {
     pub fn should_run_on_version(&self, version: &GitVersion) -> bool {
         if let Some(ref from) = self.from {
             let from_ver =
-                GitVersion::from_str(from).expect(&format!("Invalid git version string: {from}"));
+                GitVersion::from_str(from).unwrap_or_else(|_| panic!("Invalid git version string: {from}"));
             return version.is_at_least(&from_ver);
         }
 
         if let Some(ref before) = self.before {
             let before_ver = GitVersion::from_str(before)
-                .expect(&format!("Invalid git version string: {before}"));
+                .unwrap_or_else(|_| panic!("Invalid git version string: {before}"));
             return version.is_older_than(&before_ver);
         }
 
         if let Some(ref includes) = self.includes {
             return includes.iter().any(|s| {
-                let v = GitVersion::from_str(s).expect(&format!("Invalid git version string: {s}"));
+                let v = GitVersion::from_str(s).unwrap_or_else(|_| panic!("Invalid git version string: {s}"));
                 version.major == v.major && version.minor == v.minor && version.patch == v.patch
             });
         }
@@ -147,7 +147,7 @@ impl GitVersion {
     ///
     /// Panics if the string cannot be parsed.
     pub fn parse(s: &str) -> GitVersion {
-        GitVersion::from_str(s).expect(&format!("Invalid git version string: {s}"))
+        GitVersion::from_str(s).unwrap_or_else(|_| panic!("Invalid git version string: {s}"))
     }
 
     /// Returns true if this version is at least the given version.
@@ -174,6 +174,7 @@ impl GitVersion {
 }
 
 /// Arguments for creating a new integration test.
+#[derive(Default)]
 pub struct NewIntegrationTestArgs {
     /// Briefly describes what happens in the test and what it's testing for.
     pub description: String,
@@ -198,23 +199,6 @@ pub struct NewIntegrationTestArgs {
     pub is_demo: bool,
 }
 
-impl Default for NewIntegrationTestArgs {
-    fn default() -> Self {
-        Self {
-            description: String::new(),
-            setup_repo: None,
-            setup_config: None,
-            run: None,
-            extra_cmd_args: Vec::new(),
-            extra_env_vars: std::collections::HashMap::new(),
-            skip: false,
-            git_version: GitVersionRestriction::default(),
-            width: 0,
-            height: 0,
-            is_demo: false,
-        }
-    }
-}
 
 /// Test shell operations for setting up test repositories.
 /// Provides git command execution and file manipulation for test setup.
@@ -227,7 +211,7 @@ impl TestShell {
     pub fn new(pwd: &Path, env: &[(String, String)]) -> Self {
         TestShell {
             pwd: pwd.to_path_buf(),
-            env: env.iter().cloned().collect(),
+            env: env.to_vec(),
         }
     }
 
@@ -325,7 +309,7 @@ pub struct GuiDriver;
 impl GuiDriver {
     pub fn fail(&self, _error_msg: &str) {}
     pub fn keys(&self) -> KeybindingConfig {
-        KeybindingConfig::default()
+        KeybindingConfig
     }
     pub fn check_all_toasts_acknowledged(&self) {}
 }

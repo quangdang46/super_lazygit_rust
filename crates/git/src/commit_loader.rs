@@ -4,9 +4,7 @@ use std::path::Path;
 
 use regex::Regex;
 
-use super_lazygit_core::state::{
-    CommitDivergence, CommitItem, CommitStatus, CommitTodoAction,
-};
+use super_lazygit_core::state::{CommitDivergence, CommitItem, CommitStatus, CommitTodoAction};
 
 fn divergence_order(d: &CommitDivergence) -> i32 {
     match d {
@@ -119,12 +117,18 @@ impl CommitLoader {
         Ok(result)
     }
 
-    fn get_hydrated_rebasing_commits(&self, add_conflicting_commit: bool) -> GitResult<Vec<CommitItem>> {
+    fn get_hydrated_rebasing_commits(
+        &self,
+        add_conflicting_commit: bool,
+    ) -> GitResult<Vec<CommitItem>> {
         let todo_commits = self.get_rebasing_commits(add_conflicting_commit);
         self.get_hydrated_todo_commits(todo_commits, false)
     }
 
-    fn get_hydrated_sequencer_commits(&self, working_tree_state: WorkingTreeState) -> GitResult<Vec<CommitItem>> {
+    fn get_hydrated_sequencer_commits(
+        &self,
+        working_tree_state: WorkingTreeState,
+    ) -> GitResult<Vec<CommitItem>> {
         let mut commits = self.get_sequencer_commits();
         if !commits.is_empty() {
             // Last commit is the conflicting one
@@ -140,14 +144,24 @@ impl CommitLoader {
         self.get_hydrated_todo_commits(commits, true)
     }
 
-    fn get_hydrated_todo_commits(&self, todo_commits: Vec<CommitItem>, _todo_file_has_short_hashes: bool) -> GitResult<Vec<CommitItem>> {
+    fn get_hydrated_todo_commits(
+        &self,
+        todo_commits: Vec<CommitItem>,
+        _todo_file_has_short_hashes: bool,
+    ) -> GitResult<Vec<CommitItem>> {
         if todo_commits.is_empty() {
             return Ok(Vec::new());
         }
 
         let commit_hashes: Vec<String> = todo_commits
             .iter()
-            .filter_map(|c| if c.oid.is_empty() { None } else { Some(c.oid.clone()) })
+            .filter_map(|c| {
+                if c.oid.is_empty() {
+                    None
+                } else {
+                    Some(c.oid.clone())
+                }
+            })
             .collect();
 
         if commit_hashes.is_empty() {
@@ -193,7 +207,11 @@ impl CommitLoader {
     }
 
     fn get_rebasing_commits(&self, add_conflicting_commit: bool) -> Vec<CommitItem> {
-        let todo_path = self.repo_path.join(".git").join("rebase-merge").join("git-rebase-todo");
+        let todo_path = self
+            .repo_path
+            .join(".git")
+            .join("rebase-merge")
+            .join("git-rebase-todo");
         let bytes_content = match std::fs::read(&todo_path) {
             Ok(b) => b,
             Err(_) => return Vec::new(),
@@ -223,13 +241,16 @@ impl CommitLoader {
                 String::new()
             };
 
-            commits.insert(0, CommitItem {
-                oid: hash.to_string(),
-                summary: msg,
-                status: CommitStatus::Rebasing,
-                todo_action: Self::parse_todo_command(command),
-                ..Default::default()
-            });
+            commits.insert(
+                0,
+                CommitItem {
+                    oid: hash.to_string(),
+                    summary: msg,
+                    status: CommitStatus::Rebasing,
+                    todo_action: Self::parse_todo_command(command),
+                    ..Default::default()
+                },
+            );
         }
 
         // Add conflicted commit if needed
@@ -256,7 +277,11 @@ impl CommitLoader {
     }
 
     fn get_conflicted_commit(&self) -> Option<CommitItem> {
-        let done_path = self.repo_path.join(".git").join("rebase-merge").join("done");
+        let done_path = self
+            .repo_path
+            .join(".git")
+            .join("rebase-merge")
+            .join("done");
         let bytes_content = match std::fs::read(&done_path) {
             Ok(b) => b,
             Err(_) => return None,
@@ -305,19 +330,29 @@ impl CommitLoader {
                 continue;
             }
 
-            commits.insert(0, CommitItem {
-                oid: parts[1].to_string(),
-                summary: if parts.len() > 2 { parts[2..].join(" ") } else { String::new() },
-                status: CommitStatus::CherryPickingOrReverting,
-                todo_action: CommitTodoAction::Pick,
-                ..Default::default()
-            });
+            commits.insert(
+                0,
+                CommitItem {
+                    oid: parts[1].to_string(),
+                    summary: if parts.len() > 2 {
+                        parts[2..].join(" ")
+                    } else {
+                        String::new()
+                    },
+                    status: CommitStatus::CherryPickingOrReverting,
+                    todo_action: CommitTodoAction::Pick,
+                    ..Default::default()
+                },
+            );
         }
 
         commits
     }
 
-    fn get_conflicted_sequencer_commit(&self, working_tree_state: WorkingTreeState) -> Option<CommitItem> {
+    fn get_conflicted_sequencer_commit(
+        &self,
+        working_tree_state: WorkingTreeState,
+    ) -> Option<CommitItem> {
         let (sha_file, action) = if working_tree_state.cherry_picking {
             ("CHERRY_PICK_HEAD", CommitTodoAction::Pick)
         } else if working_tree_state.reverting {
@@ -343,7 +378,11 @@ impl CommitLoader {
         })
     }
 
-    fn get_reachable_hashes(&self, ref_name: &str, not_ref_names: &[String]) -> HashMap<String, bool> {
+    fn get_reachable_hashes(
+        &self,
+        ref_name: &str,
+        not_ref_names: &[String],
+    ) -> HashMap<String, bool> {
         let mut args: Vec<OsString> = vec![ref_name.into()];
         for name in not_ref_names {
             args.push(format!("^{}", name).into());
@@ -352,13 +391,11 @@ impl CommitLoader {
         let cmd = GitCommandBuilder::new("rev-list").arg(args);
 
         match crate::git_builder_output(&self.repo_path, cmd) {
-            Ok(output) => {
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .map(|line| (line.trim().to_string(), true))
-                    .collect()
-            }
+            Ok(output) => String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| (line.trim().to_string(), true))
+                .collect(),
             Err(_) => HashMap::new(),
         }
     }
@@ -404,8 +441,11 @@ impl CommitLoader {
     }
 }
 
-fn load_commits_from_cmd(cmd: &GitCommandBuilder, filter_path: Option<&str>) -> GitResult<Vec<CommitItem>> {
-    let output = crate::git_builder_output(&Path::new("."), cmd.clone())?;
+fn load_commits_from_cmd(
+    cmd: &GitCommandBuilder,
+    filter_path: Option<&str>,
+) -> GitResult<Vec<CommitItem>> {
+    let output = crate::git_builder_output(Path::new("."), cmd.clone())?;
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let mut commits = Vec::new();
@@ -426,9 +466,7 @@ fn load_commits_from_cmd(cmd: &GitCommandBuilder, filter_path: Option<&str>) -> 
                     commit.filter_paths = filter_paths
                         .iter()
                         .filter(|p| !p.starts_with(filter_path.unwrap()))
-                        .map(|p| {
-                            pool.entry(p.clone()).or_insert(p.clone()).clone().into()
-                        })
+                        .map(|p| pool.entry(p.clone()).or_insert(p.clone()).clone().into())
                         .collect();
                 }
                 commits.push(commit);
@@ -437,13 +475,11 @@ fn load_commits_from_cmd(cmd: &GitCommandBuilder, filter_path: Option<&str>) -> 
             // Parse new commit
             current_commit = extract_commit_from_line_static(&line[1..], false);
             filter_paths.clear();
-        } else if current_commit.is_some() {
-            if filter_path.is_some() {
-                // Handle name-status output
-                let fields: Vec<&str> = line.splitn(2, '\t').collect();
-                if fields.len() > 1 {
-                    filter_paths.push(fields[1].to_string());
-                }
+        } else if current_commit.is_some() && filter_path.is_some() {
+            // Handle name-status output
+            let fields: Vec<&str> = line.splitn(2, '\t').collect();
+            if fields.len() > 1 {
+                filter_paths.push(fields[1].to_string());
             }
         }
     }
@@ -532,17 +568,15 @@ fn extract_commit_from_line_static(line: &str, show_divergence: bool) -> Option<
     })
 }
 
-fn set_commit_statuses(
-    unmerged_commit_hashes: &HashMap<String, bool>,
-    commits: &mut [CommitItem],
-) {
+fn set_commit_statuses(unmerged_commit_hashes: &HashMap<String, bool>, commits: &mut [CommitItem]) {
     for commit in commits.iter_mut() {
         if commit.is_todo() {
             continue;
         }
 
         let hash = &commit.oid;
-        let is_unmerged = unmerged_commit_hashes.is_empty() || unmerged_commit_hashes.contains_key(hash);
+        let is_unmerged =
+            unmerged_commit_hashes.is_empty() || unmerged_commit_hashes.contains_key(hash);
 
         if is_unmerged {
             commit.status = CommitStatus::Pushed;
@@ -573,12 +607,33 @@ mod tests {
 
     #[test]
     fn test_parse_todo_command() {
-        assert_eq!(CommitLoader::parse_todo_command("pick"), CommitTodoAction::Pick);
-        assert_eq!(CommitLoader::parse_todo_command("reword"), CommitTodoAction::Reword);
-        assert_eq!(CommitLoader::parse_todo_command("edit"), CommitTodoAction::Edit);
-        assert_eq!(CommitLoader::parse_todo_command("squash"), CommitTodoAction::Squash);
-        assert_eq!(CommitLoader::parse_todo_command("fixup"), CommitTodoAction::Fixup);
-        assert_eq!(CommitLoader::parse_todo_command("drop"), CommitTodoAction::Drop);
-        assert_eq!(CommitLoader::parse_todo_command("unknown"), CommitTodoAction::None);
+        assert_eq!(
+            CommitLoader::parse_todo_command("pick"),
+            CommitTodoAction::Pick
+        );
+        assert_eq!(
+            CommitLoader::parse_todo_command("reword"),
+            CommitTodoAction::Reword
+        );
+        assert_eq!(
+            CommitLoader::parse_todo_command("edit"),
+            CommitTodoAction::Edit
+        );
+        assert_eq!(
+            CommitLoader::parse_todo_command("squash"),
+            CommitTodoAction::Squash
+        );
+        assert_eq!(
+            CommitLoader::parse_todo_command("fixup"),
+            CommitTodoAction::Fixup
+        );
+        assert_eq!(
+            CommitLoader::parse_todo_command("drop"),
+            CommitTodoAction::Drop
+        );
+        assert_eq!(
+            CommitLoader::parse_todo_command("unknown"),
+            CommitTodoAction::None
+        );
     }
 }

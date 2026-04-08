@@ -2,7 +2,7 @@
 //!
 //! A command object represents a command to be run on the command line.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::process::Command;
 
 use super::traits::CredentialStrategy;

@@ -11,11 +11,11 @@ impl MergeConflictsHelper {
         Self { context }
     }
 
-    pub fn set_merge_state(&self, path: &str) -> Result<bool, String> {
+    pub fn set_merge_state(&self, _path: &str) -> Result<bool, String> {
         Ok(false)
     }
 
-    fn set_merge_state_without_lock(&self, path: &str) -> Result<bool, String> {
+    fn set_merge_state_without_lock(&self, _path: &str) -> Result<bool, String> {
         Ok(false)
     }
 
@@ -27,11 +27,11 @@ impl MergeConflictsHelper {
         Ok(())
     }
 
-    pub fn set_conflicts_and_render(&self, path: &str) -> Result<bool, String> {
+    pub fn set_conflicts_and_render(&self, _path: &str) -> Result<bool, String> {
         Ok(false)
     }
 
-    pub fn switch_to_merge(&self, path: &str) -> Result<(), String> {
+    pub fn switch_to_merge(&self, _path: &str) -> Result<(), String> {
         Ok(())
     }
 

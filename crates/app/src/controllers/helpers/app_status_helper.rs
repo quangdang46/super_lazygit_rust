@@ -30,21 +30,21 @@ impl AppStatusHelper {
         }
     }
 
-    pub fn toast(&self, message: &str, kind: ToastKind) {}
+    pub fn toast(&self, _message: &str, _kind: ToastKind) {}
 
-    pub fn with_waiting_status<F>(&self, message: &str, f: F)
+    pub fn with_waiting_status<F>(&self, _message: &str, _f: F)
     where
         F: Fn() -> Result<(), String>,
     {
     }
 
-    pub fn with_waiting_status_impl<F>(&self, message: &str, f: F)
+    pub fn with_waiting_status_impl<F>(&self, _message: &str, _f: F)
     where
         F: Fn() -> Result<(), String>,
     {
     }
 
-    pub fn with_waiting_status_sync<F>(&self, message: &str, f: F) -> Result<(), String>
+    pub fn with_waiting_status_sync<F>(&self, _message: &str, _f: F) -> Result<(), String>
     where
         F: Fn() -> Result<(), String>,
     {

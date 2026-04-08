@@ -1,6 +1,6 @@
 // Ported from ./references/lazygit-master/pkg/gui/style/text_style.go
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 
 use super::color::AppColor;
 use super::decoration::Decoration;

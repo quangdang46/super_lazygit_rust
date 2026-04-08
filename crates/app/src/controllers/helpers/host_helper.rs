@@ -11,11 +11,11 @@ impl HostHelper {
         Self { context }
     }
 
-    pub fn get_pull_request_url(&self, from: &str, to: &str) -> Result<String, String> {
+    pub fn get_pull_request_url(&self, _from: &str, _to: &str) -> Result<String, String> {
         Ok(String::new())
     }
 
-    pub fn get_commit_url(&self, commit_hash: &str) -> Result<String, String> {
+    pub fn get_commit_url(&self, _commit_hash: &str) -> Result<String, String> {
         Ok(String::new())
     }
 

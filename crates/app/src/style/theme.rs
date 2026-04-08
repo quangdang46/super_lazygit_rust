@@ -2,8 +2,7 @@
 
 use ratatui::style::Color;
 
-use super::basic_styles::color_map;
-use super::gocui::{get_gocui_attribute, get_gocui_style};
+use super::gocui::get_gocui_style;
 use super::style::get_text_style;
 use super::text_style::TextStyle;
 

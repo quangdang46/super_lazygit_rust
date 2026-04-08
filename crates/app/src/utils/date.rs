@@ -1,4 +1,3 @@
-use std::time::Duration;
 
 /// Number of seconds in various time periods.
 pub const SECONDS_IN_SECOND: i64 = 1;

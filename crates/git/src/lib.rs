@@ -27,18 +27,19 @@ use super_lazygit_core::{
 };
 use thiserror::Error;
 
+pub mod branch_loader;
+pub mod commit_file_loader;
+pub mod commit_loader;
+pub mod file_loader;
 mod graph;
 pub mod main_branches;
 pub mod menu_generator;
-pub mod remote_loader;
-pub mod worktree_loader;
-pub mod branch_loader;
-pub mod file_loader;
-pub mod commit_file_loader;
-pub mod tag_loader;
-pub mod commit_loader;
-pub mod stash_loader;
 pub mod reflog_commit_loader;
+pub mod remote_loader;
+pub mod stash_loader;
+pub mod tag_loader;
+pub mod types;
+pub mod worktree_loader;
 
 use crate::graph::{render_commit_graph, GraphCommit};
 

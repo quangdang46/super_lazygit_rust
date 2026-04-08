@@ -16,11 +16,11 @@ impl FilteringMenuAction {
         Ok(())
     }
 
-    fn set_filtering_path(&self, path: String) -> Result<(), String> {
+    fn set_filtering_path(&self, _path: String) -> Result<(), String> {
         Ok(())
     }
 
-    fn set_filtering_author(&self, author: String) -> Result<(), String> {
+    fn set_filtering_author(&self, _author: String) -> Result<(), String> {
         Ok(())
     }
 

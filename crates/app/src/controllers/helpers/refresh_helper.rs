@@ -1,6 +1,6 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/refresh_helper.go
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub struct RefreshHelper {
@@ -82,11 +82,10 @@ impl RefreshHelper {
     }
 
     pub fn refresh(&self, options: RefreshOptions) {
-        if options.mode == RefreshMode::Async {
-            if options.then.is_some() {
+        if options.mode == RefreshMode::Async
+            && options.then.is_some() {
                 panic!("RefreshOptions.Then doesn't work with mode ASYNC");
             }
-        }
 
         let start = Instant::now();
 

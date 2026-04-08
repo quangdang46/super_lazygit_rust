@@ -11,31 +11,31 @@ impl FilesHelper {
         Self { context }
     }
 
-    pub fn edit_files(&self, filenames: &[String]) -> Result<(), String> {
+    pub fn edit_files(&self, _filenames: &[String]) -> Result<(), String> {
         Ok(())
     }
 
-    pub fn edit_file_at_line(&self, filename: &str, line_number: i64) -> Result<(), String> {
+    pub fn edit_file_at_line(&self, _filename: &str, _line_number: i64) -> Result<(), String> {
         Ok(())
     }
 
     pub fn edit_file_at_line_and_wait(
         &self,
-        filename: &str,
-        line_number: i64,
+        _filename: &str,
+        _line_number: i64,
     ) -> Result<(), String> {
         Ok(())
     }
 
-    pub fn open_dir_in_editor(&self, path: &str) -> Result<(), String> {
+    pub fn open_dir_in_editor(&self, _path: &str) -> Result<(), String> {
         Ok(())
     }
 
-    fn call_editor(&self, cmd_str: &str, suspend: bool) -> Result<(), String> {
+    fn call_editor(&self, _cmd_str: &str, _suspend: bool) -> Result<(), String> {
         Ok(())
     }
 
-    pub fn open_file(&self, filename: &str) -> Result<(), String> {
+    pub fn open_file(&self, _filename: &str) -> Result<(), String> {
         Ok(())
     }
 }

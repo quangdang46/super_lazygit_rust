@@ -1,6 +1,5 @@
 // Ported from ./references/lazygit-master/pkg/gui/tasks_adapter.go
 
-use std::collections::HashMap;
 use std::process::Command;
 
 pub struct TasksAdapter;

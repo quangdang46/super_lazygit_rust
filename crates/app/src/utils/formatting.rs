@@ -185,7 +185,7 @@ fn exclude_blank_columns(
         );
     }
 
-    let mut result: Vec<Vec<String>> = display_strings_arr
+    let result: Vec<Vec<String>> = display_strings_arr
         .iter()
         .map(|strings| {
             let mut kept = strings.clone();

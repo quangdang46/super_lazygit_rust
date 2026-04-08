@@ -65,8 +65,7 @@ impl CherryPicking {
     fn update(&mut self, selected_hash_set: HashSet<String>, commits_list: &[Commit]) {
         self.cherry_picked_commits = commits_list
             .iter()
-            .filter(|commit| selected_hash_set.contains(commit.hash()))
-            .map(|commit| commit.clone())
+            .filter(|commit| selected_hash_set.contains(commit.hash())).cloned()
             .collect();
     }
 }

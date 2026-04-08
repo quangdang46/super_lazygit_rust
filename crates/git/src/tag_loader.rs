@@ -23,8 +23,7 @@ impl TagLoader {
         // see: https://git-scm.com/docs/git-tag#Documentation/git-tag.txt---sortltkeygt
         let output = git_builder_output(
             &self.repo_path,
-            GitCommandBuilder::new("tag")
-                .arg(["--list", "-n", "--sort=-creatordate"]),
+            GitCommandBuilder::new("tag").arg(["--list", "-n", "--sort=-creatordate"]),
         )?;
 
         if !output.status.success() {
@@ -87,10 +86,9 @@ fn git_builder_output(
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_path).args(&argv);
 
-    cmd.output()
-        .map_err(|e| crate::GitError::OperationFailed {
-            message: format!("failed to execute git: {}", e),
-        })
+    cmd.output().map_err(|e| crate::GitError::OperationFailed {
+        message: format!("failed to execute git: {}", e),
+    })
 }
 
 #[cfg(test)]

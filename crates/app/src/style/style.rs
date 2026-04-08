@@ -1,10 +1,9 @@
 // Ported from ./references/lazygit-master/pkg/theme/style.go
 
-use std::collections::HashMap;
 
 use ratatui::style::Color;
 
-use super::basic_styles::{color_map, ColorMapEntry};
+use super::basic_styles::color_map;
 use super::color::AppColor;
 use super::text_style::TextStyle;
 

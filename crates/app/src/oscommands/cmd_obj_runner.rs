@@ -2,8 +2,7 @@
 //!
 //! The default runner that executes commands.
 
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
 
 use super::traits::{CmdRunner, RunError};

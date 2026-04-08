@@ -1,7 +1,6 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/files_controller.go
 use crate::controllers::ControllerCommon;
 
-use std::collections::HashMap;
 
 pub struct FilesController {
     context: ControllerCommon,

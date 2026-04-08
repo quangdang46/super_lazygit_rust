@@ -1,6 +1,8 @@
 // Ported from ./references/lazygit-master/pkg/gui/presentation/item_operations.go
 
+#[derive(Default)]
 pub enum ItemOperation {
+    #[default]
     None,
     Pushing,
     Pulling,
@@ -10,11 +12,6 @@ pub enum ItemOperation {
     CheckingOut,
 }
 
-impl Default for ItemOperation {
-    fn default() -> Self {
-        ItemOperation::None
-    }
-}
 
 pub fn item_operation_to_string(operation: ItemOperation, tr: &TranslationSet) -> String {
     match operation {

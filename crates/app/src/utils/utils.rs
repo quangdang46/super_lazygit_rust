@@ -30,7 +30,7 @@ pub fn find_string_submatch<'a>(s: &'a str, regexp_str: &str) -> (bool, Vec<&'a 
     let re = Regex::new(regexp_str).unwrap();
     let match_result = re.find(s);
     match match_result {
-        Some(m) => {
+        Some(_m) => {
             let matched: Vec<&'a str> = re
                 .captures(s)
                 .map(|c| {

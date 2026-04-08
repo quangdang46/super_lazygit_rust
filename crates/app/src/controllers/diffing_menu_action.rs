@@ -55,6 +55,7 @@ pub struct RefreshOptions {
     pub mode: RefreshMode,
 }
 
+#[derive(Default)]
 pub struct CreateMenuOptions {
     pub title: String,
     pub prompt: Option<String>,
@@ -65,19 +66,6 @@ pub struct CreateMenuOptions {
     pub keep_conflicting_keybindings: bool,
 }
 
-impl Default for CreateMenuOptions {
-    fn default() -> Self {
-        Self {
-            title: String::new(),
-            prompt: None,
-            items: Vec::new(),
-            hide_cancel: false,
-            column_alignment: Vec::new(),
-            allow_filtering_keybindings: false,
-            keep_conflicting_keybindings: false,
-        }
-    }
-}
 
 impl ControllerCommon {
     pub fn menu(&self, _options: CreateMenuOptions) -> Result<(), String> {

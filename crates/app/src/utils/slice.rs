@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn test_multi_group_by() {
         let items = vec![1, 2, 3, 4, 5, 6];
-        let result = multi_group_by(&items, &|x| {
+        let result = multi_group_by(&items, |x| {
             if x % 2 == 0 {
                 vec!["even"]
             } else {
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn test_partition() {
         let slice = vec![1, 2, 3, 4, 5, 6];
-        let (evens, odds) = partition(&slice, &|x| x % 2 == 0);
+        let (evens, odds) = partition(&slice, |x| x % 2 == 0);
         assert_eq!(evens, vec![2, 4, 6]);
         assert_eq!(odds, vec![1, 3, 5]);
     }

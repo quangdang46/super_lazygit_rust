@@ -1,6 +1,6 @@
 // Ported from ./references/lazygit-master/pkg/snake/snake.go
 
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
 

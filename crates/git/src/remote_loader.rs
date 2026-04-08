@@ -7,12 +7,7 @@ use super_lazygit_core::state::{RemoteBranchItem, RemoteItem};
 use crate::{git_stdout, GitError};
 
 fn git_stdout_lines(repo_path: &Path, args: &[&str]) -> Result<Vec<String>, GitError> {
-    git_stdout(repo_path, args).map(|output| {
-        output
-            .lines()
-            .map(|l| l.trim().to_string())
-            .collect()
-    })
+    git_stdout(repo_path, args).map(|output| output.lines().map(|l| l.trim().to_string()).collect())
 }
 
 /// Get all remotes with their branches, sorted with "origin" first.
@@ -38,9 +33,10 @@ fn read_remote_urls(repo_path: &Path) -> Vec<RemoteItem> {
     let mut remotes: BTreeMap<String, RemoteItem> = BTreeMap::new();
 
     // Read remote URLs from config
-    if let Ok(output) =
-        git_stdout_lines(repo_path, &["config", "--local", "--get-regexp", r"^remote\.[^.]+\.url$"])
-    {
+    if let Ok(output) = git_stdout_lines(
+        repo_path,
+        &["config", "--local", "--get-regexp", r"^remote\.[^.]+\.url$"],
+    ) {
         for line in output {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() < 2 {
@@ -78,12 +74,14 @@ fn read_remote_urls(repo_path: &Path) -> Vec<RemoteItem> {
             let url = parts[1];
             let direction = parts[2].trim_matches(|ch| ch == '(' || ch == ')');
 
-            let remote = remotes.entry(name.to_string()).or_insert_with(|| RemoteItem {
-                name: name.to_string(),
-                fetch_url: String::new(),
-                push_url: String::new(),
-                branch_count: 0,
-            });
+            let remote = remotes
+                .entry(name.to_string())
+                .or_insert_with(|| RemoteItem {
+                    name: name.to_string(),
+                    fetch_url: String::new(),
+                    push_url: String::new(),
+                    branch_count: 0,
+                });
 
             match direction {
                 "fetch" => remote.fetch_url = url.to_string(),
@@ -97,10 +95,7 @@ fn read_remote_urls(repo_path: &Path) -> Vec<RemoteItem> {
 }
 
 fn compare_remote_items(left: &RemoteItem, right: &RemoteItem) -> Ordering {
-    match (
-        left.name == "origin",
-        right.name == "origin",
-    ) {
+    match (left.name == "origin", right.name == "origin") {
         (true, false) => Ordering::Less,
         (false, true) => Ordering::Greater,
         _ => {
@@ -118,7 +113,7 @@ fn compare_remote_items(left: &RemoteItem, right: &RemoteItem) -> Ordering {
 pub fn get_remote_branches(repo_path: &Path) -> Result<Vec<RemoteBranchItem>, GitError> {
     git_stdout(
         repo_path,
-        &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        ["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
     )
     .map(|output| {
         output
@@ -170,24 +165,12 @@ mod tests {
         };
 
         // origin should come first
-        assert_eq!(
-            compare_remote_items(&origin, &upstream),
-            Ordering::Less
-        );
-        assert_eq!(
-            compare_remote_items(&upstream, &origin),
-            Ordering::Greater
-        );
+        assert_eq!(compare_remote_items(&origin, &upstream), Ordering::Less);
+        assert_eq!(compare_remote_items(&upstream, &origin), Ordering::Greater);
 
         // alphabetical for non-origin
-        assert_eq!(
-            compare_remote_items(&beta, &upstream),
-            Ordering::Less
-        );
-        assert_eq!(
-            compare_remote_items(&upstream, &beta),
-            Ordering::Greater
-        );
+        assert_eq!(compare_remote_items(&beta, &upstream), Ordering::Less);
+        assert_eq!(compare_remote_items(&upstream, &beta), Ordering::Greater);
     }
 
     #[test]

@@ -22,4 +22,3 @@ pub mod submodules_context;
 pub mod suggestions_context;
 pub mod worktrees_context;
 
-pub use setup::*;

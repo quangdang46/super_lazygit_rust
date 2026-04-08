@@ -36,22 +36,22 @@ fn next_in_cycle(sl: &[ScreenMode], current: &ScreenMode) -> ScreenMode {
     for (i, val) in sl.iter().enumerate() {
         if val == current {
             if i == sl.len() - 1 {
-                return sl[0].clone();
+                return sl[0];
             }
-            return sl[i + 1].clone();
+            return sl[i + 1];
         }
     }
-    sl[0].clone()
+    sl[0]
 }
 
 fn prev_in_cycle(sl: &[ScreenMode], current: &ScreenMode) -> ScreenMode {
     for (i, val) in sl.iter().enumerate() {
         if val == current {
             if i > 0 {
-                return sl[i - 1].clone();
+                return sl[i - 1];
             }
-            return sl[sl.len() - 1].clone();
+            return sl[sl.len() - 1];
         }
     }
-    sl[sl.len() - 1].clone()
+    sl[sl.len() - 1]
 }

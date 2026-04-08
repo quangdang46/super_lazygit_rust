@@ -4,17 +4,14 @@ pub const MERGE_SYMBOL: char = '⏣';
 pub const COMMIT_SYMBOL: char = '◯';
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CellType {
+    #[default]
     Connection,
     Commit,
     Merge,
 }
 
-impl Default for CellType {
-    fn default() -> Self {
-        CellType::Connection
-    }
-}
 
 #[derive(Clone, Default)]
 pub struct Cell {
@@ -29,6 +26,12 @@ pub struct Cell {
 
 #[derive(Clone)]
 pub struct Style;
+
+impl Default for Style {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Style {
     pub fn new() -> Self {
@@ -49,7 +52,7 @@ impl Cell {
         let right_style = self
             .right_style
             .clone()
-            .unwrap_or_else(|| self.style.clone().unwrap_or_else(Style::new));
+            .unwrap_or_else(|| self.style.clone().unwrap_or_default());
 
         let styled_second_char = if second == " " {
             " ".to_string()
@@ -58,7 +61,7 @@ impl Cell {
         };
 
         let styled_first = cached_sprint(
-            &self.style.clone().unwrap_or_else(Style::new),
+            &self.style.clone().unwrap_or_default(),
             &adjusted_first,
         );
         format!("{}{}", styled_first, styled_second_char)

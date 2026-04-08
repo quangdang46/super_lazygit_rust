@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_set_and_get_state() {
-        let mut view_model = ConflictsViewModel::new();
+        let _view_model = ConflictsViewModel::new();
         // Would test state management
     }
 }

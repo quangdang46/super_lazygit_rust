@@ -26,7 +26,9 @@ pub struct RunError {
 
 impl RunError {
     pub fn new(message: impl Into<String>) -> Self {
-        RunError { message: message.into() }
+        RunError {
+            message: message.into(),
+        }
     }
 }
 

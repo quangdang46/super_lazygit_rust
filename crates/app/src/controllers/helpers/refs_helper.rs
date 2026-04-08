@@ -1,6 +1,6 @@
 // Ported from ./references/lazygit-master/pkg/gui/controllers/helpers/refs_helper.go
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub struct RefsHelper {
     common: HelperCommon,
@@ -10,21 +10,13 @@ pub struct RefsHelper {
 pub struct HelperCommon;
 pub struct MergeAndRebaseHelper;
 
+#[derive(Default)]
 pub struct CheckoutRefOptions {
     pub waiting_status: String,
     pub env_vars: Vec<String>,
     pub on_ref_not_found: Option<Box<dyn Fn(String) -> Result<(), String> + Send + Sync>>,
 }
 
-impl Default for CheckoutRefOptions {
-    fn default() -> Self {
-        Self {
-            waiting_status: String::new(),
-            env_vars: Vec::new(),
-            on_ref_not_found: None,
-        }
-    }
-}
 
 pub struct Branch;
 pub struct Commit;
@@ -205,16 +197,9 @@ impl RebaseCommands {
     }
 }
 
+#[derive(Default)]
 pub struct CheckoutOptions {
     pub force: bool,
     pub env_vars: Vec<String>,
 }
 
-impl Default for CheckoutOptions {
-    fn default() -> Self {
-        Self {
-            force: false,
-            env_vars: Vec::new(),
-        }
-    }
-}
