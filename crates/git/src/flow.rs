@@ -17,7 +17,13 @@ impl FlowCommands {
     pub fn git_flow_enabled(&self) -> bool {
         // Check if git flow prefix is configured
         let output = Command::new("git")
-            .args(["-C", self.repo_id.get_path(), "config", "--get", "gitflow.prefix.feature"])
+            .args([
+                "-C",
+                self.repo_id.0.as_str(),
+                "config",
+                "--get",
+                "gitflow.prefix.feature",
+            ])
             .output();
 
         output.map_or(false, |o| o.status.success())
@@ -37,7 +43,7 @@ impl FlowCommands {
         let branch_type = self.get_branch_type(branch_name)?;
 
         let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(self.repo_id.get_path()).arg("flow");
+        cmd.arg("-C").arg(self.repo_id.0.as_str()).arg("flow");
         cmd.arg(branch_type).arg("finish");
         // Remove the prefix from the branch name
         let prefix = format!("{}/", branch_type);
@@ -59,7 +65,7 @@ impl FlowCommands {
     /// A command to start the branch
     pub fn start_cmd(&self, branch_type: &str, name: &str) -> Command {
         let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(self.repo_id.get_path()).arg("flow");
+        cmd.arg("-C").arg(self.repo_id.0.as_str()).arg("flow");
         cmd.arg(branch_type).arg("start").arg(name);
         cmd
     }
@@ -67,7 +73,7 @@ impl FlowCommands {
     fn get_branch_type(&self, branch_name: &str) -> Result<&str, String> {
         // Get git flow prefixes from config
         let output = Command::new("git")
-            .args(["-C", self.repo_id.get_path(), "config", "--list"])
+            .args(["-C", self.repo_id.0.as_str(), "config", "--list"])
             .output()
             .map_err(|e| e.to_string())?;
 

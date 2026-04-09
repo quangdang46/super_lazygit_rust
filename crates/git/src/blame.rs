@@ -38,7 +38,7 @@ impl BlameCommands {
         let output = Command::new("git")
             .args([
                 "-C",
-                self.repo_id.get_path(),
+                self.repo_id.0.as_str(),
                 "blame",
                 "-l",
                 &format!("-L{first_line},+{num_lines}"),

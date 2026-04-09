@@ -39,6 +39,7 @@ pub mod remote_loader;
 pub mod stash_loader;
 pub mod tag_loader;
 pub mod types;
+pub mod worktree;
 pub mod worktree_loader;
 
 use crate::graph::{render_commit_graph, GraphCommit};
