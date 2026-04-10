@@ -5021,7 +5021,6 @@ impl TuiApp {
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Repository shell")
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.muted)),
             )
@@ -5409,10 +5408,10 @@ impl TuiApp {
                     64
                 }
             }
-            _ if area.width >= 160 => 32,
-            _ if area.width >= 120 => 36,
-            _ if area.width >= 90 => 40,
-            _ => 46,
+            _ if area.width >= 160 => 26,
+            _ if area.width >= 120 => 30,
+            _ if area.width >= 90 => 34,
+            _ => 38,
         }
     }
 
@@ -10474,10 +10473,12 @@ fn footer_hint_text(state: &AppState) -> String {
             "Open: enter  Search: /  Filter: f  Sort: s  Refresh: r  Keybindings: ?".to_string()
         }
         PaneId::RepoUnstaged => {
-            "Stage: <space>  Edit: e  Stash: s  Discard: d  Reset: D  Keybindings: ?".to_string()
+            "Stage: <space>  Edit: e  Stash: s  Discard: d  Reset: D  Diff: a/A  Keybindings: ?"
+                .to_string()
         }
         PaneId::RepoStaged => {
-            "Unstage: <space>  Commit: c  Edit: e  Stash: s  Discard: d  Keybindings: ?".to_string()
+            "Unstage: <space>  Commit: c  Amend: A  Edit: e  Stash: s  Discard: d  Keybindings: ?"
+                .to_string()
         }
         PaneId::RepoDetail => repo_footer_hint_text(state),
         PaneId::Modal => "Confirm: enter  Close: esc".to_string(),
@@ -19795,7 +19796,6 @@ mod tests {
         assert!(rendered.contains("Line select: J/K"));
         assert!(rendered.contains("@@ -1 +1 @@"));
         assert!(rendered.contains("+new line"));
-        assert!(rendered.contains("Repository shell"));
         assert!(rendered.contains("Watch: unknown"));
         assert!(rendered.contains("Screen: normal"));
     }
