@@ -1,0 +1,46 @@
+TASK 11: Add ColorScheme enum (Dark/Light/System)
+=================================================
+
+IMPLEMENTATION:
+- File: crates/app/src/style/color.rs
+
+EVIDENCE:
+1. ColorScheme enum exists with Dark/Light/System variants:
+   ```rust
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+   pub enum ColorScheme {
+       Dark,
+       Light,
+       #[default]
+       System,
+   }
+   ```
+
+2. Default is System:
+   - #[default] attribute on System variant
+   - Default trait implementation returns System
+
+3. User can override via config (later task):
+   - set_color_scheme(scheme: ColorScheme) function provided
+   - Global state management with OnceLock + RwLock
+
+4. `cargo check --package super-lazygit-app` passes:
+   - Exit code: 0
+   - Only pre-existing warnings (dead code), no errors
+
+VERIFICATION:
+```bash
+$ cargo check --package super-lazygit-app
+    Checking super-lazygit-app v0.1.0
+    Finished dev [unoptimized + debuginfo]
+```
+
+FUNCTIONS ADDED:
+- color_scheme(terminal_color_scheme: ColorScheme) -> ColorScheme
+  Returns user override if set, otherwise falls back to terminal scheme
+  
+- set_color_scheme(scheme: ColorScheme)
+  Sets user override for color scheme
+
+- ColorScheme::is_system() -> bool
+  Returns true if this is the System variant

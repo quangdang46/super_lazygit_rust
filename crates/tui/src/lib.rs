@@ -439,8 +439,22 @@ impl TuiApp {
 
         self.diagnostics
             .record_render("shell.frame", started_at.elapsed());
+        self.log_render_timing(started_at.elapsed());
         buffer
     }
+
+    #[cfg(debug_assertions)]
+    fn log_render_timing(&self, elapsed: std::time::Duration) {
+        if self.config.debug.render_timing {
+            let ms = elapsed.as_millis() as u64;
+            if ms > 16 {
+                eprintln!("WARN: Render took {}ms (target <16ms)", ms);
+            }
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn log_render_timing(&self, _elapsed: std::time::Duration) {}
 
     #[must_use]
     pub fn render_to_string(&mut self) -> String {
@@ -1365,12 +1379,34 @@ impl TuiApp {
     }
 
     fn route_mouse_left(&self, column: u16, row: u16) -> Vec<Action> {
-        if self.state.mode != AppMode::Repository {
+        if self.state.mode != AppMode::Repository && self.state.mode != AppMode::Workspace {
             return Vec::new();
         }
 
         if !self.state.modal_stack.is_empty() {
             return self.route_modal_mouse_left(column, row);
+        }
+
+        // Handle Workspace mode: clicking on a row in the workspace list selects that repo
+        if self.state.mode == AppMode::Workspace {
+            let area = Rect::new(
+                0,
+                0,
+                self.viewport.width.max(1),
+                self.viewport.height.max(1),
+            );
+            let panes = split_two_columns(area);
+            let workspace_pane = panes[0];
+
+            if point_in_rect(column, row, workspace_pane) {
+                let visible_repo_ids = self.state.workspace.visible_repo_ids();
+                // Content starts after top border (1 line) + 3 header lines (root, status, header)
+                let clicked_row = row.saturating_sub(workspace_pane.y + 1 + 3) as usize;
+                if clicked_row < visible_repo_ids.len() {
+                    return vec![Action::SelectRepoAtIndex(clicked_row)];
+                }
+            }
+            return Vec::new();
         }
 
         let area = Rect::new(
@@ -1433,6 +1469,32 @@ impl TuiApp {
     }
 
     fn route_mouse_double_left(&self, column: u16, row: u16) -> Vec<Action> {
+        // Handle Workspace mode: double-clicking on a repo row enters repo detail mode
+        if self.state.mode == AppMode::Workspace {
+            let area = Rect::new(
+                0,
+                0,
+                self.viewport.width.max(1),
+                self.viewport.height.max(1),
+            );
+            let panes = split_two_columns(area);
+            let workspace_pane = panes[0];
+
+            if point_in_rect(column, row, workspace_pane) {
+                let visible_repo_ids = self.state.workspace.visible_repo_ids();
+                // Content starts after top border (1 line) + 3 header lines (root, status, header)
+                let clicked_row = row.saturating_sub(workspace_pane.y + 1 + 3) as usize;
+                if clicked_row < visible_repo_ids.len() {
+                    let repo_id = visible_repo_ids[clicked_row].clone();
+                    return vec![
+                        Action::SelectRepoAtIndex(clicked_row),
+                        Action::EnterRepoMode { repo_id },
+                    ];
+                }
+            }
+            return Vec::new();
+        }
+
         if self.state.mode != AppMode::Repository || self.state.modal_stack.is_empty() {
             return Vec::new();
         }
@@ -5030,32 +5092,51 @@ impl TuiApp {
     fn render_workspace_list(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
         let layout = workspace_table_layout(area.width.saturating_sub(2) as usize);
         let repo_ids = self.state.workspace.visible_repo_ids();
+        let repo_ids_len = repo_ids.len();
+        let repo_ids_is_empty = repo_ids.is_empty();
+        let header_lines = 3;
+        let content_height = usize::from(area.height.saturating_sub(2));
+        let list_height = content_height.saturating_sub(header_lines);
+
+        let list_is_focused = self.state.focused_pane == PaneId::WorkspaceList;
+        let selected_repo_id = self.state.workspace.selected_repo_id.clone();
+        let repo_summaries = self.state.workspace.repo_summaries.clone();
+        let repo_ids_clone = repo_ids.clone();
+
+        let mut renderer = list_renderer::ListRenderer::new(repo_ids.len(), move |start, end| {
+            repo_ids_clone[start..end]
+                .iter()
+                .map(|repo_id| {
+                    let is_selected = selected_repo_id
+                        .as_ref()
+                        .is_some_and(|selected| selected == repo_id);
+                    let summary = repo_summaries.get(repo_id);
+                    vec![workspace_repo_line(
+                        repo_id,
+                        summary,
+                        is_selected,
+                        list_is_focused,
+                        layout,
+                        theme,
+                    )
+                    .to_string()]
+                })
+                .collect()
+        });
+
+        let rendered_list = renderer.render_lines(0, list_height as isize);
+        let rendered_lines: Vec<Line> = rendered_list.lines().map(Line::from).collect();
+
         let mut lines = vec![
             Line::from(self.workspace_root_label()),
-            workspace_status_line(&self.state, repo_ids.len(), theme),
+            workspace_status_line(&self.state, repo_ids_len, theme),
             workspace_table_header(layout, theme),
         ];
 
-        if repo_ids.is_empty() {
+        if repo_ids_is_empty {
             lines.extend(workspace_empty_list_lines(&self.state));
         } else {
-            for repo_id in &repo_ids {
-                let is_selected = self
-                    .state
-                    .workspace
-                    .selected_repo_id
-                    .as_ref()
-                    .is_some_and(|selected| selected == repo_id);
-                let summary = self.state.workspace.repo_summaries.get(repo_id);
-                lines.push(workspace_repo_line(
-                    repo_id,
-                    summary,
-                    is_selected,
-                    self.state.focused_pane == PaneId::WorkspaceList,
-                    layout,
-                    theme,
-                ));
-            }
+            lines.extend(rendered_lines);
         }
 
         Paragraph::new(lines)
@@ -5178,6 +5259,9 @@ impl TuiApp {
     }
 
     fn render_repo_detail(&self, area: Rect, buffer: &mut Buffer, theme: Theme) {
+        if area.height < 4 {
+            return;
+        }
         let (title, lines) = if let Some(repo_mode) = &self.state.repo_mode {
             let lines = match repo_mode.active_subview {
                 RepoSubview::Status => repo_diff_lines(
@@ -7607,15 +7691,37 @@ fn repo_branch_lines(
         header_lines,
         0,
     );
-    for index in visible_indices
-        .into_iter()
-        .skip(window_start)
-        .take(window_len)
-    {
-        let branch = &detail.branches[index];
-        let style = branch_row_style(branch, index == selected_index, is_focused, theme);
-        lines.push(Line::from(Span::styled(branch_row_label(branch), style)));
-    }
+
+    let visible_indices_clone = visible_indices.clone();
+    let selected_index_for_renderer = selected_index;
+    let detail_branches = detail.branches.clone();
+    let is_focused_for_renderer = is_focused;
+    let theme_for_renderer = theme;
+
+    let mut renderer =
+        list_renderer::ListRenderer::new(visible_indices.len(), move |start, end| {
+            visible_indices_clone[start..end]
+                .iter()
+                .map(|&branch_idx| {
+                    let branch = &detail_branches[branch_idx];
+                    let style = branch_row_style(
+                        branch,
+                        branch_idx == selected_index_for_renderer,
+                        is_focused_for_renderer,
+                        theme_for_renderer,
+                    );
+                    vec![Span::styled(branch_row_label(branch), style).to_string()]
+                })
+                .collect()
+        });
+
+    let rendered =
+        renderer.render_lines(window_start as isize, (window_start + window_len) as isize);
+    let rendered_lines_vec: Vec<Line> = rendered
+        .lines()
+        .map(|s| Line::from(s.to_string()))
+        .collect();
+    lines.extend(rendered_lines_vec);
 
     lines
 }

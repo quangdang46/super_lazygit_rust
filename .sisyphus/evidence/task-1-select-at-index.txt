@@ -1,0 +1,34 @@
+# Task 1: SelectRepoAtIndex Action and Reducer - Evidence
+
+## Action Definition (crates/core/src/action.rs, line 17)
+
+```rust
+SelectRepoAtIndex(usize),
+```
+
+Location in Action enum - placed after `SelectPreviousRepo` (line 16) and before `FocusWorkspaceSearch` (line 18).
+
+## Reducer Handling (crates/core/src/reducer.rs, lines 127-131)
+
+```rust
+Action::SelectRepoAtIndex(idx) => {
+    if state.workspace.select_at_index(idx).is_some() {
+        effects.push(Effect::ScheduleRender);
+    }
+}
+```
+
+Location in reducer - placed after `SelectPreviousRepo` handling (lines 122-126) and before `FocusWorkspaceSearch` (lines 132+).
+
+## Implementation Pattern
+
+- Follows the same pattern as `SelectNextRepo` and `SelectPreviousRepo`:
+  - Calls `state.workspace.select_at_index(idx)` (already exists in state.rs)
+  - If selection changed (is_some()), pushes `Effect::ScheduleRender`
+- `select_at_index` handles empty list and out-of-bounds index clamping internally
+
+## Verification
+
+- `cargo check --package super-lazygit-core` passes
+- No changes to function signatures
+- No mouse-specific logic added (pure action/state as required)

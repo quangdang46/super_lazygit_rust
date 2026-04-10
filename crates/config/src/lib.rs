@@ -40,6 +40,8 @@ pub struct AppConfig {
     pub prompt_to_return_from_subprocess: bool,
     pub keybindings: KeybindingConfig,
     pub diagnostics: DiagnosticsConfig,
+    #[serde(alias = "debug")]
+    pub debug: DebugConfig,
     pub services: BTreeMap<String, String>,
 }
 
@@ -62,6 +64,7 @@ impl Default for AppConfig {
             prompt_to_return_from_subprocess: true,
             keybindings: KeybindingConfig::default(),
             diagnostics: DiagnosticsConfig::default(),
+            debug: DebugConfig::default(),
             services: BTreeMap::new(),
         }
     }
@@ -1159,6 +1162,8 @@ fn shell_quote(value: &str) -> String {
 pub struct ThemeConfig {
     pub preset: ThemePreset,
     pub colors: ThemeColors,
+    #[serde(alias = "colorScheme")]
+    pub color_scheme: String,
     #[serde(alias = "activeBorderColor")]
     pub active_border_color: Vec<String>,
     #[serde(alias = "inactiveBorderColor")]
@@ -1190,6 +1195,7 @@ impl Default for ThemeConfig {
         Self {
             preset: ThemePreset::DefaultDark,
             colors: ThemeColors::default(),
+            color_scheme: String::from("auto"),
             active_border_color: vec![String::from("green"), String::from("bold")],
             inactive_border_color: vec![String::from("default")],
             searching_active_border_color: vec![String::from("cyan"), String::from("bold")],
@@ -1347,6 +1353,17 @@ impl Default for DiagnosticsConfig {
             slow_render_threshold_ms: 16,
             watcher_burst_threshold: 8,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DebugConfig {
+    pub render_timing: bool,
+}
+
+impl DebugConfig {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 

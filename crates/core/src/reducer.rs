@@ -124,6 +124,11 @@ fn reduce_action(state: &mut AppState, action: Action, effects: &mut Vec<Effect>
                 effects.push(Effect::ScheduleRender);
             }
         }
+        Action::SelectRepoAtIndex(idx) => {
+            if state.workspace.select_at_index(idx).is_some() {
+                effects.push(Effect::ScheduleRender);
+            }
+        }
         Action::FocusWorkspaceSearch => {
             state.workspace.search_focused = true;
             effects.push(Effect::ScheduleRender);

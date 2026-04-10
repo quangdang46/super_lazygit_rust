@@ -14,6 +14,7 @@ pub enum Action {
     LeaveRepoMode,
     SelectNextRepo,
     SelectPreviousRepo,
+    SelectRepoAtIndex(usize),
     FocusWorkspaceSearch,
     BlurWorkspaceSearch,
     CancelWorkspaceSearch,

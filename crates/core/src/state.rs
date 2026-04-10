@@ -867,6 +867,21 @@ impl WorkspaceState {
         self.search_match_index = next_index;
         Some(next_repo)
     }
+
+    pub fn select_at_index(&mut self, idx: usize) -> Option<RepoId> {
+        let visible_repo_ids = self.visible_repo_ids();
+        if visible_repo_ids.is_empty() {
+            self.selected_repo_id = None;
+            self.search_match_index = 0;
+            return None;
+        }
+
+        let clamped_idx = idx.min(visible_repo_ids.len() - 1);
+        let next_repo = visible_repo_ids[clamped_idx].clone();
+        self.selected_repo_id = Some(next_repo.clone());
+        self.search_match_index = clamped_idx;
+        Some(next_repo)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1070,6 +1085,7 @@ pub struct RepoModeState {
     pub comparison_source: Option<RepoSubview>,
     pub copied_commit: Option<CopiedCommit>,
     pub detail: Option<RepoDetail>,
+    pub cached_visible_indices: Option<Vec<usize>>,
 }
 
 pub const DEFAULT_DIFF_CONTEXT_LINES: u16 = 3;
@@ -1146,6 +1162,7 @@ impl RepoModeState {
             comparison_source: None,
             copied_commit: None,
             detail: None,
+            cached_visible_indices: None,
         }
     }
 
@@ -1582,6 +1599,39 @@ pub struct RepoDetail {
     pub merge_state: MergeState,
     pub merge_fast_forward_preference: MergeFastForwardPreference,
     pub fast_forward_merge_targets: BTreeMap<String, bool>,
+    pub last_render_hash: u64,
+}
+
+impl RepoDetail {
+    pub fn content_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut s = DefaultHasher::new();
+        self.file_tree.len().hash(&mut s);
+        self.diff.selected_path.hash(&mut s);
+        self.branches.len().hash(&mut s);
+        self.remotes.len().hash(&mut s);
+        self.remote_branches.len().hash(&mut s);
+        self.tags.len().hash(&mut s);
+        self.commits.len().hash(&mut s);
+        self.commit_graph_lines.len().hash(&mut s);
+        self.bisect_state.is_some().hash(&mut s);
+        self.rebase_state.is_some().hash(&mut s);
+        self.stashes.len().hash(&mut s);
+        self.reflog_items.len().hash(&mut s);
+        self.worktrees.len().hash(&mut s);
+        self.submodules.len().hash(&mut s);
+        self.working_tree_state.cherry_picking.hash(&mut s);
+        self.working_tree_state.merging.hash(&mut s);
+        self.working_tree_state.rebasing.hash(&mut s);
+        self.working_tree_state.reverting.hash(&mut s);
+        std::mem::discriminant(&self.merge_state).hash(&mut s);
+        s.finish()
+    }
+
+    pub fn needs_full_render(&self) -> bool {
+        self.content_hash() != self.last_render_hash
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -5070,6 +5120,71 @@ mod tests {
             workspace_attention_score(Some(&conflict)) > workspace_attention_score(Some(&behind))
         );
         assert!(workspace_attention_score(Some(&behind)) > workspace_attention_score(Some(&clean)));
+    }
+
+    #[test]
+    fn select_at_index_with_three_repos_and_valid_index() {
+        let repo_a = RepoId::new("/tmp/repo-a");
+        let repo_b = RepoId::new("/tmp/repo-b");
+        let repo_c = RepoId::new("/tmp/repo-c");
+        let mut workspace = WorkspaceState {
+            discovered_repo_ids: vec![repo_a.clone(), repo_b.clone(), repo_c.clone()],
+            repo_summaries: BTreeMap::from([
+                (repo_a.clone(), summary(&repo_a.0, "alpha")),
+                (repo_b.clone(), summary(&repo_b.0, "beta")),
+                (repo_c.clone(), summary(&repo_c.0, "gamma")),
+            ]),
+            ..WorkspaceState::default()
+        };
+
+        let selected = workspace.select_at_index(1);
+        assert_eq!(selected, Some(repo_b.clone()));
+        assert_eq!(workspace.selected_repo_id, Some(repo_b.clone()));
+        assert_eq!(workspace.search_match_index, 1);
+
+        let selected = workspace.select_at_index(0);
+        assert_eq!(selected, Some(repo_a.clone()));
+        assert_eq!(workspace.selected_repo_id, Some(repo_a.clone()));
+        assert_eq!(workspace.search_match_index, 0);
+
+        let selected = workspace.select_at_index(2);
+        assert_eq!(selected, Some(repo_c.clone()));
+        assert_eq!(workspace.selected_repo_id, Some(repo_c.clone()));
+        assert_eq!(workspace.search_match_index, 2);
+    }
+
+    #[test]
+    fn select_at_index_out_of_bounds_handling() {
+        let repo_a = RepoId::new("/tmp/repo-a");
+        let repo_b = RepoId::new("/tmp/repo-b");
+        let repo_c = RepoId::new("/tmp/repo-c");
+        let mut workspace = WorkspaceState {
+            discovered_repo_ids: vec![repo_a.clone(), repo_b.clone(), repo_c.clone()],
+            repo_summaries: BTreeMap::from([
+                (repo_a.clone(), summary(&repo_a.0, "alpha")),
+                (repo_b.clone(), summary(&repo_b.0, "beta")),
+                (repo_c.clone(), summary(&repo_c.0, "gamma")),
+            ]),
+            ..WorkspaceState::default()
+        };
+
+        let selected = workspace.select_at_index(100);
+        assert_eq!(selected, Some(repo_c.clone()));
+        assert_eq!(workspace.selected_repo_id, Some(repo_c.clone()));
+        assert_eq!(workspace.search_match_index, 2);
+
+        let selected = workspace.select_at_index(2);
+        assert_eq!(selected, Some(repo_c.clone()));
+    }
+
+    #[test]
+    fn select_at_index_empty_workspace() {
+        let mut workspace = WorkspaceState::default();
+
+        let selected = workspace.select_at_index(0);
+        assert_eq!(selected, None);
+        assert_eq!(workspace.selected_repo_id, None);
+        assert_eq!(workspace.search_match_index, 0);
     }
 
     #[test]

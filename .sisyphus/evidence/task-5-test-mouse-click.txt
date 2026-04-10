@@ -1,0 +1,65 @@
+thread 'utils::regexp::tests::test_find_named_matches' (748396) panicked at crates/app/src/utils/regexp.rs:33:63:
+called `Option::unwrap()` on a `None` value
+
+---- utils::utils::tests::test_modulo_with_wrap stdout ----
+
+thread 'utils::utils::tests::test_modulo_with_wrap' (748472) panicked at crates/app/src/utils/utils.rs:78:9:
+assertion `left == right` failed
+  left: -1
+ right: 4
+
+
+failures:
+    context::list_view_model::tests::test_set_selection
+    oscommands::git_cmd_obj_builder::tests::test_git_cmd_builder_adds_optional_locks
+    tests::e2e_keyboard_harness_runs_commit_history_file_and_detached_checkout_cycle
+    tests::e2e_keyboard_harness_runs_remote_management_cycle
+    tests::e2e_keyboard_harness_runs_repo_detail_filter_worktree_and_return_cycle
+    tests::e2e_keyboard_harness_runs_workspace_triage_commit_and_push_flow
+    tests::parity_matrix_lists_all_open_clone_parity_beads
+    utils::color::tests::test_decolorise_link
+    utils::formatting::tests::test_string_width_unicode
+    utils::formatting::tests::test_truncate_with_ellipsis
+    utils::regexp::tests::test_find_named_matches
+    utils::slice::tests::test_prev_index
+    utils::template::tests::test_resolve_placeholder_string
+    utils::utils::tests::test_modulo_with_wrap
+
+test result: FAILED. 167 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.29s
+
+error: test failed, to rerun pass `-p super-lazygit-app --bin slg`
+---CARGO CHECK---
+ 6 |     pub fn new() -> Self {
+   |            ^^^
+...
+10 |     pub fn check_for_new_update(&self) -> Result<String, String> {
+   |            ^^^^^^^^^^^^^^^^^^^^
+...
+14 |     pub fn update(&self, _new_version: &str) -> Result<(), String> {
+   |            ^^^^^^
+
+warning: method `get_viewName_for_window` should have a snake case name
+  --> crates/app/src/controllers/helpers/window_helper.rs:60:12
+   |
+60 |     pub fn get_viewName_for_window(&self, _window: &str) -> String {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `get_view_name_for_window`
+   |
+   = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `super-lazygit-app` (bin "super-lazygit") generated 965 warnings (run `cargo fix --bin "super-lazygit" -p super-lazygit-app` to apply 2 suggestions)
+warning: `super-lazygit-app` (bin "slg") generated 965 warnings (965 duplicates)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.32s
+---NEW TESTS---
+
+running 3 tests
+test state::tests::select_at_index_empty_workspace ... ok
+test state::tests::select_at_index_out_of_bounds_handling ... ok
+test state::tests::select_at_index_with_three_repos_and_valid_index ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 370 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

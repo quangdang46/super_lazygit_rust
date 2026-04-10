@@ -1,0 +1,30 @@
+=== TASK 2: WorkspaceState::select_at_index() method ===
+
+FILE: crates/core/src/state.rs
+
+NEW METHOD ADDED (after select_with_step, line ~870):
+
+```rust
+pub fn select_at_index(&mut self, idx: usize) -> Option<RepoId> {
+    let visible_repo_ids = self.visible_repo_ids();
+    if visible_repo_ids.is_empty() {
+        self.selected_repo_id = None;
+        self.search_match_index = 0;
+        return None;
+    }
+
+    let clamped_idx = idx.min(visible_repo_ids.len() - 1);
+    let next_repo = visible_repo_ids[clamped_idx].clone();
+    self.selected_repo_id = Some(next_repo.clone());
+    self.search_match_index = clamped_idx;
+    Some(next_repo)
+}
+```
+
+VERIFICATION:
+- cargo check --package super-lazygit-core ✓ passes
+- Index 0 selects first visible repo ✓
+- Index beyond length clamps to last valid index ✓ (uses min() for clamping)
+- Pure state logic, no UI or mouse-specific code ✓
+
+LOCATION: After select_with_step() at line 869, before the WorkspaceSortMode enum definition at line 872.

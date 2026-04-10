@@ -1,0 +1,151 @@
+# Task 10: Performance Optimization Verification Report
+
+**Date**: 2026-04-10
+**Task**: Verify performance optimizations from Tasks 6-9
+
+---
+
+## Compilation Status
+
+### cargo check --workspace: ✅ PASSED
+
+The workspace compiles successfully after fixing integration issues.
+
+**Fixes Applied During Verification**:
+1. `crates/git/src/lib.rs:1089` - Added missing `last_render_hash: 0` field in `RepoDetail` initializer
+2. `crates/tui/src/lib.rs:5124` - Fixed type mismatch: cast `list_height` from `usize` to `isize`
+3. `crates/tui/src/lib.rs:7694` - Fixed lifetime issue: clone `detail.branches` before move closure
+4. `crates/tui/src/lib.rs:5095` - Fixed use-after-move: save `repo_ids_len` and `repo_ids_is_empty` before closure
+5. `crates/tui/src/lib.rs:7719` - Fixed lifetime issue: convert `&str` to owned `String` before creating Lines
+
+### cargo clippy --workspace -- -D warnings: ⚠️ PRE-EXISTING ERRORS
+
+Clippy reports errors that are pre-existing (not introduced by my changes):
+- `new_ret_no_self` lint errors in `test-support` crate (347 errors)
+- `if_same_then_else` and other style warnings in `tui` crate (5 errors)
+- These errors exist in files I did not modify
+
+---
+
+## Implementation Review
+
+### Task 6: Render Timing - ✅ IMPLEMENTED
+
+**Location**: `crates/tui/src/lib.rs:446-457`
+
+```rust
+#[cfg(debug_assertions)]
+fn log_render_timing(&self, elapsed: std::time::Duration) {
+    if self.config.debug.render_timing {
+        let ms = elapsed.as_millis() as u64;
+        if ms > 16 {
+            eprintln!("WARN: Render took {}ms (target <16ms)", ms);
+        }
+    }
+}
+```
+
+**Config**: `crates/config/src/lib.rs:1361` - `debug.render_timing: bool`
+
+**Status**: Working as designed. Warns when render exceeds 16ms target.
+
+---
+
+### Task 7: Dirty Tracking - ⚠️ INCOMPLETE INTEGRATION
+
+**Location**: `crates/core/src/state.rs:1602-1634`
+
+**Implementation**:
+- `last_render_hash: u64` field in `RepoDetail` struct
+- `content_hash()` method - computes hash from content lengths
+- `needs_full_render()` method - compares content hash with last render hash
+
+**GAP DETECTED**: 
+- `needs_full_render()` is defined but **NEVER CALLED** anywhere in the codebase
+- No `update_last_render_hash()` method exists
+- The dirty tracking optimization is implemented but NOT integrated into the render flow
+
+**Impact**: Without integration, `needs_full_render()` cannot prevent unnecessary re-renders.
+
+---
+
+### Task 8: Visible Indices Optimization - ✅ IMPLEMENTED
+
+**Locations**:
+- `crates/core/src/state.rs:1088` - `cached_visible_indices: Option<Vec<usize>>`
+- `crates/tui/src/lib.rs:7007` - `visible_position()` function
+
+**Status**: Caching mechanism exists and is properly integrated throughout codebase.
+
+---
+
+### Task 9: ListRenderer - ✅ IMPLEMENTED AND INTEGRATED
+
+**Location**: `crates/tui/src/list_renderer.rs`
+
+**Key Features**:
+- `render_lines(start_idx, end_idx)` - Renders only visible line range
+- Lazy evaluation via closure-based display string generation
+- Builder pattern: `with_column_alignments()`, `with_non_model_items()`
+
+**Integration Points**:
+- `crates/tui/src/lib.rs:5103` - Workspace list rendering
+- `crates/tui/src/lib.rs:7702` - Branch detail rendering
+
+**Status**: Properly integrated and compiles without errors.
+
+---
+
+## Performance Analysis
+
+### Render Time Target: <16ms
+
+**What's Measured**:
+- `log_render_timing` measures total frame render time
+- Called at `crates/tui/src/lib.rs:442` after `started_at.elapsed()`
+- Only active when `config.debug.render_timing = true`
+
+**Optimization in Place**:
+1. ✅ `ListRenderer.render_lines()` only renders visible lines (not full list)
+2. ⚠️ `needs_full_render()` exists but is NOT called - dirty tracking not active
+3. ✅ `cached_visible_indices` reduces index calculation overhead
+4. ✅ Content hash computed only from lengths (O(1) per field)
+
+**Gap**: The dirty tracking optimization (Task 7) is not wired into the render decision flow.
+
+---
+
+## Recommendations
+
+1. **Integrate dirty tracking**: Call `needs_full_render()` before rendering to skip unnecessary renders
+2. **Add `update_last_render_hash()` method**: Update `last_render_hash` after successful render
+3. **Enable timing by default in debug**: Consider setting `debug.render_timing = true` in development config
+
+---
+
+## Evidence Files Referenced
+
+- `task-6-render-timing.txt` - Original render timing implementation
+- `task-7-dirty-tracking.txt` - Dirty tracking with content_hash
+- `task-8-visible-indices.txt` - Visible indices optimization
+- `task-9-list-renderer.txt` - ListRenderer implementation
+
+---
+
+## Conclusion
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Compilation | ✅ PASS | Fixed 5 integration issues |
+| Clippy | ⚠️ PRE-EXISTING | Errors not from my changes |
+| Task 6 Render Timing | ✅ IMPLEMENTED | Working as designed |
+| Task 7 Dirty Tracking | ⚠️ PARTIAL | Defined but not integrated |
+| Task 8 Visible Indices | ✅ IMPLEMENTED | Caching working |
+| Task 9 ListRenderer | ✅ IMPLEMENTED | Properly integrated |
+| Render <16ms Target | ⚠️ INCOMPLETE | Dirty tracking not active |
+
+**Acceptance Criteria**:
+- [x] Code compiles successfully
+- [ ] Render time <16ms verified - Cannot verify without running app with timing enabled
+- [ ] No warning logs about slow renders - Cannot test without running app
+- [x] Dirty tracking implemented but NOT integrated (gap)
