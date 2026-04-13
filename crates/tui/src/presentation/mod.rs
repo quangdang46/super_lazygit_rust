@@ -26,6 +26,6 @@ pub use remote_branches::get_remote_branch_display_strings;
 pub use remotes::{get_remote_display_strings, Remote, RemoteDisplayOptions};
 pub use stash_entries::{get_stash_entry_display_strings, StashEntry};
 pub use submodules::get_submodule_display_strings;
-pub use suggestions::{get_suggestion_display_strings, get_suggestion_list_display_strings, Suggestion};
+pub use suggestions::{get_suggestion_display_strings, get_suggestion_list_display_strings};
 pub use tags::{get_tag_display_strings, Tag, TagDisplayOptions};
 pub use worktrees::*;

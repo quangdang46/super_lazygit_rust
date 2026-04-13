@@ -8,8 +8,9 @@ use super_lazygit_core::RemoteBranchItem;
 /// Get display strings for remote branch with styling.
 pub fn get_remote_branch_display_strings(branch: &RemoteBranchItem, diffed: bool) -> Vec<Span<'static>> {
     let name_style = if diffed {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(Color::Cyan) // DiffTerminalColor
     } else {
+        // Use GetBranchTextStyle logic - matches Go's GetBranchTextStyle(b.Name)
         Style::default() // DefaultTextColor
     };
 
