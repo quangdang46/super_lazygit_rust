@@ -1,0 +1,76 @@
+# UI Presentation Checklist - Go vs Rust parity
+
+## Presentation Files (source: Go in references/lazygit-master/pkg/gui/presentation/)
+
+[ ] authors/authors.go          → crates/tui/src/presentation/authors.rs
+[ ] branches.go                → crates/tui/src/presentation/branches.rs
+[ ] commits.go                  → crates/tui/src/presentation/commits.rs
+[ ] files.go                   → crates/tui/src/presentation/files.rs
+[ ] graph/cell.go              → crates/tui/src/presentation/graph/cell.rs
+[ ] graph/graph.go              → crates/tui/src/presentation/graph/mod.rs
+[ ] icons/file_icons.go         → crates/tui/src/presentation/icons/file_icons.rs
+[ ] icons/git_icons.go          → crates/tui/src/presentation/icons/git_icons.rs
+[ ] icons/icons.go              → crates/tui/src/presentation/icons/mod.rs
+[ ] item_operations.go         → crates/tui/src/presentation/item_operations.rs
+[ ] loader.go                  → crates/tui/src/presentation/loader.rs
+[ ] reflog_commits.go          → crates/tui/src/presentation/reflog_commits.rs
+[ ] remote_branches.go         → crates/tui/src/presentation/remote_branches.rs
+[ ] remotes.go                 → crates/tui/src/presentation/remotes.rs
+[ ] status.go                  → crates/tui/src/presentation/status.rs
+[ ] stash_entries.go           → crates/tui/src/presentation/stash_entries.rs
+[ ] submodules.go              → crates/tui/src/presentation/submodules.rs
+[ ] suggestions.go             → crates/tui/src/presentation/suggestions.rs
+[ ] tags.go                    → crates/tui/src/presentation/tags.rs
+[ ] worktrees.go               → crates/tui/src/presentation/worktrees.rs
+
+## UI Layout Files (source: Go in references/lazygit-master/pkg/gui/)
+
+[ ] layout.go                   → crates/tui/src/lib.rs (main TUI)
+[ ] window_arrangement_helper.go → crates/tui/src/lib.rs
+[ ] branches.go                 → crates/tui/src/lib.rs
+[ ] gui_driver.go               → crates/app/src/gui/
+
+## Presentation Module Status
+
+[x] authors.rs        - PORTED (basic author styling)
+[x] branches.rs       - PORTED (branch display with styling)
+[x] commits.rs        - PORTED (commit list with graph, FIXED: graph_line duplicate)
+[x] files.rs          - PORTED (file line with status coloring)
+[x] remotes.rs        - PORTED (remote display, FIXED: return Vec<Span>)
+[x] stash_entries.rs  - PORTED (stash display, FIXED: return Vec<Span>)
+[x] tags.rs           - PORTED (tag display, FIXED: return Vec<Span>)
+[ ] graph/cell.rs    - NEEDS CHECK
+[ ] graph/mod.rs      - NEEDS CHECK
+[ ] icons/file_icons.rs - NEEDS CHECK
+[ ] icons/git_icons.rs - NEEDS CHECK
+[ ] icons/mod.rs       - NEEDS CHECK
+[ ] item_operations.rs - NEEDS CHECK
+[ ] loader.rs         - NEEDS CHECK
+[ ] reflog_commits.rs - NEEDS CHECK
+[ ] remote_branches.rs - NEEDS CHECK
+[ ] status.rs         - NEEDS CHECK
+[ ] submodules.rs     - NEEDS CHECK
+[ ] suggestions.rs   - NEEDS CHECK
+[ ] worktrees.rs      - NEEDS CHECK
+
+## Current Issues to Fix
+
+1. [ ] Colors not displaying properly in terminal
+2. [ ] Graph characters rendering (│ ◯ ⏣─╮)
+3. [ ] Branch/tag colors (magenta/bold)
+4. [ ] File status colors (M=green, D=red, A=yellow)
+5. [ ] Worktree/submodule icons
+6. [ ] Icons integration (needs icons.rs completion)
+
+## Priority Order for Review
+
+1. commits.rs        - Critical (commit graph display)
+2. files.rs          - Critical (file status display)
+3. branches.rs       - Important (branch names with colors)
+4. status.rs         - Important (staged/unstaged status)
+5. graph/mod.rs      - Important (graph rendering)
+6. icons/*.rs        - Nice to have (icons)
+7. remotes.rs        - Done
+8. tags.rs           - Done
+9. stash_entries.rs  - Done
+10. authors.rs       - Done
