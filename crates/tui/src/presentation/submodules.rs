@@ -1,15 +1,28 @@
 // Ported from ./references/lazygit-master/pkg/gui/presentation/submodules.go
 
-pub struct SubmoduleConfig {
-    pub name: String,
-    pub parent_module: Option<Box<SubmoduleConfig>>,
-}
+use ratatui::text::Span;
 
-pub fn get_submodule_display_strings(s: &SubmoduleConfig) -> Vec<String> {
-    let name = if let Some(ref _p) = s.parent_module {
-        format!("  - {}", s.name)
+use super_lazygit_core::SubmoduleItem;
+
+use super::icons::file_icons::DEFAULT_SUBMODULE_ICON;
+use super::icons::is_icon_enabled;
+
+/// Get display strings for submodule with styling.
+pub fn get_submodule_display_strings(submodule: &SubmoduleItem) -> Vec<Span<'static>> {
+    let prefix = if submodule.name.contains('/') {
+        "  - " // Nested submodule indication
     } else {
-        s.name.clone()
+        ""
     };
-    vec![name]
+
+    let icon = if is_icon_enabled() {
+        DEFAULT_SUBMODULE_ICON.icon
+    } else {
+        ""
+    };
+
+    vec![
+        Span::raw(format!("{}{}", prefix, icon)),
+        Span::raw(submodule.name.clone()),
+    ]
 }
