@@ -350,7 +350,9 @@ fn display_commit(ctx: DisplayCommitContext<'_>) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    spans.push(Span::styled(name, name_style));
+    // Build full name: graph_line + mark + name
+    name_parts.push_str(&name);
+    spans.push(Span::styled(name_parts, name_style));
 
     Line::from(spans)
 }

@@ -20,4 +20,8 @@ pub use authors::{author_span, author_style, author_with_length};
 pub use branches::*;
 pub use commits::*;
 pub use files::*;
+pub use item_operations::ItemOperation;
+pub use remotes::{get_remote_display_strings, Remote, RemoteDisplayOptions};
+pub use stash_entries::{get_stash_entry_display_strings, StashEntry};
+pub use tags::{get_tag_display_strings, Tag, TagDisplayOptions};
 pub use worktrees::*;

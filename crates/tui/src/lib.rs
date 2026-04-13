@@ -5960,11 +5960,22 @@ impl TuiApp {
             let branch = &detail.branches[index];
             let marker = if index == selected_index { ">" } else { " " };
             let head = if branch.is_head { "*" } else { " " };
-            lines.push(Line::from(format!(
-                "{marker}{head} {} {}",
-                branch.name,
-                branch.upstream.as_deref().unwrap_or("")
-            )));
+
+            // Use presentation module for proper branch display with styling
+            let display_line = presentation::get_branch_display_string(
+                branch,
+                false, // full_description
+                false, // diffed
+                &[],   // worktrees
+                true,  // show_commit_hash
+                presentation::DivergenceDisplay::Arrow,
+                None,  // color_matcher
+            );
+
+            // Build line with marker/head prefix, preserving styled spans
+            let mut spans = vec![ratatui::text::Span::raw(format!("{marker}{head} "))];
+            spans.extend(display_line.spans.into_iter());
+            lines.push(ratatui::text::Line::from(spans));
         }
         lines.truncate(available_lines);
         lines
@@ -6013,10 +6024,23 @@ impl TuiApp {
         {
             let remote = &detail.remotes[index];
             let marker = if index == selected_index { ">" } else { " " };
-            lines.push(Line::from(format!(
-                "{marker} {} [{} branches]",
-                remote.name, remote.branch_count
-            )));
+
+            // Use presentation module for proper remote display with styling
+            let display_spans = presentation::get_remote_display_strings(
+                presentation::RemoteDisplayOptions {
+                    remote: &presentation::Remote {
+                        name: remote.name.clone(),
+                        branches: vec![], // Not using branch details here
+                    },
+                    diffed: false,
+                    item_operation: presentation::ItemOperation::None,
+                    branch_count: remote.branch_count,
+                },
+            );
+
+            let mut spans = vec![ratatui::text::Span::raw(format!("{marker} "))];
+            spans.extend(display_spans);
+            lines.push(Line::from(spans));
         }
         lines.truncate(available_lines);
         lines
@@ -6065,10 +6089,21 @@ impl TuiApp {
         {
             let tag = &detail.tags[index];
             let marker = if index == selected_index { ">" } else { " " };
-            lines.push(Line::from(format!(
-                "{marker} {} -> {}",
-                tag.name, tag.target_short_oid
-            )));
+
+            // Use presentation module for proper tag display with styling
+            let display_spans = presentation::get_tag_display_strings(
+                presentation::TagDisplayOptions {
+                    tag: &presentation::Tag {
+                        name: tag.name.clone(),
+                    },
+                    item_operation: presentation::ItemOperation::None,
+                    diffed: false,
+                },
+            );
+
+            let mut spans = vec![ratatui::text::Span::raw(format!("{marker} "))];
+            spans.extend(display_spans);
+            lines.push(Line::from(spans));
         }
         lines.truncate(available_lines);
         lines
@@ -6112,35 +6147,67 @@ impl TuiApp {
             1,
             0,
         );
-        for index in visible_indices
-            .into_iter()
-            .skip(window_start)
-            .take(window_len)
-        {
-            let commit = &detail.commits[index];
-            let marker = if index == selected_index { ">" } else { " " };
-            let row = if repo_mode.commit_history_mode.is_graph() {
-                detail
-                    .commit_graph_lines
-                    .get(index)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        format_commit_row(
-                            &commit.short_oid,
-                            &commit.author_name,
-                            &commit.extra_info,
-                            &commit.summary,
-                        )
-                    })
-            } else {
-                format_commit_row(
+
+        let is_graph = repo_mode.commit_history_mode.is_graph();
+
+        if is_graph {
+            // Use presentation module for proper commit display with styling in graph mode
+            let opts = presentation::CommitDisplayOptions {
+                commits: &detail.commits,
+                branches: &detail.branches,
+                current_branch_name: "",
+                has_rebase_update_refs_config: false,
+                full_description: false,
+                cherry_picked_hashes: &Default::default(),
+                diff_name: "",
+                marked_base_commit: "",
+                parse_emoji: false,
+                selected_commit_hash: detail.commits.get(selected_index).map(|c| c.oid.as_str()),
+                start_idx: window_start,
+                end_idx: window_start + window_len,
+                show_graph: true,
+                graph_lines: &detail.commit_graph_lines,
+                bisect_state: detail.bisect_state.as_ref(),
+                main_branches: &["main".to_string(), "master".to_string()],
+                commit_hash_length: 6,
+                author_short_length: 10,
+                author_long_length: 20,
+                conflict_label: "CONFLICT",
+                marked_commit_marker: "*",
+            };
+            let display_lines = presentation::get_commit_list_display_strings(&opts);
+
+            let mut display_idx = 0;
+            for index in visible_indices
+                .into_iter()
+                .skip(window_start)
+                .take(window_len)
+            {
+                let marker = if index == selected_index { ">" } else { " " };
+                if let Some(display_line) = display_lines.get(display_idx) {
+                    let mut spans = vec![ratatui::text::Span::raw(format!("{marker} "))];
+                    spans.extend(display_line.spans.iter().cloned());
+                    lines.push(ratatui::text::Line::from(spans));
+                }
+                display_idx += 1;
+            }
+        } else {
+            // Use original format_commit_row for linear mode
+            for index in visible_indices
+                .into_iter()
+                .skip(window_start)
+                .take(window_len)
+            {
+                let commit = &detail.commits[index];
+                let marker = if index == selected_index { ">" } else { " " };
+                let row = format_commit_row(
                     &commit.short_oid,
                     &commit.author_name,
                     &commit.extra_info,
                     &commit.summary,
-                )
-            };
-            lines.push(Line::from(format!("{marker} {row}")));
+                );
+                lines.push(Line::from(format!("{marker} {row}")));
+            }
         }
         lines.truncate(available_lines);
         lines
@@ -6241,10 +6308,17 @@ impl TuiApp {
         {
             let stash = &detail.stashes[index];
             let marker = if index == selected_index { ">" } else { " " };
-            lines.push(Line::from(format!(
-                "{marker} {} {}",
-                stash.stash_ref, stash.label
-            )));
+
+            // Use presentation module for proper stash display with styling
+            let stash_entry = presentation::StashEntry {
+                name: stash.stash_ref.clone(),
+                recency: stash.recency.clone(),
+            };
+            let display_spans = presentation::get_stash_entry_display_strings(&stash_entry, false);
+
+            let mut spans = vec![ratatui::text::Span::raw(format!("{marker} "))];
+            spans.extend(display_spans);
+            lines.push(Line::from(spans));
         }
         lines.truncate(available_lines);
         lines
@@ -8938,46 +9012,84 @@ fn repo_commit_lines(
         header_lines,
         0,
     );
+
+    // Use presentation module for proper commit display with full styling
+    let opts = presentation::CommitDisplayOptions {
+        commits: &detail.commits,
+        branches: &detail.branches,
+        current_branch_name: "",
+        has_rebase_update_refs_config: false,
+        full_description: false,
+        cherry_picked_hashes: &Default::default(),
+        diff_name: "",
+        marked_base_commit: "",
+        parse_emoji: false,
+        selected_commit_hash: Some(&selected.oid),
+        start_idx: window_start,
+        end_idx: window_start + window_len,
+        show_graph: repo_mode.commit_history_mode.is_graph(),
+        graph_lines: &detail.commit_graph_lines,
+        bisect_state: detail.bisect_state.as_ref(),
+        main_branches: &["main".to_string(), "master".to_string()],
+        commit_hash_length: 6,
+        author_short_length: 10,
+        author_long_length: 20,
+        conflict_label: "CONFLICT",
+        marked_commit_marker: "*",
+    };
+    let display_lines = presentation::get_commit_list_display_strings(&opts);
+
+    let mut display_idx = 0;
     for (visible_position, index) in visible_indices
         .iter()
         .enumerate()
         .skip(window_start)
         .take(window_len)
     {
-        let commit = &detail.commits[*index];
+        let _commit = &detail.commits[*index];
         if let Some(header) =
             commit_history_section_header(detail, &visible_indices, visible_position)
         {
             lines.push(Line::from(header.to_string()));
         }
         let prefix = if *index == selected_index { ">" } else { " " };
-        let row = if repo_mode.commit_history_mode.is_graph() {
-            detail
-                .commit_graph_lines
-                .get(*index)
-                .cloned()
-                .unwrap_or_else(|| {
-                    format_commit_row(
-                        &commit.short_oid,
-                        &commit.author_name,
-                        &commit.extra_info,
-                        &commit.summary,
-                    )
-                })
-        } else {
-            format_commit_row(
-                &commit.short_oid,
-                &commit.author_name,
-                &commit.extra_info,
-                &commit.summary,
-            )
-        };
         let style = if *index == selected_index {
             selected_line_style(Style::default().fg(theme.foreground), true, theme)
         } else {
             Style::default().fg(theme.foreground)
         };
-        lines.push(Line::from(Span::styled(format!("{prefix} {row}"), style)));
+
+        // Use presentation module output if available, otherwise fall back to graph lines
+        if let Some(display_line) = display_lines.get(display_idx) {
+            let mut spans = vec![Span::raw(format!("{prefix} "))];
+            spans.extend(display_line.spans.iter().cloned());
+            lines.push(Line::from(spans).style(style));
+        } else {
+            // Fallback to original behavior
+            let row = if repo_mode.commit_history_mode.is_graph() {
+                detail
+                    .commit_graph_lines
+                    .get(*index)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        format_commit_row(
+                            &detail.commits[*index].short_oid,
+                            &detail.commits[*index].author_name,
+                            &detail.commits[*index].extra_info,
+                            &detail.commits[*index].summary,
+                        )
+                    })
+            } else {
+                format_commit_row(
+                    &detail.commits[*index].short_oid,
+                    &detail.commits[*index].author_name,
+                    &detail.commits[*index].extra_info,
+                    &detail.commits[*index].summary,
+                )
+            };
+            lines.push(Line::from(Span::styled(format!("{prefix} {row}"), style)));
+        }
+        display_idx += 1;
     }
 
     if selected.changed_files.is_empty() {
