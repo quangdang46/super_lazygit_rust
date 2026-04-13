@@ -27,13 +27,11 @@ const COMMIT_HASH_SHORT_SIZE: usize = 8;
 /// Color matcher for branch names based on configured patterns.
 ///
 /// Parity: `colorMatcher` struct in `presentation/branches.go`.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct BranchColorMatcher {
     patterns: HashMap<String, Color>,
     is_regex: bool,
 }
-
 
 impl BranchColorMatcher {
     /// Match a branch name against configured color patterns.

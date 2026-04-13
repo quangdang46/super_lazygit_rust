@@ -11,3 +11,4 @@ references/
 registry.*
 .beads/
 .why
+.omc/*

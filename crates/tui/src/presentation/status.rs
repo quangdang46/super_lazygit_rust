@@ -33,6 +33,5 @@ impl WorkingTreeState {
 }
 
 pub fn format_status(_opts: StatusOptions) -> String {
-    
     String::new()
 }

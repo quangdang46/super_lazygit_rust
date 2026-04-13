@@ -3,15 +3,13 @@
 pub const MERGE_SYMBOL: char = '⏣';
 pub const COMMIT_SYMBOL: char = '◯';
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CellType {
     #[default]
     Connection,
     Commit,
     Merge,
 }
-
 
 #[derive(Clone, Default)]
 pub struct Cell {
@@ -60,10 +58,7 @@ impl Cell {
             cached_sprint(&right_style, second)
         };
 
-        let styled_first = cached_sprint(
-            &self.style.clone().unwrap_or_default(),
-            &adjusted_first,
-        );
+        let styled_first = cached_sprint(&self.style.clone().unwrap_or_default(), &adjusted_first);
         format!("{}{}", styled_first, styled_second_char)
     }
 

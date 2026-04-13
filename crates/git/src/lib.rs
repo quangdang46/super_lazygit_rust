@@ -1086,6 +1086,7 @@ impl GitBackend for CliGitBackend {
             merge_state: read_merge_state(working_tree_state),
             merge_fast_forward_preference: read_merge_fast_forward_preference(&repo_path),
             fast_forward_merge_targets,
+            last_render_hash: 0,
         })
     }
 

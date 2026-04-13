@@ -12,7 +12,6 @@ pub enum ItemOperation {
     CheckingOut,
 }
 
-
 pub fn item_operation_to_string(operation: ItemOperation, tr: &TranslationSet) -> String {
     match operation {
         ItemOperation::None => String::new(),
