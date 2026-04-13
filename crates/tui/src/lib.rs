@@ -5713,7 +5713,7 @@ impl TuiApp {
         repo_mode: &RepoModeState,
         available_lines: usize,
     ) -> Vec<Line<'static>> {
-        let theme = Theme::from_config(&self.config);
+        let _theme = Theme::from_config(&self.config); // TODO: use for selection highlighting
         let pane = if repo_mode.main_focus == PaneId::RepoStaged {
             PaneId::RepoStaged
         } else {
@@ -5765,38 +5765,53 @@ impl TuiApp {
             .skip(window_start)
             .take(window_len)
         {
-            let marker = if selected_index == Some(index) {
-                ">"
-            } else {
-                " "
+            let marker = if selected_index == Some(index) { ">" } else { " " };
+
+            // Build FileLineOptions from VisibleStatusEntry
+            let short_status = entry.kind.map(|k| {
+                let s = match k {
+                    super_lazygit_core::FileStatusKind::Modified => "M ",
+                    super_lazygit_core::FileStatusKind::Added => "A ",
+                    super_lazygit_core::FileStatusKind::Deleted => "D ",
+                    super_lazygit_core::FileStatusKind::Renamed => "R ",
+                    super_lazygit_core::FileStatusKind::Untracked => "??",
+                    super_lazygit_core::FileStatusKind::Conflicted => "UU",
+                };
+                s.to_string()
+            }).unwrap_or_else(|| "  ".to_string());
+
+            let (is_collapsed, is_file) = match entry.entry_kind {
+                super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed } => (collapsed, false),
+                super_lazygit_core::VisibleStatusEntryKind::File => (false, true),
             };
-            let indent = "  ".repeat(entry.depth);
-            let kind = entry.kind.map(file_status_kind_label).unwrap_or(" ");
-            let label = match entry.entry_kind {
-                super_lazygit_core::VisibleStatusEntryKind::Directory { collapsed } => format!(
-                    "{}{} {}/",
-                    if collapsed { "▶" } else { "▼" },
-                    indent,
-                    entry.label
-                ),
-                super_lazygit_core::VisibleStatusEntryKind::File => {
-                    format!("{indent}{}", entry.label)
-                }
+
+            // Determine has_staged/unstaged changes from status
+            let has_staged_changes = short_status.chars().next().map(|c| c != ' ' && c != '?').unwrap_or(false);
+            let has_unstaged_changes = short_status.chars().nth(1).map(|c| c != ' ').unwrap_or(false);
+
+            let opts = presentation::FileLineOptions {
+                is_collapsed,
+                has_unstaged_changes,
+                has_staged_changes,
+                visual_depth: entry.depth,
+                show_numstat: true,
+                name: entry.label.as_str(),
+                short_status: short_status.as_str(),
+                is_file,
+                is_submodule: false,
+                is_worktree: false,
+                lines_added: 0,
+                lines_deleted: 0,
+                is_rename: false,
+                previous_name: None,
             };
-            let style = status_entry_style(
-                if pane == PaneId::RepoStaged {
-                    FileStatusSection::Staged
-                } else {
-                    FileStatusSection::Unstaged
-                },
-                selected_index == Some(index),
-                true,
-                theme,
-            );
-            lines.push(Line::from(Span::styled(
-                format!("{marker} {kind} {label}"),
-                style,
-            )));
+
+            let file_line = presentation::get_file_line(&opts);
+
+            // Prepend selection marker
+            let mut spans = vec![ratatui::text::Span::raw(format!("{marker} "))];
+            spans.extend(file_line.spans.into_iter());
+            lines.push(ratatui::text::Line::from(spans));
         }
         lines.truncate(available_lines);
         lines
