@@ -80,6 +80,10 @@ impl TextStyle {
 
         style
     }
+
+    pub fn get_fg_color(&self) -> Option<(u8, u8, u8)> {
+        self.fg.and_then(|color| color.get_rgb())
+    }
 }
 
 impl Default for TextStyle {

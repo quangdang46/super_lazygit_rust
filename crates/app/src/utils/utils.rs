@@ -20,7 +20,7 @@ pub fn modulo_with_wrap(n: i32, max: i32) -> i32 {
     if n >= max {
         n % max
     } else if n < 0 {
-        max + n
+        n % max + max
     } else {
         n
     }

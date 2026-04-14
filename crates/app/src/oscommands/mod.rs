@@ -148,7 +148,9 @@ impl OSCommand {
     }
 
     pub fn new_shell(&self, command: &str) -> CmdObj {
-        self.cmd.new_shell(command, None)
+        self.cmd
+            .new_shell(command, None)
+            .add_env_vars(&["GIT_OPTIONAL_LOCKS=0"])
     }
 
     pub fn new_shell_with_file(&self, command: &str, shell_functions_file: &str) -> CmdObj {
