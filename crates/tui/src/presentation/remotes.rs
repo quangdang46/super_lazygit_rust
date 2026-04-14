@@ -1,5 +1,8 @@
 // Ported from ./references/lazygit-master/pkg/gui/presentation/remotes.go
 
+use ratatui::style::{Color, Style};
+use ratatui::text::Span;
+
 use super::item_operations::ItemOperation;
 
 pub struct Remote {
@@ -14,15 +17,16 @@ pub struct RemoteDisplayOptions<'a> {
     pub branch_count: usize,
 }
 
-pub fn get_remote_display_strings(opts: RemoteDisplayOptions) -> Vec<String> {
-    let branch_count = opts.remote.branches.len();
+/// Get styled display strings for a remote.
+/// Parity: `GetRemoteDisplayStrings` in `presentation/remotes.go`.
+pub fn get_remote_display_strings(opts: RemoteDisplayOptions<'_>) -> Vec<Span<'static>> {
+    let text_color = if opts.diffed { Color::Cyan } else { Color::Reset };
 
-    let text_style = if opts.diffed { "Cyan" } else { "Default" };
+    let mut spans = Vec::with_capacity(3);
+    spans.push(Span::styled(opts.remote.name.clone(), Style::default().fg(text_color)));
 
-    let mut result = Vec::with_capacity(3);
-    result.push(format!("{:?}", text_style));
+    let description = format!("[{} branches]", opts.branch_count);
+    spans.push(Span::styled(description, Style::default().fg(Color::Blue)));
 
-    let description = format!("{} branches", branch_count);
-    result.push(description);
-    result
+    spans
 }

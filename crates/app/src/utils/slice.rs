@@ -8,8 +8,18 @@ pub fn next_index(numbers: &[i32], current_number: i32) -> usize {
 }
 
 pub fn prev_index(numbers: &[i32], current_number: i32) -> usize {
-    let end = numbers.len().saturating_sub(1);
-    for i in (0..=end).rev() {
+    let len = numbers.len();
+    if len == 0 {
+        return 0;
+    }
+    let end = len - 1;
+    if numbers[end] < current_number {
+        if end > 0 {
+            return end - 1;
+        }
+        return 0;
+    }
+    for i in (0..end).rev() {
         if numbers[i] < current_number {
             return i;
         }

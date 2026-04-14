@@ -66,7 +66,7 @@ impl ListCursor {
         if self.len > 0 {
             value.clamp(0, self.len as isize - 1)
         } else {
-            -1
+            0
         }
     }
 

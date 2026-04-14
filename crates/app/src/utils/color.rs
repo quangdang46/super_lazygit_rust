@@ -16,7 +16,8 @@ pub fn decolorise(input: &str) -> String {
     }
 
     let re = regex::Regex::new(r"\x1B\[([0-9]{1,3}(;[0-9]{1,3})*)?[mGK]").unwrap();
-    let link_re = regex::Regex::new(r"\x1B]8;[^;]*;(.*?)(\x1B.|\x07)").unwrap();
+    let link_re =
+        regex::Regex::new(r"\x1B]8;[^;]*;[^\x07\x1B]*\x07([^\x07\x1B]*)\x1B]8;;\x07").unwrap();
 
     let mut result = input.to_string();
     result = re.replace_all(&result, "").to_string();
@@ -42,9 +43,7 @@ pub fn is_valid_hex_value(value: &str) -> bool {
         return false;
     }
 
-    value[1..]
-        .chars()
-        .all(|c: char| c.is_ascii_hexdigit())
+    value[1..].chars().all(|c: char| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -105,9 +104,9 @@ mod tests {
 
     #[test]
     fn test_decolorise_link() {
-        // Link escape sequence: \x1B]8;..;url\x1B. or \x1B]8;..;url\x07
+        // Link escape sequence: \x1B]8;;url\x07text\x1B]8;;\x07
         assert_eq!(
-            decolorise("\x1B]8;;https://example.com\x1B.Example\x1B]8;;\x1B."),
+            decolorise("\x1B]8;;https://example.com\x07Example\x1B]8;;\x07"),
             "Example"
         );
         assert_eq!(

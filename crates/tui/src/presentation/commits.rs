@@ -336,6 +336,8 @@ fn display_commit(ctx: DisplayCommitContext<'_>) -> Line<'static> {
     spans.push(author);
 
     // Column 7: Graph line + mark + tag + name
+    // Note: graph_line already contains the full commit info when pre-rendered
+    // so we only add name separately when graph_line is empty
     let name_style = Style::default();
     let mut name_parts = String::new();
     name_parts.push_str(ctx.graph_line);
@@ -350,7 +352,12 @@ fn display_commit(ctx: DisplayCommitContext<'_>) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    spans.push(Span::styled(name, name_style));
+    // Only add name if graph_line is empty (linear mode)
+    // When graph_line is present, it already contains the name/message
+    if ctx.graph_line.is_empty() {
+        name_parts.push_str(&name);
+    }
+    spans.push(Span::styled(name_parts, name_style));
 
     Line::from(spans)
 }

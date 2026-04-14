@@ -5,7 +5,7 @@ It exists so reviewers can answer "what is still missing?" without doing a fresh
 manual audit of upstream lazygit.
 
 Current behavior parity status: tracked row-by-row in the matrix below.
-Current source/test parity status: incomplete; open `slg-*` parity beads remain in `.beads/issues.jsonl`.
+Current source/test parity status: complete. no open `slg-*` parity beads remain in `.beads/issues.jsonl`.
 
 Behavior parity complete = a matrix row is marked `Shipped` and its listed regressions prove the user-visible surface.
 Source/test parity complete = no `open` or `in_progress` `slg-*` parity beads remain for `./references/lazygit-master/**`.

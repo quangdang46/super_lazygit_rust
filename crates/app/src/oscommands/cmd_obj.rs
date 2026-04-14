@@ -25,6 +25,8 @@ pub struct CmdObj {
     pub ignore_empty_error: bool,
     /// Credential strategy.
     pub credential_strategy: CredentialStrategy,
+    /// Environment variables added via add_env_vars.
+    pub env_vars: Vec<(String, String)>,
 }
 
 impl CmdObj {
@@ -38,6 +40,7 @@ impl CmdObj {
             use_pty: false,
             ignore_empty_error: false,
             credential_strategy: CredentialStrategy::None,
+            env_vars: Vec::new(),
         }
     }
 
@@ -52,17 +55,29 @@ impl CmdObj {
         if args.is_empty() {
             return String::new();
         }
-        args.iter()
-            .map(|arg| {
-                let s = arg.to_string_lossy();
-                if s.contains(' ') {
-                    format!("\"{}\"", s)
-                } else {
-                    s.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+        let env_str = if self.env_vars.is_empty() {
+            String::new()
+        } else {
+            self.env_vars
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join(" ")
+                + " "
+        };
+        env_str
+            + &args
+                .iter()
+                .map(|arg| {
+                    let s = arg.to_string_lossy();
+                    if s.contains(' ') {
+                        format!("\"{}\"", s)
+                    } else {
+                        s.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
     }
 
     /// Get the arguments.
@@ -75,6 +90,7 @@ impl CmdObj {
         for var in vars {
             if let Some((key, value)) = var.split_once('=') {
                 self.cmd.env(key, value);
+                self.env_vars.push((key.to_string(), value.to_string()));
             }
         }
         self

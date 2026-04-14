@@ -70,6 +70,10 @@ impl AppColor {
         self.rgb.is_some()
     }
 
+    pub fn get_rgb(&self) -> Option<(u8, u8, u8)> {
+        self.rgb
+    }
+
     pub fn to_ratatui_color(&self, _is_bg: bool) -> Color {
         if let Some((r, g, b)) = self.rgb {
             return Color::Rgb(r, g, b);

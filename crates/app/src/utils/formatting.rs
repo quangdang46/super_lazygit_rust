@@ -21,6 +21,32 @@ pub fn string_width(s: &str) -> usize {
     s.len()
 }
 
+pub fn truncate_with_ellipsis(text: &str, limit: usize) -> String {
+    if string_width(text) <= limit {
+        return text.to_string();
+    }
+    if limit == 0 {
+        return String::new();
+    }
+    if limit == 1 {
+        return "…".to_string();
+    }
+
+    let mut truncated = String::new();
+    let mut current_width = 0;
+
+    for grapheme in unicode_segmentation::UnicodeSegmentation::graphemes(text, true) {
+        let grapheme_width = string_width(grapheme);
+        if current_width + grapheme_width >= limit {
+            break;
+        }
+        truncated.push_str(grapheme);
+        current_width += grapheme_width;
+    }
+
+    truncated + "…"
+}
+
 pub fn with_padding(text: &str, padding: usize, alignment: Alignment) -> String {
     let uncolored = crate::utils::color::decolorise(text);
     let width = string_width(&uncolored);
@@ -32,29 +58,6 @@ pub fn with_padding(text: &str, padding: usize, alignment: Alignment) -> String 
         Alignment::Left => format!("{}{}", text, space),
         Alignment::Right => format!("{}{}", space, text),
     }
-}
-
-pub fn truncate_with_ellipsis(text: &str, limit: usize) -> String {
-    if string_width(text) <= limit {
-        return text.to_string();
-    }
-    if limit <= 2 {
-        return ".".repeat(limit);
-    }
-
-    let mut truncated = String::new();
-    let mut current_width = 0;
-
-    for grapheme in unicode_segmentation::UnicodeSegmentation::graphemes(text, true) {
-        let grapheme_width = string_width(grapheme);
-        if current_width + grapheme_width > limit - 1 {
-            break;
-        }
-        truncated.push_str(grapheme);
-        current_width += grapheme_width;
-    }
-
-    truncated + "…"
 }
 
 pub fn safe_truncate(text: &str, limit: usize) -> String {
@@ -260,8 +263,9 @@ mod tests {
 
     #[test]
     fn test_string_width_unicode() {
-        assert_eq!(string_width("日本"), 2);
-        assert_eq!(string_width("中文"), 2);
+        // UnicodeWidthStr::width returns display width: CJK chars are 2 cells each
+        assert_eq!(string_width("日本"), 4);
+        assert_eq!(string_width("中文"), 4);
     }
 
     #[test]
@@ -280,7 +284,7 @@ mod tests {
     fn test_truncate_with_ellipsis() {
         assert_eq!(truncate_with_ellipsis("hello", 10), "hello");
         assert_eq!(truncate_with_ellipsis("hello", 3), "he…");
-        assert_eq!(truncate_with_ellipsis("hi", 2), "..");
+        assert_eq!(truncate_with_ellipsis("hi", 2), "hi");
     }
 
     #[test]
