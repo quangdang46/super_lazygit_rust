@@ -1,3 +1,289 @@
+1.UI click `Files`
+
++--[1] Status----------------+ +--[0] Unstaged changes---------------------------+
+| ✔ aicd -> main            | | diff --git a/.../lsp_client.py                  |
++---------------------------+ | diff --git a/.../mcp_client.py                  |
++--[2] Files - Worktrees - Submodules----+ | @@ -1,580 +1,31 @@                |
+| /                         | | - MCP Client...                                 |
+| |- .super-lazygit         | | + MCP integration module...                     |
+| |- ?? workspace-cache.json| |                                                |
+| '- languages/...          | |                                                |
++-------------(1 of 176)----+ +------------------------------------------------+
++--[3] Local branches--------+ +--Command Log-----------------------------------+
+| * main                    | | view press `                                    |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| 9e1da7e5 feat: ...        | |                                                |
+| 684e0bcc feat: ...        | |                                                |
++-------------(1 of 177)----+ +-------------------------------(0 of 0)---------+
+Stage: <space> | Commit: c | Stash: s | Discard: d | Reset: g | Keybindings: ?
+
+
+2.UI click `Worktrees`
+
++--[1] Status----------------+ +--[0] Worktree-----------------------------------+
+| ✔ aicd -> main            | | Name:   aicd (main worktree)                    |
++---------------------------+ | Branch: main                                    |
++--[2] Files - Worktrees - Submodules----+ | Path:   ~/projects/aicd            |
+| * aicd main (main worktree)| |                                               |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[3] Local branches--------+ +--Command Log-----------------------------------+
+| * main                    | | You can hide/focus this panel by pressing `0`   |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(1 of 177)----+ +-------------------------------(0 of 0)---------+
+New worktree: n | Switch: <space> | Remove: d | Keybindings: ?
+
+
+3.UI click `Remotes`
+
++--[1] Status----------------+ +--[0] Remote-------------------------------------+
+| ✔ aicd -> main            | | origin                                           |
++---------------------------+ | URL: https://github.com/.../AI-coding-agents... |
++--[2] Files - Worktrees - Submodules----+ |                                    |
+| * aicd main (main worktree)| |                                               |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[3] Local branches - Remotes - Tags----+ +--Command Log---------------------+
+| origin                    | | You can hide/focus this panel by pressing `0`   |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(1 of 177)----+ +-------------------------------(0 of 0)---------+
+View branches: <enter> | New remote: n | Remove: d | Edit: e | Fetch: f | Keybindings: ?
+
+
+4.UI click `Tags`
+
++--[1] Status----------------+ +--[0] Tag----------------------------------------+
+| ✔ aicd -> main            | | No tags                                          |
++---------------------------+ |                                                 |
++--[2] Files - Worktrees - Submodules----+ |                                     |
+| * aicd main (main worktree)| |                                               |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[3] Local branches - Remotes - Tags----+ +--Command Log---------------------+
+|                         | | You can hide/focus this panel by pressing `0`      |
++-------------(0 of 0)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(1 of 177)----+ +-------------------------------(0 of 0)---------+
+New tag: n | Keybindings: ?
+
+
+5.UI click `Commits`
+
++--[1] Status----------------+ +--[0] Patch--------------------------------------+
+| ✔ aicd -> main            | | commit 9e1da7e5... (HEAD -> main, origin/main)  |
++---------------------------+ | Author: Test <test@test.com>                    |
++--[2] Files - Worktrees - Submodules----+ | Date: Sun Apr 12 23:12:50 2026    |
+| * aicd main (main worktree)| | diff --git a/.../feature.json                 |
++-------------(1 of 1)------+ | + "id": "local-plugins"                         |
++--[3] Local branches - Remotes - Tags----+ +-----------------------------------+
+| * main                    | |                                                |
++-------------(1 of 1)------+ +--Command Log-----------------------------------+
++--[4] Commits - Reflog------+ | You can hide/focus this panel by pressing `0`  |
+| 9e1da7e5 feat: ...        | +------------------------------------------------+
+| 684e0bcc feat: ...        | +--[5] Stash-------------------------------------+
++-------------(1 of 177)----+ |                                                |
+                             +-------------------------------(0 of 0)---------+
+Squash: s | Fixup: f | Reword: r | Drop: d | Edit: e | Amend: A | Checkout: <space> | Reset: g
+
+
+6.UI click `Reflog`
+
++--[1] Status----------------+ +--[0] Reflog Entry-------------------------------+
+| ✔ aicd -> main            | | commit 9e1da7e5... (HEAD -> main, origin/main)  |
++---------------------------+ | Author: Test <test@test.com>                    |
++--[2] Files - Worktrees - Submodules----+ | Date: Sun Apr 12 23:12:50 2026    |
+| * aicd main (main worktree)| | diff --git a/.../feature.json                 |
++-------------(1 of 1)------+ | + "schemaVersion": "1"                          |
++--[3] Local branches - Remotes - Tags----+ +-----------------------------------+
+| * main                    | |                                                |
++-------------(1 of 1)------+ +--Command Log-----------------------------------+
++--[4] Commits - Reflog------+ | You can hide/focus this panel by pressing `0`  |
+| commit: feat(python)...   | +------------------------------------------------+
+| pull --rebase (start)...  | +--[5] Stash-------------------------------------+
++-------------(1 of 186)----+ |                                                |
+                             +-------------------------------(0 of 0)---------+
+Checkout: <space> | Reset: g | Copy (cherry-pick): c | Keybindings: ?
+
+
+7.UI click `Submodules`
+
++--[1] Status----------------+ +--[0] Submodule----------------------------------+
+| ✔ aicd -> main            | | No submodules                                    |
++---------------------------+ |                                                 |
++--[2] Files - Worktrees - Submodules----+ |                                     |
+|                         | |                                                    |
++-------------(0 of 0)------+ +------------------------------------------------+
++--[3] Local branches - Remotes - Tags----+ +--Command Log---------------------+
+| * main                    | | You can hide/focus this panel by pressing `0`   |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(2 of 186)----+ +-------------------------------(0 of 0)---------+
+New submodule: n | Keybindings: ?
+
+
+8.UI click `Status` (show dialog)
+
++--[1] Status----------------+ +--[0] Status-------------------------------------+
+| ✔ aicd -> main            | | lazygit                                          |
++---------------------------+ | Copyright 2024 Jesse Duffield                   |
++--[2] Files - Worktrees - Submodules----+ |                                   |
+| * aicd main (main worktree)| |   +--Recent repositories---------------------+  |
++-------------(1 of 1)------+ |   | super_lazygit_rust main .../super_lazygit |  |
++--[3] Local branches - Remotes - Tags----+ | Cancel                          |  |
+| * main                    | |   +--------------------------(1 of 2)--------+  |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(2 of 186)----+ +-------------------------------(0 of 0)---------+
+Execute: <enter> | Close/Cancel: <esc>
+
+
+9.UI click `File details`
+
++--[1] Status----------------+ +--[0] Unstaged changes---------------------------+
+| ✔ aicd -> main            | | diff --git a/.../enter_plan_mode_prompt.py      |
++---------------------------+ | @@ -0,0 +1,38 @@                                |
++--[2] Files - Worktrees - Submodules----+ | +ENTER_PLAN_MODE_TOOL_PROMPT = ... |
+| v /                       | | +## When to Use This Tool                       |
+|   v languages/...         | | +## When NOT to Use This Tool                   |
+|     v EnterPlanModeTool   | | +## What Happens in Plan Mode                   |
+|       ?? __init__.py      | | ...                                             |
+|       ?? enter_plan_mode_prompt.py | |                                        |
++-------------(8 of 176)----+ +------------------------------------------------+
++--[3] Local branches - Remotes - Tags----+ +--Command Log---------------------+
+| * main                    | | You can hide/focus this panel by pressing `0`   |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(2 of 186)----+ +-------------------------------(0 of 0)---------+
+Stage: <space> | Commit: c | Edit: e | Stash: s | Discard: d | Reset: g | Keybindings: ?
+
+
+10.UI click `Branch details`
+
++--[1] Status----------------+ +--[0] Log----------------------------------------+
+| ✔ aicd -> main            | | commit 9e1da7e (HEAD -> main, origin/main)      |
++---------------------------+ | Author: Test <test@test.com>                    |
++--[2] Files - Worktrees - Submodules----+ | Date: 2 days ago                  |
+| v / ...                    | | feat(python): add local-plugins feature        |
++-------------(8 of 176)----+ | commit 684e0bcc                                 |
++--[3] Local branches - Remotes - Tags----+ | feat(python): port notebook...   |
+| * main                    | | ...                                             |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(2 of 186)----+ +-------------------------------(0 of 0)---------+
+Checkout: <space> | New branch: n | Delete: d | Rebase: r | Reset: g | Upstream: u | Keybindings: ?
+
+
+11.UI click `Commit details`
+
++--[1] Status----------------+ +--[0] Reflog Entry-------------------------------+
+| ✔ aicd -> main            | | commit 9e1da7e5... (HEAD -> main, origin/main)  |
++---------------------------+ | feat(python): add local-plugins feature          |
++--[2] Files - Worktrees - Submodules----+ | diff --git a/.../feature.json     |
+| v / ...                    | | + "schemaVersion": "1"                          |
++-------------(8 of 176)----+ | + "id": "local-plugins"                         |
++--[3] Local branches - Remotes - Tags----+ +-----------------------------------+
+| * main                    | |                                                |
++-------------(1 of 1)------+ +--Command Log-----------------------------------+
++--[4] Commits - Reflog------+ | You can hide/focus this panel by pressing `0`  |
+| 9e1da7e5 commit: ...      | +------------------------------------------------+
+| 684e0bcc commit: ...      | +--[5] Stash-------------------------------------+
++-------------(1 of 186)----+ |                                                |
+                             +-------------------------------(0 of 0)---------+
+Checkout: <space> | Reset: g | Copy (cherry-pick): c | Keybindings: ?
+
+
+12.UI click `Stash`
+
++--[1] Status----------------+ +--[0] Stash--------------------------------------+
+| ✔ aicd -> main            | | No stash entries                                 |
++---------------------------+ |                                                 |
++--[2] Files - Worktrees - Submodules----+ |                                     |
+| v / ...                    | |                                                |
++-------------(8 of 176)----+ +------------------------------------------------+
++--[3] Local branches - Remotes - Tags----+ +--Command Log---------------------+
+| * main                    | | You can hide/focus this panel by pressing `0`   |
++-------------(1 of 1)------+ +------------------------------------------------+
++--[4] Commits - Reflog------+ +--[5] Stash-------------------------------------+
+| ...                       | |                                                |
++-------------(5 of 186)----+ +-------------------------------(0 of 0)---------+
+Keybindings: ?
+
+
+13.UI click `Command Log`
+
++--[1] Status----------------+ +--[0] Command Log-------------------------------+
+| ✔ aicd -> main            | | You can hide/focus this panel by pressing `0`   |
++---------------------------+ | Random tip: In flat file view...                |
++--[2] Files - Worktrees - Submodules----+ |                                    |
+| v / ...                    | |                                                |
++-------------(5 of 176)----+ +------------------------------------------------+
++--[3] Local branches - Remotes - Tags----+ +--[4] Commits - Reflog------------+
+| * main                    | | 9e1da7e5 commit: ...                            |
++-------------(1 of 1)------+ | 684e0bcc commit: ...                            |
+                             +-------------------------------(5 of 186)---------+
++--[5] Stash---------------------------------------------------------------------+
+|                                                                                |
++-----------------------------------------------(0 of 0)------------------------+
+Exit subview: <esc> | Keybindings: ?
+
+
+14.UI `Remotes` empty state
+
++--[3] Local branches - Remotes - Tags----+ +--[0] Remote-----------------------+
+|                                          | | No remotes                        |
++-------------(0 of 0)---------------------+ +----------------------------------+
+New remote: n | Keybindings: ?
+
+
+15.UI `Worktrees` empty state
+
++--[2] Files - Worktrees - Submodules------+ +--[0] Worktree---------------------+
+|                                          | | No worktrees this repo            |
++-------------(0 of 0)---------------------+ +----------------------------------+
+New worktree: n | Keybindings: ?
+
+
+16.UI `Branches` empty state
+
++--[3] Local branches - Remotes - Tags----+ +--[0] Log--------------------------+
+|                                          | | No branches this repo             |
++-------------(0 of 0)---------------------+ +----------------------------------+
+New branch: n | Keybindings: ?
+
+
+17.UI `Remote branches` subview
+
++--[3] Local branches - Remotes - Tags----+ +--[4] Remote Branches--------------+
+| origin                                   | | origin/main                       |
++-------------(1 of 1)---------------------+ | origin/feature-x                  |
+                                             +---------------------(1 of 2)------+
+Checkout: <space> | Exit subview: <esc> | Keybindings: ?
+
+
+18.UI `Reflog` empty state
+
++--[4] Commits - Reflog--------------------+ +--[0] Reflog Entry----------------+
+|                                          | | No reflog history                 |
++-------------(0 of 0)---------------------+ +----------------------------------+
+Keybindings: ?
+
+
+19.UI `Status` all-branches-log mode
+
++--[1] Status----------------+ +--[0] Log----------------------------------------+
+| ✔ aicd -> main            | | commit 9e1da7e (HEAD -> main, origin/main)      |
++---------------------------+ | commit 684e0bcc                                  |
++--[3] Local branches - Remotes - Tags----+ | commit 5001a6a2                    |
+| * main                    | | ...                                             |
++-------------(1 of 1)------+ +------------------------------------------------+
+Keybindings: ?
 
 1.UI click `Files`
 
@@ -41,6 +327,135 @@
 |                      | | view press `                                 |
 +---------(0 of 0)-----+ +----------------------------------------------+
 New worktree: n | Switch: <space> | Remove: d | Keybindings: ?
+
+
+14.UI `Remotes` empty state
+
++--[1] Status-----------+ +--[0] Remote----------------------------------+
+| ✔ aicd → main        | | No remotes                                    |
++----------------------+ |                                              |
++--[2] Files - Worktrees - Submodules--+ |                              |
+| * aicd main (main worktree) | |                                        |
++----------------------+ |                                              |
++--[3] Local branches - Remotes - Tags--+ |                              |
+|                      | |                                              |
+| (0 of 0)             | |                                              |
++----------------------+ |                                              |
++--[4] Commits - Reflog+ |                                              |
+| ...                  | |                                              |
++---------(1 of 177)---+ +----------------------------------------------+
++--[5] Stash-----------+ +--Command Log---------------------------------+
+|                      | | You can hide/focus this panel by pressing `0` |
++---------(0 of 0)-----+ +----------------------------------------------+
+New remote: n | Keybindings: ?
+
+
+15.UI `Worktrees` empty state
+
++--[1] Status-----------+ +--[0] Worktree--------------------------------+
+| ✔ aicd → main        | | No worktrees this repo                        |
++----------------------+ |                                              |
++--[2] Files - Worktrees - Submodules--+ |                              |
+|                      | |                                              |
+| (0 of 0)             | |                                              |
++----------------------+ |                                              |
++--[3] Local branches--+ |                                              |
+| * main               | |                                              |
+| (1 of 1)             | |                                              |
++----------------------+ |                                              |
++--[4] Commits - Reflog+ |                                              |
+| ...                  | |                                              |
++---------(1 of 177)---+ +----------------------------------------------+
++--[5] Stash-----------+ +--Command Log---------------------------------+
+|                      | | You can hide/focus this panel by pressing `0` |
++---------(0 of 0)-----+ +----------------------------------------------+
+New worktree: n | Keybindings: ?
+
+
+16.UI `Branches` empty state
+
++--[1] Status-----------+ +--[0] Log-------------------------------------+
+| ✔ aicd → main        | | No branches this repo                          |
++----------------------+ |                                              |
++--[2] Files - Worktrees - Submodules--+ |                              |
+| * aicd main (main worktree) | |                                        |
++----------------------+ |                                              |
++--[3] Local branches - Remotes - Tags--+ |                              |
+|                      | |                                              |
+| (0 of 0)             | |                                              |
++----------------------+ |                                              |
++--[4] Commits - Reflog+ |                                              |
+| ...                  | |                                              |
++---------(1 of 177)---+ +----------------------------------------------+
++--[5] Stash-----------+ +--Command Log---------------------------------+
+|                      | | You can hide/focus this panel by pressing `0` |
++---------(0 of 0)-----+ +----------------------------------------------+
+New branch: n | Keybindings: ?
+
+
+17.UI `Remote branches` subview
+
++--[1] Status-----------+ +--[0] Remote Branch---------------------------+
+| ✔ aicd → main        | | origin/main                                   |
++----------------------+ |                                              |
++--[2] Files - Worktrees - Submodules--+ |                              |
+| * aicd main (main worktree) | |                                        |
++----------------------+ |                                              |
++--[3] Local branches - Remotes - Tags--+ |                              |
+| origin               | |                                              |
+| (1 of 1)             | |                                              |
++----------------------+ |                                              |
++--[4] Remote branches-+ |                                              |
+| origin/main          | |                                              |
+| origin/feature-x     | |                                              |
++---------(1 of 2)-----+ +----------------------------------------------+
++--[5] Stash-----------+ +--Command Log---------------------------------+
+|                      | | You can hide/focus this panel by pressing `0` |
++---------(0 of 0)-----+ +----------------------------------------------+
+Checkout: <space> | Exit subview: <esc> | Keybindings: ?
+
+
+18.UI `Reflog` empty state
+
++--[1] Status-----------+ +--[0] Reflog Entry----------------------------+
+| ✔ aicd → main        | | No reflog history                              |
++----------------------+ |                                              |
++--[2] Files - Worktrees - Submodules--+ |                              |
+| * aicd main (main worktree) | |                                        |
++----------------------+ |                                              |
++--[3] Local branches - Remotes - Tags--+ |                              |
+| * main               | |                                              |
+| (1 of 1)             | |                                              |
++----------------------+ |                                              |
++--[4] Commits - Reflog+ |                                              |
+|                      | |                                              |
+| (0 of 0)             | |                                              |
++---------(0 of 0)-----+ +----------------------------------------------+
++--[5] Stash-----------+ +--Command Log---------------------------------+
+|                      | | You can hide/focus this panel by pressing `0` |
++---------(0 of 0)-----+ +----------------------------------------------+
+Keybindings: ?
+
+
+19.UI `Status` all-branches-log mode
+
++--[1] Status-----------+ +--[0] Log-------------------------------------+
+| ✔ aicd → main        | | commit 9e1da7e (HEAD -> main, origin/main)    |
++----------------------+ | Author: Test <test@test.com>                   |
++--[2] Files - Worktrees - Submodules--+ | Date: 2 days ago               |
+| * aicd main (main worktree) | |                                        |
++----------------------+ | feat(python): add local-plugins feature        |
++--[3] Local branches - Remotes - Tags--+ |                              |
+| * main               | | commit 684e0bcc                                |
+| (1 of 1)             | | Author: Test <test@test.com>                   |
++----------------------+ | Date: 2 days ago                               |
++--[4] Commits - Reflog+ | ...                                           |
+| ...                  | |                                              |
++---------(1 of 177)---+ +----------------------------------------------+
++--[5] Stash-----------+ +--Command Log---------------------------------+
+|                      | | You can hide/focus this panel by pressing `0` |
++---------(0 of 0)-----+ +----------------------------------------------+
+Keybindings: ?
 
 
 13.UI click `Command Log`
