@@ -25,7 +25,7 @@ jobs:
     name: ci - ${{matrix.os}}
     runs-on: ${{matrix.os}}
     env:
-      GOFLAGS: -mod=vendor
+      GOFLAGS: -mod=mod
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     name: "Integration Tests - git ${{matrix.git-version}}"
     env:
-      GOFLAGS: -mod=vendor
+      GOFLAGS: -mod=mod
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -105,7 +105,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      GOFLAGS: -mod=vendor
+      GOFLAGS: -mod=mod
       GOARCH: amd64
     steps:
       - name: Checkout code
@@ -132,7 +132,7 @@ jobs:
   check-codebase:
     runs-on: ubuntu-latest
     env:
-      GOFLAGS: -mod=vendor
+      GOFLAGS: -mod=mod
       GOARCH: amd64
     steps:
       - name: Checkout code
@@ -141,10 +141,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: 1.25.x
-      - name: Check Vendor Directory
-        # ensure our vendor directory matches up with our go modules
-        run: |
-          go mod vendor && git diff --exit-code || (echo "Unexpected change to vendor directory. Run 'go mod vendor' locally and commit the changes" && exit 1)
       - name: Check go.mod file
         # ensure our go.mod file is clean
         run: |
@@ -159,7 +155,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     env:
-      GOFLAGS: -mod=vendor
+      GOFLAGS: -mod=mod
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
