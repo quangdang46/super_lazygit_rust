@@ -7,7 +7,7 @@ import (
 
 const (
 	// These values will be passed to slg
-	SLG_ROOT_DIR          = "SLG_ROOT_DIR"
+	SLG_ROOT_DIR              = "SLG_ROOT_DIR"
 	SANDBOX_ENV_VAR           = "SANDBOX"
 	TEST_NAME_ENV_VAR         = "TEST_NAME"
 	WAIT_FOR_DEBUGGER_ENV_VAR = "WAIT_FOR_DEBUGGER"

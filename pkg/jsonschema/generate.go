@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/jesseduffield/lazycore/pkg/utils"
-	"github.com/quangdang46/slg/pkg/config"
 	"github.com/karimkhaleel/jsonschema"
+	"github.com/quangdang46/slg/pkg/config"
 	"github.com/samber/lo"
 )
 

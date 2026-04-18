@@ -10,7 +10,7 @@ type GithubPullRequest struct {
 }
 
 func (pr *GithubPullRequest) UserName() string {
-	// e.g. 'jesseduffield'
+	// e.g. 'quangdang46'
 	return pr.HeadRepositoryOwner.Login
 }
 

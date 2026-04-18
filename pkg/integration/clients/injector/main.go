@@ -5,12 +5,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/mitchellh/go-ps"
 	"github.com/quangdang46/slg/pkg/app"
 	"github.com/quangdang46/slg/pkg/app/daemon"
 	"github.com/quangdang46/slg/pkg/integration/components"
 	"github.com/quangdang46/slg/pkg/integration/tests"
 	integrationTypes "github.com/quangdang46/slg/pkg/integration/types"
-	"github.com/mitchellh/go-ps"
 )
 
 // The purpose of this program is to run slg with an integration test passed in.

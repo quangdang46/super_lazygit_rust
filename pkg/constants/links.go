@@ -21,7 +21,7 @@ var Links = struct {
 }{
 	RepoUrl:     "https://github.com/quangdang46/slg",
 	Issues:      "https://github.com/quangdang46/slg/issues",
-	Donate:      "https://github.com/sponsors/jesseduffield",
+	Donate:      "https://github.com/sponsors/quangdang46",
 	Discussions: "https://github.com/quangdang46/slg/discussions",
 	Releases:    "https://github.com/quangdang46/slg/releases",
 	Docs: Docs{

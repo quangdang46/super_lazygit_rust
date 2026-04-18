@@ -33,7 +33,7 @@ func (self *GitHubCommands) ConfiguredBaseRemoteName() string {
 	// the remote's URL determines the GitHub repo. Since `gh repo set-default` on the command line
 	// sets the config this way, it's probably good enough in practice, but for completeness it
 	// would be nice to also support the case where the config value is a full remote name (e.g.
-	// "jesseduffield/slg").
+	// "quangdang46/slg").
 
 	cmdArgs := NewGitCmd("config").
 		Arg("--local", "--get-regexp", `remote\..*\.gh-resolved`).
@@ -272,7 +272,7 @@ func GenerateGithubPullRequestMap(
 
 	remotesToOwnersMap := getRemotesToOwnersMap(remotes)
 
-	// A PR can be identified by two things: the owner e.g. 'jesseduffield' and the
+	// A PR can be identified by two things: the owner e.g. 'quangdang46' and the
 	// branch name e.g. 'feature/my-feature'. The owner might be different
 	// to the owner of the repo if the PR is from a fork of that repo.
 	type prKey struct {

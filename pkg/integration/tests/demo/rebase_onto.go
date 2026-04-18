@@ -23,7 +23,7 @@ var RebaseOnto = NewIntegrationTest(NewIntegrationTestArgs{
 		shell.RandomChangeCommit("Develop commit 2")
 		shell.RandomChangeCommit("Develop commit 3")
 
-		shell.SetAuthor("Jesse Duffield", "jesseduffield@gmail.com")
+		shell.SetAuthor("Jesse Duffield", "quangdang46@gmail.com")
 
 		shell.NewBranch("feature/demo")
 

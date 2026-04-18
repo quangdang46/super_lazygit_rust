@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jesseduffield/generics/set"
+	"github.com/kyokomi/emoji/v2"
 	"github.com/quangdang46/slg/pkg/commands/git_commands"
 	"github.com/quangdang46/slg/pkg/commands/models"
 	"github.com/quangdang46/slg/pkg/common"
@@ -15,7 +16,6 @@ import (
 	"github.com/quangdang46/slg/pkg/gui/style"
 	"github.com/quangdang46/slg/pkg/theme"
 	"github.com/quangdang46/slg/pkg/utils"
-	"github.com/kyokomi/emoji/v2"
 	"github.com/samber/lo"
 	"github.com/sasha-s/go-deadlock"
 	"github.com/stefanhaller/git-todo-parser/todo"

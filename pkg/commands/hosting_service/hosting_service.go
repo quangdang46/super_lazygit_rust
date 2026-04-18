@@ -61,7 +61,7 @@ func (self *HostingServiceMgr) GetCommitURL(commitHash string) (string, error) {
 	return pullRequestURL, nil
 }
 
-// e.g. 'jesseduffield/slg'
+// e.g. 'quangdang46/slg'
 func (self *HostingServiceMgr) GetRepoName() (string, error) {
 	gitService, err := self.getService()
 	if err != nil {
@@ -222,7 +222,7 @@ func GetRepoInfoFromURL(url string) (RepoInformation, error) {
 
 type Service struct {
 	repoURL string
-	// e.g. 'jesseduffield/slg'
+	// e.g. 'quangdang46/slg'
 	repoName string
 	ServiceDefinition
 }

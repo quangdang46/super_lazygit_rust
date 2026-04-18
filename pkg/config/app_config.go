@@ -590,8 +590,8 @@ func findConfigFile(filename string) (exists bool, path string) {
 		return true, filepath.Join(envConfigDir, filename)
 	}
 
-	// look for jesseduffield/slg/filename in XDG_CONFIG_HOME and XDG_CONFIG_DIRS
-	legacyConfigPath, err := xdg.SearchConfigFile(filepath.Join("jesseduffield", "slg", filename))
+	// look for quangdang46/slg/filename in XDG_CONFIG_HOME and XDG_CONFIG_DIRS
+	legacyConfigPath, err := xdg.SearchConfigFile(filepath.Join("quangdang46", "slg", filename))
 	if err == nil {
 		return true, legacyConfigPath
 	}

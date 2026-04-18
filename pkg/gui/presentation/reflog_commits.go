@@ -4,11 +4,11 @@ import (
 	"time"
 
 	"github.com/jesseduffield/generics/set"
+	"github.com/kyokomi/emoji/v2"
 	"github.com/quangdang46/slg/pkg/commands/models"
 	"github.com/quangdang46/slg/pkg/gui/style"
 	"github.com/quangdang46/slg/pkg/theme"
 	"github.com/quangdang46/slg/pkg/utils"
-	"github.com/kyokomi/emoji/v2"
 	"github.com/samber/lo"
 )
 

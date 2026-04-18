@@ -16,9 +16,9 @@ func TestGetRepoInfoFromURL(t *testing.T) {
 	}{
 		{
 			name: "SSH URL",
-			url:  "git@github.com:jesseduffield/slg.git",
+			url:  "git@github.com:quangdang46/slg.git",
 			expected: hosting_service.RepoInformation{
-				Owner:      "jesseduffield",
+				Owner:      "quangdang46",
 				Repository: "slg",
 			},
 		},
@@ -26,7 +26,7 @@ func TestGetRepoInfoFromURL(t *testing.T) {
 			name: "HTTPS URL",
 			url:  "https://github.com/quangdang46/slg.git",
 			expected: hosting_service.RepoInformation{
-				Owner:      "jesseduffield",
+				Owner:      "quangdang46",
 				Repository: "slg",
 			},
 		},
@@ -34,7 +34,7 @@ func TestGetRepoInfoFromURL(t *testing.T) {
 			name: "HTTPS URL without .git",
 			url:  "https://github.com/quangdang46/slg",
 			expected: hosting_service.RepoInformation{
-				Owner:      "jesseduffield",
+				Owner:      "quangdang46",
 				Repository: "slg",
 			},
 		},
@@ -81,7 +81,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Title:               "Add feature",
 					State:               "OPEN",
 					Url:                 "https://github.com/quangdang46/slg/pull/42",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 			branches: []*models.Branch{
@@ -94,7 +94,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/slg.git"},
+					Urls: []string{"git@github.com:quangdang46/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -104,7 +104,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Title:               "Add feature",
 					State:               "OPEN",
 					Url:                 "https://github.com/quangdang46/slg/pull/42",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 		},
@@ -116,7 +116,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              42,
 					Title:               "Add feature",
 					State:               "OPEN",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 			branches: []*models.Branch{
@@ -128,7 +128,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/slg.git"},
+					Urls: []string{"git@github.com:quangdang46/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{},
@@ -154,7 +154,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/slg.git"},
+					Urls: []string{"git@github.com:quangdang46/slg.git"},
 				},
 				{
 					Name: "contributor",
@@ -192,7 +192,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/slg.git"},
+					Urls: []string{"git@github.com:quangdang46/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{},
@@ -218,7 +218,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/slg.git"},
+					Urls: []string{"git@github.com:quangdang46/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -241,7 +241,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Title:               "Newest PR",
 					State:               "CLOSED",
 					Url:                 "https://github.com/quangdang46/slg/pull/50",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 				{
 					HeadRefName:         "update-sponsors",
@@ -249,7 +249,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Title:               "Middle PR",
 					State:               "OPEN",
 					Url:                 "https://github.com/quangdang46/slg/pull/30",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 				{
 					HeadRefName:         "update-sponsors",
@@ -257,7 +257,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Title:               "Oldest PR",
 					State:               "CLOSED",
 					Url:                 "https://github.com/quangdang46/slg/pull/10",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 			branches: []*models.Branch{
@@ -270,7 +270,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/slg.git"},
+					Urls: []string{"git@github.com:quangdang46/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -280,7 +280,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Title:               "Newest PR",
 					State:               "CLOSED",
 					Url:                 "https://github.com/quangdang46/slg/pull/50",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 		},
@@ -292,7 +292,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              10,
 					Title:               "My PR",
 					State:               "MERGED",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 			branches: []*models.Branch{
@@ -314,7 +314,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              10,
 					Title:               "My PR",
 					State:               "MERGED",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 		},
@@ -326,7 +326,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              42,
 					Title:               "Fix case insensitive",
 					State:               "OPEN",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "Jesseduffield"}, // Uppercase J
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"}, // Lowercase j
 				},
 			},
 			branches: []*models.Branch{
@@ -339,7 +339,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/slg.git"}, // Lowercase j
+					Urls: []string{"git@github.com:quangdang46/slg.git"}, // Lowercase j
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -348,7 +348,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              42,
 					Title:               "Fix case insensitive",
 					State:               "OPEN",
-					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "Jesseduffield"},
+					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "quangdang46"},
 				},
 			},
 		},
