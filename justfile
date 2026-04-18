@@ -50,8 +50,8 @@ bump-gocui:
     scripts/bump_gocui.sh
 
 # Record a demo
-demo *args:
-    demo/record_demo.sh {{ args }}
+# demo *args:
+#     demo/record_demo.sh {{ args }}
 
 vendor:
     go mod vendor && go mod tidy

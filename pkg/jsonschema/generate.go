@@ -16,7 +16,7 @@ import (
 )
 
 func GetSchemaDir() string {
-	return utils.GetLazyRootDirectory() + "/schema-master"
+	return utils.GetLazyRootDirectory() + "/schema"
 }
 
 func GenerateSchema() *jsonschema.Schema {

@@ -63,9 +63,7 @@ bump-gocui:
 bump-lazycore:
 	scripts/bump_lazycore.sh
 
-.PHONY: record-demo
 record-demo:
-	demo/record_demo.sh $(filter-out $@,$(MAKECMDGOALS))
 
 .PHONY: vendor
 vendor:
