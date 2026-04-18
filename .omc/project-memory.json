@@ -1,0 +1,194 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776510397560,
+  "projectRoot": "/home/quangdang/projects/tools/super_lazygit_rust",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Go",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "go.mod"
+        ]
+      },
+      {
+        "name": "C/C++",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Makefile"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "go",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "make build",
+    "testCommand": "make test",
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "test"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "cmd": {
+      "path": "cmd",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1776510397525,
+      "keyFiles": []
+    },
+    "demo": {
+      "path": "demo",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1776510397530,
+      "keyFiles": [
+        "README.md",
+        "config.yml",
+        "record_demo.sh"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 9,
+      "lastAccessed": 1776510397536,
+      "keyFiles": [
+        "Config.md",
+        "Custom_Command_Keybindings.md",
+        "Custom_Pagers.md",
+        "Fixup_Commits.md",
+        "README.md"
+      ]
+    },
+    "docs-master": {
+      "path": "docs-master",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1776510397538,
+      "keyFiles": [
+        "Config.md",
+        "Custom_Command_Keybindings.md",
+        "Custom_Pagers.md",
+        "Fixup_Commits.md",
+        "README.md"
+      ]
+    },
+    "lazygit-master": {
+      "path": "lazygit-master",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1776510397539,
+      "keyFiles": [
+        "CODE-OF-CONDUCT.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "README.md"
+      ]
+    },
+    "pkg": {
+      "path": "pkg",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1776510397539,
+      "keyFiles": []
+    },
+    "schema": {
+      "path": "schema",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776510397540,
+      "keyFiles": [
+        "config.json"
+      ]
+    },
+    "schema-master": {
+      "path": "schema-master",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776510397540,
+      "keyFiles": [
+        "config.json"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 11,
+      "lastAccessed": 1776510397541,
+      "keyFiles": [
+        "bisect.sh",
+        "bump_gocui.sh",
+        "bump_lazycore.sh",
+        "bump_modules.sh",
+        "check_filenames.sh"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1776510397541,
+      "keyFiles": [
+        "README.md",
+        "global_git_config"
+      ]
+    },
+    "vendor": {
+      "path": "vendor",
+      "purpose": "Third-party code",
+      "fileCount": 1,
+      "lastAccessed": 1776510397541,
+      "keyFiles": [
+        "modules.txt"
+      ]
+    },
+    "pkg/app": {
+      "path": "pkg/app",
+      "purpose": "Application code",
+      "fileCount": 3,
+      "lastAccessed": 1776510397544,
+      "keyFiles": [
+        "app.go",
+        "entry_point.go",
+        "errors.go"
+      ]
+    },
+    "pkg/config": {
+      "path": "pkg/config",
+      "purpose": "Configuration files",
+      "fileCount": 13,
+      "lastAccessed": 1776510397549,
+      "keyFiles": [
+        "app_config.go",
+        "app_config_test.go",
+        "config_default_platform.go"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

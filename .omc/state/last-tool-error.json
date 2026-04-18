@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"git push\",\"description\":\"Push to remote\"}",
+  "error": "Exit code 128\nfatal: The current branch port has no upstream branch.\nTo push the current branch and set the remote as upstream, use\n\n    git push --set-upstream origin port\n\nTo have this happen automatically for branches without a tracking\nupstream, see 'push.autoSetupRemote' in 'git help config'.",
+  "timestamp": "2026-04-18T11:10:12.636Z",
+  "retry_count": 1
+}
