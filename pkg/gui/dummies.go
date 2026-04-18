@@ -1,11 +1,11 @@
 package gui
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/common"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/updates"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/common"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/updates"
 )
 
 func NewDummyUpdater() *updates.Updater {

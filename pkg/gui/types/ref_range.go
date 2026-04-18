@@ -1,6 +1,6 @@
 package types
 
-import "github.com/jesseduffield/lazygit/pkg/commands/models"
+import "github.com/quangdang46/slg/pkg/commands/models"
 
 type RefRange struct {
 	From models.Ref

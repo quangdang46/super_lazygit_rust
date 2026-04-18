@@ -3,10 +3,10 @@ package helpers
 import (
 	"fmt"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/patch"
-	"github.com/jesseduffield/lazygit/pkg/gui/keybindings"
-	"github.com/jesseduffield/lazygit/pkg/gui/patch_exploring"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/commands/patch"
+	"github.com/quangdang46/slg/pkg/gui/keybindings"
+	"github.com/quangdang46/slg/pkg/gui/patch_exploring"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 type PatchBuildingHelper struct {

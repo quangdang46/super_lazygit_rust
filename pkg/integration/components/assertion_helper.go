@@ -1,7 +1,7 @@
 package components
 
 import (
-	integrationTypes "github.com/jesseduffield/lazygit/pkg/integration/types"
+	integrationTypes "github.com/quangdang46/slg/pkg/integration/types"
 )
 
 type assertionHelper struct {
@@ -15,7 +15,7 @@ func (self *assertionHelper) matchString(matcher *TextMatcher, context string, g
 	})
 }
 
-// We no longer assert with retries now that lazygit tells us when it's no longer
+// We no longer assert with retries now that slg tells us when it's no longer
 // busy. But I'm keeping the function in case we want to re-introduce it later.
 func (self *assertionHelper) assertWithRetries(test func() (bool, string)) {
 	ok, message := test()

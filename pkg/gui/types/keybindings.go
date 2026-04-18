@@ -2,7 +2,7 @@ package types
 
 import (
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/gui/style"
 )
 
 type Key any // FIXME: find out how to get `gocui.Key | rune`

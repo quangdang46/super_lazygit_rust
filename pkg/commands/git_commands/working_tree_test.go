@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/go-errors/errors"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/config"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/config"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )

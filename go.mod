@@ -1,4 +1,4 @@
-module github.com/jesseduffield/lazygit
+module github.com/quangdang46/slg
 
 go 1.25.0
 

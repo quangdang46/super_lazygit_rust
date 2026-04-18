@@ -1,8 +1,8 @@
 package commit
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 var PreserveCommitMessage = NewIntegrationTest(NewIntegrationTestArgs{
@@ -28,7 +28,7 @@ var PreserveCommitMessage = NewIntegrationTest(NewIntegrationTestArgs{
 			Type("second paragraph").
 			Cancel()
 
-		t.FileSystem().PathPresent(".git/LAZYGIT_PENDING_COMMIT")
+		t.FileSystem().PathPresent(".git/SLG_PENDING_COMMIT")
 
 		t.Views().Files().
 			IsFocused().
@@ -43,7 +43,7 @@ var PreserveCommitMessage = NewIntegrationTest(NewIntegrationTestArgs{
 			Clear().
 			Cancel()
 
-		t.FileSystem().PathNotPresent(".git/LAZYGIT_PENDING_COMMIT")
+		t.FileSystem().PathNotPresent(".git/SLG_PENDING_COMMIT")
 
 		t.Views().Files().
 			IsFocused().
@@ -53,6 +53,6 @@ var PreserveCommitMessage = NewIntegrationTest(NewIntegrationTestArgs{
 			Type("my new commit message").
 			Confirm()
 
-		t.FileSystem().PathNotPresent(".git/LAZYGIT_PENDING_COMMIT")
+		t.FileSystem().PathNotPresent(".git/SLG_PENDING_COMMIT")
 	},
 })

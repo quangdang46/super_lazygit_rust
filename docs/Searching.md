@@ -17,5 +17,5 @@ You can filter the files view to only show staged/unstaged files by pressing `<c
 You can filter the commits view to only show commits which contain changes to a given file path.
 
 You can do this in a couple of ways:
-1) Start lazygit with the -f flag e.g. `lazygit -f my/path`
-2) From within lazygit, press `<c-s>` and then enter the path of the file you want to filter by
+1) Start slg with the -f flag e.g. `slg -f my/path`
+2) From within slg, press `<c-s>` and then enter the path of the file you want to filter by

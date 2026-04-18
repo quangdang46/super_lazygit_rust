@@ -4,10 +4,10 @@ import (
 	"time"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/context"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/tasks"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/gui/context"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/tasks"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/spkg/bom"
 )
 

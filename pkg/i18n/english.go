@@ -1094,38 +1094,38 @@ type Actions struct {
 }
 
 const englishIntroPopupMessage = `
-Thanks for using lazygit! Seriously you rock. Three things to share with you:
+Thanks for using slg! Seriously you rock. Three things to share with you:
 
- 1) If you want to learn about lazygit's features, watch this vid:
+ 1) If you want to learn about slg's features, watch this vid:
       https://youtu.be/CPLdltN7wgE
 
  2) Be sure to read the latest release notes at:
-      https://github.com/jesseduffield/lazygit/releases
+      https://github.com/quangdang46/slg/releases
 
  3) If you're using git, that makes you a programmer! With your help we can make
-    lazygit better, so consider becoming a contributor and joining the fun at
-      https://github.com/jesseduffield/lazygit
+    slg better, so consider becoming a contributor and joining the fun at
+      https://github.com/quangdang46/slg
     Or even just star the repo to share the love!
 
- 4) If lazygit has made your life easier, you can say thanks by clicking the
+ 4) If slg has made your life easier, you can say thanks by clicking the
     donate button at the bottom right. Donation does not grant priority support,
     but it is much appreciated.
 
 Press {{confirmationKey}} to get started.
 `
 
-const englishNonReloadableConfigWarning = `The following config settings were changed, but the change doesn't take effect immediately. Please quit and restart lazygit for changes to take effect:
+const englishNonReloadableConfigWarning = `The following config settings were changed, but the change doesn't take effect immediately. Please quit and restart slg for changes to take effect:
 
 {{configs}}`
 
 const englishHunkStagingHint = `Hunk selection mode is now the default for staging. If you want to stage individual lines, press '%s' to switch to line-by-line mode.
 
-If you prefer to use line-by-line mode by default (like in earlier lazygit versions), add
+If you prefer to use line-by-line mode by default (like in earlier slg versions), add
 
 gui:
   useHunkModeInStagingView: false
 
-to your lazygit config.`
+to your slg config.`
 
 // exporting this so we can use it in tests
 func EnglishTranslationSet() *TranslationSet {
@@ -1160,7 +1160,7 @@ func EnglishTranslationSet() *TranslationSet {
 		NoCommitToAmend:                      "There's no commit to amend.",
 		CommitChangesWithEditor:              "Commit changes using git editor",
 		FindBaseCommitForFixup:               "Find base commit for fixup",
-		FindBaseCommitForFixupTooltip:        "Find the commit that your current changes are building upon, for the sake of amending/fixing up the commit. This spares you from having to look through your branch's commits one-by-one to see which commit should be amended/fixed up. See docs: <https://github.com/jesseduffield/lazygit/tree/master/docs/Fixup_Commits.md>",
+		FindBaseCommitForFixupTooltip:        "Find the commit that your current changes are building upon, for the sake of amending/fixing up the commit. This spares you from having to look through your branch's commits one-by-one to see which commit should be amended/fixed up. See docs: <https://github.com/quangdang46/slg/tree/master/docs/Fixup_Commits.md>",
 		NoBaseCommitsFound:                   "No base commits found",
 		MultipleBaseCommitsFoundStaged:       "Multiple base commits found. (Try staging fewer changes at once)",
 		MultipleBaseCommitsFoundUnstaged:     "Multiple base commits found. (Try staging some of the changes)",
@@ -1363,7 +1363,7 @@ func EnglishTranslationSet() *TranslationSet {
 		UpdateAvailable:                      "Download and install version {{.newVersion}}?",
 		UpdateInProgressWaitingStatus:        "Updating",
 		UpdateCompletedTitle:                 "Update completed!",
-		UpdateCompleted:                      "Update has been installed successfully. Restart lazygit for it to take effect.",
+		UpdateCompleted:                      "Update has been installed successfully. Restart slg for it to take effect.",
 		FailedToRetrieveLatestVersionErr:     "Failed to retrieve version information",
 		OnLatestVersionErr:                   "You already have the latest version",
 		MajorVersionErr:                      "New version ({{.newVersion}}) has non-backwards compatible changes compared to the current version ({{.currentVersion}})",
@@ -1570,11 +1570,11 @@ func EnglishTranslationSet() *TranslationSet {
 		DiscardFileChangesTitle:              "Discard file changes",
 		DiscardFileChangesPrompt:             "Are you sure you want to discard changes to the selected file(s) from this commit?\n\nThis action will start a rebase, reverting these file changes. Be aware that if subsequent commits depend on these changes, you may need to resolve conflicts.",
 		DiscardFileChangesPromptResetPatch:   "Are you sure you want to discard changes to the selected file(s) from this commit?\n\nThis action will start a rebase, reverting these file changes. Be aware that if subsequent commits depend on these changes, you may need to resolve conflicts.\n\nNote: This will reset the active custom patch!",
-		DisabledForGPG:                       "Feature not available for users using GPG.\n\nIf you are using a passphrase agent (e.g. gpg-agent) so that you don't have to type your passphrase when signing, you can enable this feature by adding\n\ngit:\n  overrideGpg: true\n\nto your lazygit config file.",
+		DisabledForGPG:                       "Feature not available for users using GPG.\n\nIf you are using a passphrase agent (e.g. gpg-agent) so that you don't have to type your passphrase when signing, you can enable this feature by adding\n\ngit:\n  overrideGpg: true\n\nto your slg config file.",
 		CreateRepo:                           "Not in a git repository. Create a new git repository? (y/N): ",
 		BareRepo:                             "You've attempted to open Lazygit in a bare repo but Lazygit does not yet support bare repos. Open most recent repo? (y/n) ",
 		InitialBranch:                        "Branch name? (leave empty for git's default): ",
-		NoRecentRepositories:                 "Must open lazygit in a git repository. No valid recent repositories. Exiting.",
+		NoRecentRepositories:                 "Must open slg in a git repository. No valid recent repositories. Exiting.",
 		IncorrectNotARepository:              "The value of 'notARepository' is incorrect. It should be one of 'prompt', 'create', 'skip', or 'quit'.",
 		AutoStashTitle:                       "Autostash?",
 		AutoStashPrompt:                      "You must stash and pop your changes to bring them across. Do this automatically? (enter/esc)",
@@ -1628,7 +1628,7 @@ func EnglishTranslationSet() *TranslationSet {
 		ShellCommand:                         "Shell command:",
 		CommitChangesWithoutHook:             "Commit changes without pre-commit hook",
 		ResetTo:                              `Reset to`,
-		PressEnterToReturn:                   "Press enter to return to lazygit",
+		PressEnterToReturn:                   "Press enter to return to slg",
 		ViewStashOptions:                     "View stash options",
 		ViewStashOptionsTooltip:              "View stash options (e.g. stash all, stash staged, stash unstaged).",
 		Stash:                                "Stash",
@@ -2023,7 +2023,7 @@ func EnglishTranslationSet() *TranslationSet {
 		CancelMarkedBaseCommit:                   "Cancel marked base commit",
 		MarkedCommitMarker:                       "↑↑↑ Will rebase from here ↑↑↑",
 		FailedToOpenURL:                          "Failed to open URL %s\n\nError: %v",
-		InvalidLazygitEditURL:                    "Invalid lazygit-edit URL format: %s",
+		InvalidLazygitEditURL:                    "Invalid slg-edit URL format: %s",
 		DisabledMenuItemPrefix:                   "Disabled: ",
 		NoCopiedCommits:                          "No copied commits",
 		QuickStartInteractiveRebase:              "Start interactive rebase",
@@ -2205,8 +2205,8 @@ func EnglishTranslationSet() *TranslationSet {
 			DeletingBranch:           "Deleting branch '{{.branchName}}' (was {{.hash}})",
 		},
 		BreakingChangesTitle: "Breaking Changes",
-		BreakingChangesMessage: `You are updating to a new version of lazygit which contains breaking changes. Please review the notes below and update your configuration if necessary.
-For more information, see the full release notes at <https://github.com/jesseduffield/lazygit/releases>.`,
+		BreakingChangesMessage: `You are updating to a new version of slg which contains breaking changes. Please review the notes below and update your configuration if necessary.
+For more information, see the full release notes at <https://github.com/quangdang46/slg/releases>.`,
 		BreakingChangesByVersion: map[string]string{
 			"0.41.0": `- When you press 'g' to bring up the git reset menu, the 'mixed' option is now the first and default, rather than 'soft'. This is because 'mixed' is the most commonly used option.
 - The commit message panel now automatically hard-wraps by default (i.e. it adds newline characters when you reach the margin). You can adjust the config like so:
@@ -2236,7 +2236,7 @@ gui:
 `,
 			"0.44.0": `- The gui.branchColors config option is deprecated; it will be removed in a future version. Please use gui.branchColorPatterns instead.
 - The automatic coloring of branches starting with "feature/", "bugfix/", or "hotfix/" has been removed; if you want this, it's easy to set up using the new gui.branchColorPatterns option.`,
-			"0.49.0": `- Executing shell commands (with the ':' prompt) no longer uses an interactive shell, which means that if you want to use your shell aliases in this prompt, you need to do a little bit of setup work. See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#using-aliases-or-functions-in-shell-commands for details.`,
+			"0.49.0": `- Executing shell commands (with the ':' prompt) no longer uses an interactive shell, which means that if you want to use your shell aliases in this prompt, you need to do a little bit of setup work. See https://github.com/quangdang46/slg/blob/master/docs/Config.md#using-aliases-or-functions-in-shell-commands for details.`,
 			"0.50.0": `- After fetching, main branches now get auto-forwarded to their upstream if they fall behind. This is useful for keeping your main or master branch up to date automatically. If you don't want this, you can disable it by setting the following in your config:
 
 git:

@@ -1,8 +1,8 @@
 package misc
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 var InitialOpen = NewIntegrationTest(NewIntegrationTestArgs{
@@ -16,7 +16,7 @@ var InitialOpen = NewIntegrationTest(NewIntegrationTestArgs{
 	Run: func(t *TestDriver, keys config.KeybindingConfig) {
 		t.ExpectPopup().Confirmation().
 			Title(Equals("")).
-			Content(Contains("Thanks for using lazygit!")).
+			Content(Contains("Thanks for using slg!")).
 			Confirm()
 
 		t.Views().Files().IsFocused()

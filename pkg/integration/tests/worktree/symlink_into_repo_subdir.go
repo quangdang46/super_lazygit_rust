@@ -1,12 +1,12 @@
 package worktree
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 var SymlinkIntoRepoSubdir = NewIntegrationTest(NewIntegrationTestArgs{
-	Description:  "Open lazygit in a symlink into a repo's subdirectory",
+	Description:  "Open slg in a symlink into a repo's subdirectory",
 	ExtraCmdArgs: []string{},
 	Skip:         false,
 	SetupConfig: func(config *config.AppConfig) {

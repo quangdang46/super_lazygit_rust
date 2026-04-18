@@ -22,7 +22,7 @@ func (self Paths) Actual() string {
 }
 
 // this is the 'repo' directory within the 'actual' directory,
-// where a lazygit test will start within.
+// where a slg test will start within.
 func (self Paths) ActualRepo() string {
 	return filepath.Join(self.Actual(), "repo")
 }

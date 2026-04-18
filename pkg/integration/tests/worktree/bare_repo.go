@@ -1,12 +1,12 @@
 package worktree
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 var BareRepo = NewIntegrationTest(NewIntegrationTestArgs{
-	Description:  "Open lazygit in the worktree of a bare repo and do a rebase/bisect",
+	Description:  "Open slg in the worktree of a bare repo and do a rebase/bisect",
 	ExtraCmdArgs: []string{},
 	Skip:         false,
 	SetupConfig:  func(config *config.AppConfig) {},
@@ -18,7 +18,7 @@ var BareRepo = NewIntegrationTest(NewIntegrationTestArgs{
 		//  - worktree2 (another worktree)
 		//
 		// The first repo is called 'repo' because that's the
-		// directory that all lazygit tests start in
+		// directory that all slg tests start in
 
 		shell.NewBranch("mybranch")
 		shell.CreateFileAndAdd("blah", "blah")
@@ -32,7 +32,7 @@ var BareRepo = NewIntegrationTest(NewIntegrationTestArgs{
 
 		shell.Chdir("..")
 
-		// This is the dir we were just in (and the dir that lazygit starts in when the test runs)
+		// This is the dir we were just in (and the dir that slg starts in when the test runs)
 		// We're going to replace it with a worktree
 		shell.DeleteFile("repo")
 

@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/jesseduffield/lazygit/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/i18n"
 )
 
 func saveLanguageFileToJson(tr *i18n.TranslationSet, filepath string) error {

@@ -1,7 +1,7 @@
 package helpers
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/commands/hosting_service"
+	"github.com/quangdang46/slg/pkg/commands/hosting_service"
 )
 
 // this helper just wraps our hosting_service package

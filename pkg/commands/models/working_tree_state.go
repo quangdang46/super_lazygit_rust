@@ -1,6 +1,6 @@
 package models
 
-import "github.com/jesseduffield/lazygit/pkg/i18n"
+import "github.com/quangdang46/slg/pkg/i18n"
 
 // The state of the working tree. Several of these can be true at once.
 // In particular, the concrete multi-state combinations that can occur in

@@ -3,9 +3,9 @@ package gui
 import (
 	"fmt"
 
-	"github.com/jesseduffield/lazygit/pkg/constants"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/constants"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/utils"
 )
 
 func (gui *Gui) informationStr() string {

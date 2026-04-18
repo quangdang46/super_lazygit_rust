@@ -1,9 +1,9 @@
 package cherry_pick
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
-	"github.com/jesseduffield/lazygit/pkg/integration/tests/shared"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/integration/tests/shared"
 )
 
 var CherryPickConflicts = NewIntegrationTest(NewIntegrationTestArgs{

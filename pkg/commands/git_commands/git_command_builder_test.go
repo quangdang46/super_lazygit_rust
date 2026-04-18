@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -3,10 +3,10 @@ package helpers
 import (
 	"strconv"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/gui/modes/cherrypicking"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/gui/modes/cherrypicking"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 

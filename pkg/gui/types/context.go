@@ -2,10 +2,10 @@ package types
 
 import (
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/gui/patch_exploring"
-	"github.com/jesseduffield/lazygit/pkg/i18n"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/gui/patch_exploring"
+	"github.com/quangdang46/slg/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/sasha-s/go-deadlock"
 )
 

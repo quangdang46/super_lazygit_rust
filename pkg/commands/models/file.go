@@ -1,8 +1,8 @@
 package models
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/i18n"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 

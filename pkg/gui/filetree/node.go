@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/gui/types"
 	"github.com/samber/lo"
 )
 

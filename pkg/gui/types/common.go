@@ -2,14 +2,14 @@ package types
 
 import (
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/common"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/tasks"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/common"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/tasks"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/sasha-s/go-deadlock"
 	"gopkg.in/ozeidan/fuzzy-patricia.v3/patricia"
 )
@@ -72,7 +72,7 @@ type IGuiCommon interface {
 	// All controller handlers are executed on the UI thread.
 	OnUIThread(f func() error)
 	// Runs a function in a goroutine. Use this whenever you want to run a goroutine and keep track of the fact
-	// that lazygit is still busy. See docs/dev/Busy.md
+	// that slg is still busy. See docs/dev/Busy.md
 	OnWorker(f func(gocui.Task) error)
 	// Function to call at the end of our 'layout' function which renders views
 	// For example, you may want a view's line to be focused only after that view is
@@ -365,7 +365,7 @@ type IStateAccessor interface {
 	GetRepoPathStack() *utils.StringStack
 	GetRepoState() IRepoStateAccessor
 	GetPagerConfig() *config.PagerConfig
-	// tells us whether we're currently updating lazygit
+	// tells us whether we're currently updating slg
 	GetUpdating() bool
 	SetUpdating(bool)
 	SetIsRefreshingFiles(bool)

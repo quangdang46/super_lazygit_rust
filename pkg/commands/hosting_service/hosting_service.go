@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
-	"github.com/jesseduffield/lazygit/pkg/i18n"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 
@@ -22,9 +22,9 @@ import (
 type HostingServiceMgr struct {
 	log       logrus.FieldLogger
 	tr        *i18n.TranslationSet
-	remoteURL string // e.g. https://github.com/jesseduffield/lazygit
+	remoteURL string // e.g. https://github.com/quangdang46/slg
 
-	// see https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-pull-request-urls
+	// see https://github.com/quangdang46/slg/blob/master/docs/Config.md#custom-pull-request-urls
 	configServiceDomains map[string]string
 }
 
@@ -61,7 +61,7 @@ func (self *HostingServiceMgr) GetCommitURL(commitHash string) (string, error) {
 	return pullRequestURL, nil
 }
 
-// e.g. 'jesseduffield/lazygit'
+// e.g. 'jesseduffield/slg'
 func (self *HostingServiceMgr) GetRepoName() (string, error) {
 	gitService, err := self.getService()
 	if err != nil {
@@ -222,7 +222,7 @@ func GetRepoInfoFromURL(url string) (RepoInformation, error) {
 
 type Service struct {
 	repoURL string
-	// e.g. 'jesseduffield/lazygit'
+	// e.g. 'jesseduffield/slg'
 	repoName string
 	ServiceDefinition
 }

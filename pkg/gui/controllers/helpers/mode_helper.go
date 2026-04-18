@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/gui/types"
 	"github.com/samber/lo"
 )
 

@@ -131,8 +131,8 @@ var RandomFiles = []RandomFile{
 	{Name: `config/session.go`, Content: `package config`},
 	{Name: `security/rate_limit.go`, Content: `package security`},
 	{Name: `product/sort_list.go`, Content: `package product`},
-	{Name: `lazygit/diff_view.go`, Content: `package lazygit`},
-	{Name: `performance/lazygit.go`, Content: `package performance`},
+	{Name: `slg/diff_view.go`, Content: `package slg`},
+	{Name: `performance/slg.go`, Content: `package performance`},
 	{Name: `docs/documentation.go`, Content: `package docs`},
 	{Name: `config/global_variables.go`, Content: `package config`},
 	{Name: `Gemfile`, Content: `source 'https://rubygems.org'`},
@@ -248,7 +248,7 @@ import (
 
 	"github.com/jesseduffield/generics/set"
 	"github.com/jesseduffield/lazycore/pkg/utils"
-	"github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/integration/components"
 	"github.com/samber/lo"
 )
 
@@ -272,14 +272,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	integrationTypes "github.com/jesseduffield/lazygit/pkg/integration/types"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/config"
+	integrationTypes "github.com/quangdang46/slg/pkg/integration/types"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 
-// IntegrationTest describes an integration test that will be run against the lazygit gui.
+// IntegrationTest describes an integration test that will be run against the slg gui.
 
 // our unit tests will use this description to avoid a panic caused by attempting
 // to get the test's name via it's file's path.
@@ -297,8 +297,8 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	integrationTypes "github.com/jesseduffield/lazygit/pkg/integration/types"
+	"github.com/quangdang46/slg/pkg/config"
+	integrationTypes "github.com/quangdang46/slg/pkg/integration/types"
 )
 
 type TestDriver struct {
@@ -344,11 +344,11 @@ import (
 
 	"github.com/kardianos/osext"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/common"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/constants"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/common"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/constants"
+	"github.com/quangdang46/slg/pkg/utils"
 )
 
 // Updater checks for updates and does updates
@@ -390,7 +390,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/utils"
 )
 
 func main() {

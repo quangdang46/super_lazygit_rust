@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/controllers/helpers"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 // this is in its own file given that the workspace controller file is already quite long
@@ -103,7 +103,7 @@ func (self *FilesController) createResetMenu() error {
 				if !self.c.Helpers().WorkingTree.IsWorkingTreeDirtyExceptSubmodules() {
 					return errors.New(self.c.Tr.NoTrackedStagedFilesStash)
 				}
-				if err := self.c.Git().Stash.SaveStagedChanges("[lazygit] tmp stash"); err != nil {
+				if err := self.c.Git().Stash.SaveStagedChanges("[slg] tmp stash"); err != nil {
 					return err
 				}
 				if err := self.c.Git().Stash.DropNewest(); err != nil {

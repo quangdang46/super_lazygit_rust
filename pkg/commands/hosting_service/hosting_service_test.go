@@ -3,8 +3,8 @@ package hosting_service
 import (
 	"testing"
 
-	"github.com/jesseduffield/lazygit/pkg/fakes"
-	"github.com/jesseduffield/lazygit/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/fakes"
+	"github.com/quangdang46/slg/pkg/i18n"
 	"github.com/stretchr/testify/assert"
 )
 

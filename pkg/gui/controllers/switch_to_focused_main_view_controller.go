@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 // This controller is for all contexts that can focus their main view.

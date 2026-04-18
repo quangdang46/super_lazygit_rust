@@ -1,12 +1,12 @@
 package presentation
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation/icons"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/i18n"
-	"github.com/jesseduffield/lazygit/pkg/theme"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/gui/presentation/icons"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/theme"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 

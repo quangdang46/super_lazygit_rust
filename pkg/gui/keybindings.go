@@ -5,10 +5,10 @@ import (
 	"log"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/context"
-	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
-	"github.com/jesseduffield/lazygit/pkg/gui/keybindings"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/context"
+	"github.com/quangdang46/slg/pkg/gui/controllers/helpers"
+	"github.com/quangdang46/slg/pkg/gui/keybindings"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 func (gui *Gui) noPopupPanel(f func() error) func() error {

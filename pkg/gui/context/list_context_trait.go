@@ -3,7 +3,7 @@ package context
 import (
 	"fmt"
 
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 type ListContextTrait struct {

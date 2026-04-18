@@ -1,7 +1,7 @@
 package shared
 
 import (
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 var OriginalFileContent = `

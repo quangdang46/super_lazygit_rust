@@ -4,9 +4,9 @@ import (
 	"time"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/gui/presentation"
+	"github.com/quangdang46/slg/pkg/gui/types"
 	"github.com/samber/lo"
 	"github.com/sasha-s/go-deadlock"
 )

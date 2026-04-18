@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jesseduffield/lazygit/pkg/gui/keybindings"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/gui/keybindings"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/spf13/afero"
 )
 
-const PreservedCommitMessageFileName = "LAZYGIT_PENDING_COMMIT"
+const PreservedCommitMessageFileName = "SLG_PENDING_COMMIT"
 
 type CommitMessageContext struct {
 	c *ContextCommon

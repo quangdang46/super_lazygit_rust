@@ -19,7 +19,7 @@ ready to do that (before merging).
 ## Creating fixup commits
 
 You could of course create fixup commits manually by typing in the commit
-message with the prefix yourself. But lazygit has an easier way to do that:
+message with the prefix yourself. But slg has an easier way to do that:
 in the Commits view, select the commit that you want to create a fixup for, and
 press shift-F (for "Create fixup commit for this commit"). This automatically
 creates a commit with the appropriate subject line.
@@ -36,7 +36,7 @@ original commit. The menu that appears when pressing shift-F has options for
 both of these; they bring up a commit message panel similar to when you reword a
 commit, but then create the "amend!" commit containing the new message. Note
 that in that panel you only type the new message as you want it to be
-eventually; lazygit then takes care of formatting the "amend!" commit
+eventually; slg then takes care of formatting the "amend!" commit
 appropriately for you (with the subject of your new message moving into the body
 of the "amend!" commit).
 

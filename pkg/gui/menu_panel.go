@@ -3,9 +3,9 @@ package gui
 import (
 	"fmt"
 
-	"github.com/jesseduffield/lazygit/pkg/gui/keybindings"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/theme"
+	"github.com/quangdang46/slg/pkg/gui/keybindings"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/theme"
 	"github.com/samber/lo"
 )
 

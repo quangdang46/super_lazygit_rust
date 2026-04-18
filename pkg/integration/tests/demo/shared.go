@@ -1,6 +1,6 @@
 package demo
 
-import "github.com/jesseduffield/lazygit/pkg/config"
+import "github.com/quangdang46/slg/pkg/config"
 
 // Gives us nicer colours when we generate a git repo history with `shell.CreateRepoHistory()`
 func setGeneratedAuthorColours(config *config.AppConfig) {

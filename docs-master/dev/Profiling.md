@@ -1,14 +1,14 @@
 # Profiling Lazygit
 
 If you want to investigate what's contributing to CPU or memory usage, start
-lazygit with the `-profile` command line flag. This tells it to start an
+slg with the `-profile` command line flag. This tells it to start an
 integrated web server that listens for profiling requests.
 
 ## Save profile data
 
 ### CPU
 
-While lazygit is running with the `-profile` flag, perform a CPU profile and
+While slg is running with the `-profile` flag, perform a CPU profile and
 save it to a file by running this command in another terminal window:
 
 ```sh
@@ -38,7 +38,7 @@ curl -o mem.out 'http://127.0.0.1:6060/debug/pprof/heap?seconds=20'
 ```
 
 This will log the memory usage difference between now and 20 seconds later, so
-it gives you 20 seconds to perform the action in lazygit that you are interested
+it gives you 20 seconds to perform the action in slg that you are interested
 in measuring.
 
 ## View profile data

@@ -4,10 +4,10 @@ import (
 	"errors"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/gui/context"
-	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/gui/context"
+	"github.com/quangdang46/slg/pkg/gui/controllers/helpers"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 type CommitMessageController struct {

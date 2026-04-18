@@ -1,9 +1,9 @@
 package context
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/tasks"
+	"github.com/quangdang46/slg/pkg/gui/presentation"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/tasks"
 )
 
 type SuggestionsContext struct {

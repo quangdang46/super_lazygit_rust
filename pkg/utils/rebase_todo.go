@@ -189,7 +189,7 @@ func moveTodoUp(todos []todo.Todo, todoToMove Todo, isInRebase bool) ([]todo.Tod
 	// actually move the commit _down_ in the todos slice (i.e. towards
 	// the end of the slice)
 
-	// Find the next todo that we show in lazygit's commits view (skipping the rest)
+	// Find the next todo that we show in slg's commits view (skipping the rest)
 	_, skip, ok := lo.FindIndexOf(todos[sourceIdx+1:], func(t todo.Todo) bool { return isRenderedTodo(t, isInRebase) })
 
 	if !ok {

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/utils"
 )
 
 // LineType tells us whether a given line is a start/middle/end marker of a conflict,

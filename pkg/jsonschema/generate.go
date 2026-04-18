@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/jesseduffield/lazycore/pkg/utils"
-	"github.com/jesseduffield/lazygit/pkg/config"
+	"github.com/quangdang46/slg/pkg/config"
 	"github.com/karimkhaleel/jsonschema"
 	"github.com/samber/lo"
 )
@@ -53,7 +53,7 @@ func getSubSchema(rootSchema, parentSchema *jsonschema.Schema, key string) *json
 
 func customReflect(v *config.UserConfig) *jsonschema.Schema {
 	r := &jsonschema.Reflector{FieldNameTag: "yaml", RequiredFromJSONSchemaTags: true}
-	if err := r.AddGoComments("github.com/jesseduffield/lazygit/pkg/config", "../config"); err != nil {
+	if err := r.AddGoComments("github.com/quangdang46/slg/pkg/config", "../config"); err != nil {
 		panic(err)
 	}
 	filterOutDevComments(r)

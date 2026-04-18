@@ -3,7 +3,7 @@ package presentation
 import (
 	"time"
 
-	"github.com/jesseduffield/lazygit/pkg/config"
+	"github.com/quangdang46/slg/pkg/config"
 )
 
 // Loader dumps a string to be displayed as a loader

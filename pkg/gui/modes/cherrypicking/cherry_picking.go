@@ -2,7 +2,7 @@ package cherrypicking
 
 import (
 	"github.com/jesseduffield/generics/set"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/models"
 	"github.com/samber/lo"
 )
 

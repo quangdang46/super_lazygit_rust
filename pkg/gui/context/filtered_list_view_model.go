@@ -1,6 +1,6 @@
 package context
 
-import "github.com/jesseduffield/lazygit/pkg/i18n"
+import "github.com/quangdang46/slg/pkg/i18n"
 
 type FilteredListViewModel[T HasID] struct {
 	*FilteredList[T]

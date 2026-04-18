@@ -15,11 +15,11 @@ import (
 
 	"github.com/kardianos/osext"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/common"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/constants"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/common"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/constants"
+	"github.com/quangdang46/slg/pkg/utils"
 )
 
 // Updater checks for updates and does updates
@@ -219,10 +219,10 @@ func (u *Updater) zipExtension() string {
 	return "tar.gz"
 }
 
-// example: https://github.com/jesseduffield/lazygit/releases/download/v0.1.73/lazygit_0.1.73_Darwin_x86_64.tar.gz
+// example: https://github.com/quangdang46/slg/releases/download/v0.1.73/slg_0.1.73_Darwin_x86_64.tar.gz
 func (u *Updater) getBinaryUrl(newVersion string) string {
 	url := fmt.Sprintf(
-		"%s/releases/download/%s/lazygit_%s_%s_%s.%s",
+		"%s/releases/download/%s/slg_%s_%s_%s.%s",
 		constants.Links.RepoUrl,
 		newVersion,
 		newVersion[1:],
@@ -249,7 +249,7 @@ func (u *Updater) downloadAndInstall(rawUrl string) error {
 	configDir := u.Config.GetUserConfigDir()
 	u.Log.Info("Download directory is " + configDir)
 
-	zipPath := filepath.Join(configDir, "temp_lazygit."+u.zipExtension())
+	zipPath := filepath.Join(configDir, "temp_slg."+u.zipExtension())
 	u.Log.Info("Temp path to tarball/zip file is " + zipPath)
 
 	// remove existing zip file
@@ -273,7 +273,7 @@ func (u *Updater) downloadAndInstall(rawUrl string) error {
 
 	// Check server response
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("error while trying to download latest lazygit: %s", resp.Status)
+		return fmt.Errorf("error while trying to download latest slg: %s", resp.Status)
 	}
 
 	// Write the body to file
@@ -283,7 +283,7 @@ func (u *Updater) downloadAndInstall(rawUrl string) error {
 	}
 
 	u.Log.Info("untarring tarball/unzipping zip file")
-	err = u.OSCommand.Cmd.New([]string{"tar", "-zxf", zipPath, "lazygit"}).Run()
+	err = u.OSCommand.Cmd.New([]string{"tar", "-zxf", zipPath, "slg"}).Run()
 	if err != nil {
 		return err
 	}
@@ -291,7 +291,7 @@ func (u *Updater) downloadAndInstall(rawUrl string) error {
 	// the `tar` terminal cannot store things in a new location without permission
 	// so it creates it in the current directory. As such our path is fairly simple.
 	// You won't see it because it's gitignored.
-	tempLazygitFilePath := "lazygit"
+	tempLazygitFilePath := "slg"
 
 	u.Log.Infof("Path to temp binary is %s", tempLazygitFilePath)
 

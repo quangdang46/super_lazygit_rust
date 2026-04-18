@@ -3,8 +3,8 @@ package common
 import (
 	"sync/atomic"
 
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/i18n"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
 )

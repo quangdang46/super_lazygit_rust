@@ -69,7 +69,7 @@ Users shouldn't have to drop down the CLI _too_ often. Lazygit should be able to
 Pro users should be able to move at lightning speed with Lazygit.
 
 - Always think about the number of keypresses involved in a given UX flow
-- Make lazygit performant and responsive
+- Make slg performant and responsive
 - Think about the individual commands being run and how fast they are
 - Startup should be FAST. If you want to run something at startup that is slow, make it non-blocking.
 - Support muscle-memory

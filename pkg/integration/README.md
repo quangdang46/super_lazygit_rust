@@ -1,6 +1,6 @@
 # Integration Tests
 
-The pkg/integration package is for integration testing: that is, actually running a real lazygit session and having a robot pretend to be a human user and then making assertions that everything works as expected.
+The pkg/integration package is for integration testing: that is, actually running a real slg session and having a robot pretend to be a human user and then making assertions that everything works as expected.
 
 TL;DR: integration tests live in pkg/integration/tests. Run integration tests with:
 
@@ -22,9 +22,9 @@ Each test has two important steps: the setup step and the run step.
 
 ### Setup step
 
-In the setup step, we prepare a repo with shell commands, for example, creating a merge conflict that will need to be resolved upon opening lazygit. This is all done via the `shell` argument.
+In the setup step, we prepare a repo with shell commands, for example, creating a merge conflict that will need to be resolved upon opening slg. This is all done via the `shell` argument.
 
-When the test runs, lazygit will open in the same working directory that the shell ends up in (so if you want to start lazygit somewhere other than the default location, you can use `shell.Chdir()` at the end of the setup step to set that working directory.
+When the test runs, slg will open in the same working directory that the shell ends up in (so if you want to start slg somewhere other than the default location, you can use `shell.Chdir()` at the end of the setup step to set that working directory.
 
 ### Run step
 
@@ -70,11 +70,11 @@ Debugging an integration test is possible in two ways:
 1. Use the -debug option of the integration test runner's "cli" command, e.g. `go run cmd/integration_test/main.go cli -debug tag/reset.go`
 2. Select a test in the "tui" runner and hit "d" to debug it.
 
-In both cases the test runner will print to the console that it is waiting for a debugger to attach, so now you need to tell your debugger to attach to a running process with the name "test_lazygit". If you are using Visual Studio Code, an easy way to do that is to use the "Attach to integration test runner" debug configuration. The test runner will resume automatically when it detects that a debugger was attached. Don't forget to set a breakpoint in the code that you want to step through, otherwise the test will just finish (i.e. it doesn't stop in the debugger automatically).
+In both cases the test runner will print to the console that it is waiting for a debugger to attach, so now you need to tell your debugger to attach to a running process with the name "test_slg". If you are using Visual Studio Code, an easy way to do that is to use the "Attach to integration test runner" debug configuration. The test runner will resume automatically when it detects that a debugger was attached. Don't forget to set a breakpoint in the code that you want to step through, otherwise the test will just finish (i.e. it doesn't stop in the debugger automatically).
 
 ### Sandbox mode
 
-Say you want to do a manual test of how lazygit handles merge-conflicts, but you can't be bothered actually finding a way to create merge conflicts in a repo. To make your life easier, you can simply run a merge-conflicts test in sandbox mode, meaning the setup step is run for you, and then instead of the test driving the lazygit session, you're allowed to drive it yourself.
+Say you want to do a manual test of how slg handles merge-conflicts, but you can't be bothered actually finding a way to create merge conflicts in a repo. To make your life easier, you can simply run a merge-conflicts test in sandbox mode, meaning the setup step is run for you, and then instead of the test driving the slg session, you're allowed to drive it yourself.
 
 To run a test in sandbox mode you can press 's' on a test in the test TUI or in the test runner pass the --sandbox argument.
 
@@ -82,7 +82,7 @@ To run a test in sandbox mode you can press 's' on a test in the test TUI or in 
 
 ### Handle most setup in the `shell` part of the test
 
-Try to do as much setup work as possible in your setup step. For example, if all you're testing is that the user is able to resolve merge conflicts, create the merge conflicts in the setup step. On the other hand, if you're testing to see that lazygit can warn the user about merge conflicts after an attempted merge, it's fine to wait until the run step to actually create the conflicts. If the run step is focused on the thing you're trying to test, the test will run faster and its intent will be clearer.
+Try to do as much setup work as possible in your setup step. For example, if all you're testing is that the user is able to resolve merge conflicts, create the merge conflicts in the setup step. On the other hand, if you're testing to see that slg can warn the user about merge conflicts after an attempted merge, it's fine to wait until the run step to actually create the conflicts. If the run step is focused on the thing you're trying to test, the test will run faster and its intent will be clearer.
 
 ### Create helper functions for (very) frequently used test logic
 

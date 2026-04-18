@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 )
 
-// updateRecentRepoList registers the fact that we opened lazygit in this repo,
+// updateRecentRepoList registers the fact that we opened slg in this repo,
 // so that we can open the same repo via the 'recent repos' menu
 func (gui *Gui) updateRecentRepoList() error {
 	if gui.git.Status.IsBareRepo() {

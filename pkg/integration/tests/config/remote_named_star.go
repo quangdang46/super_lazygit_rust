@@ -1,8 +1,8 @@
 package config
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 var RemoteNamedStar = NewIntegrationTest(NewIntegrationTestArgs{
@@ -16,7 +16,7 @@ var RemoteNamedStar = NewIntegrationTest(NewIntegrationTestArgs{
 	},
 	SetupConfig: func(cfg *config.AppConfig) {},
 	Run: func(t *TestDriver, keys config.KeybindingConfig) {
-		// here we're just asserting that we haven't panicked upon starting lazygit
+		// here we're just asserting that we haven't panicked upon starting slg
 		t.Views().Commits().
 			Lines(
 				AnyString(),

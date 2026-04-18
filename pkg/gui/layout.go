@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/types"
 	"github.com/samber/lo"
 )
 
@@ -179,7 +179,7 @@ func (gui *Gui) layout(g *gocui.Gui) error {
 	}
 
 	// here is a good place log some stuff
-	// if you run `lazygit --logs`
+	// if you run `slg --logs`
 	// this will let you see these branches as prettified json
 	// gui.c.Log.Info(utils.AsJson(gui.State.Model.Branches[0:4]))
 	gui.helpers.Confirmation.ResizeCurrentPopupPanels()

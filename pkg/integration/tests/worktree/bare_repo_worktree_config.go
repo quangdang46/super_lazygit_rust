@@ -1,17 +1,17 @@
 package worktree
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 // This case is identical to dotfile_bare_repo.go, except
-// that it invokes lazygit with $GIT_DIR set but not
+// that it invokes slg with $GIT_DIR set but not
 // $GIT_WORK_TREE. Instead, the repo uses the core.worktree
 // config to identify the main worktree.
 
 var BareRepoWorktreeConfig = NewIntegrationTest(NewIntegrationTestArgs{
-	Description:  "Open lazygit in the worktree of a vcsh-style bare repo and add a file and commit",
+	Description:  "Open slg in the worktree of a vcsh-style bare repo and add a file and commit",
 	ExtraCmdArgs: []string{"--git-dir={{.actualPath}}/.bare"},
 	Skip:         false,
 	SetupConfig: func(config *config.AppConfig) {
@@ -24,7 +24,7 @@ var BareRepoWorktreeConfig = NewIntegrationTest(NewIntegrationTestArgs{
 		//  - . (a worktree at the same path as .bare)
 		//
 		//
-		// 'repo' is the repository/directory that all lazygit tests start in
+		// 'repo' is the repository/directory that all slg tests start in
 
 		shell.CreateFileAndAdd("a/b/c/blah", "blah\n")
 		shell.Commit("initial commit")

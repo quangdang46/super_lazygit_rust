@@ -1,6 +1,6 @@
 package git_commands
 
-import "github.com/jesseduffield/lazygit/pkg/commands/hosting_service"
+import "github.com/quangdang46/slg/pkg/commands/hosting_service"
 
 // a hosting service is something like github, gitlab, bitbucket etc
 type HostingService struct {

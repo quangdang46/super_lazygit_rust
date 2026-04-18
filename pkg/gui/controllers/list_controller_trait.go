@@ -3,7 +3,7 @@ package controllers
 import (
 	"errors"
 
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 // Embed this into your list controller to get some convenience methods for

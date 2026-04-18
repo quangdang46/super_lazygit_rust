@@ -7,9 +7,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/constants"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/constants"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 func Label(name string) string {

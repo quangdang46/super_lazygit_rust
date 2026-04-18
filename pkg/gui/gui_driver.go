@@ -8,11 +8,11 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/gui/keybindings"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	integrationTypes "github.com/jesseduffield/lazygit/pkg/integration/types"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/gui/keybindings"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	integrationTypes "github.com/quangdang46/slg/pkg/integration/types"
 )
 
 // this gives our integration test a way of interacting with the gui for sending keypresses
@@ -64,7 +64,7 @@ func (self *GuiDriver) Click(x, y int) {
 	self.waitTillIdle()
 }
 
-// wait until lazygit is idle (i.e. all processing is done) before continuing
+// wait until slg is idle (i.e. all processing is done) before continuing
 func (self *GuiDriver) waitTillIdle() {
 	<-self.isIdleChan
 }
@@ -119,7 +119,7 @@ func (self *GuiDriver) Fail(message string) {
 	panic("Test failed")
 }
 
-// logs to the normal place that you log to i.e. viewable with `lazygit --logs`
+// logs to the normal place that you log to i.e. viewable with `slg --logs`
 func (self *GuiDriver) Log(message string) {
 	self.gui.c.Log.Warn(message)
 }

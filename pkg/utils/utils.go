@@ -20,7 +20,7 @@ func GetProjectRoot() string {
 	if err != nil {
 		panic(err)
 	}
-	return strings.Split(dir, "lazygit")[0] + "lazygit"
+	return strings.Split(dir, "slg")[0] + "slg"
 }
 
 func SortRange(x int, y int) (int, int) {

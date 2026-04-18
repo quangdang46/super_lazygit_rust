@@ -3,7 +3,7 @@ package helpers
 import (
 	"testing"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/models"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )

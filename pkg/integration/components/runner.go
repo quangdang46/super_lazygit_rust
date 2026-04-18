@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 
 	lazycoreUtils "github.com/jesseduffield/lazycore/pkg/utils"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 
@@ -149,7 +149,7 @@ func buildLazygit(testArgs RunTestArgs) error {
 }
 
 // Sets up the fixture for test and returns the working directory to invoke
-// lazygit in.
+// slg in.
 func createFixture(test *IntegrationTest, paths Paths, rootDir string) string {
 	env := NewTestEnvironment(rootDir)
 
@@ -225,7 +225,7 @@ func getLazygitCommand(
 	cmdObj.SetWd(workingDir)
 	cmdObj.AddEnvVars(fmt.Sprintf("%s=%s", PWD, workingDir))
 
-	cmdObj.AddEnvVars(fmt.Sprintf("%s=%s", LAZYGIT_ROOT_DIR, rootDir))
+	cmdObj.AddEnvVars(fmt.Sprintf("%s=%s", SLG_ROOT_DIR, rootDir))
 
 	if args.CodeCoverageDir != "" {
 		// We set this explicitly here rather than inherit it from the test runner's
@@ -260,11 +260,11 @@ func getLazygitCommand(
 }
 
 func tempLazygitPath() string {
-	return filepath.Join("/tmp", "lazygit", "test_lazygit")
+	return filepath.Join("/tmp", "slg", "test_slg")
 }
 
 func raceDetectorLogsPath() string {
-	return filepath.Join("/tmp", "lazygit", "race_log")
+	return filepath.Join("/tmp", "slg", "race_log")
 }
 
 func findOrCreateDir(path string) {

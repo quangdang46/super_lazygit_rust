@@ -4,12 +4,12 @@ import (
 	"strings"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/gui/controllers"
-	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
-	"github.com/jesseduffield/lazygit/pkg/gui/services/custom_commands"
-	"github.com/jesseduffield/lazygit/pkg/gui/status"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/gui/controllers"
+	"github.com/quangdang46/slg/pkg/gui/controllers/helpers"
+	"github.com/quangdang46/slg/pkg/gui/services/custom_commands"
+	"github.com/quangdang46/slg/pkg/gui/status"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 func (gui *Gui) Helpers() *helpers.Helpers {

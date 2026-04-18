@@ -14,12 +14,12 @@ func NewRecordDirectoryHelper(c *HelperCommon) *RecordDirectoryHelper {
 	}
 }
 
-// when a user runs lazygit with the LAZYGIT_NEW_DIR_FILE env variable defined
+// when a user runs slg with the SLG_NEW_DIR_FILE env variable defined
 // we will write the current directory to that file on exit so that their
 // shell can then change to that directory. That means you don't get kicked
 // back to the directory that you started with.
 func (self *RecordDirectoryHelper) RecordCurrentDirectory() error {
-	// determine current directory, set it in LAZYGIT_NEW_DIR_FILE
+	// determine current directory, set it in SLG_NEW_DIR_FILE
 	dirName, err := os.Getwd()
 	if err != nil {
 		return err
@@ -28,7 +28,7 @@ func (self *RecordDirectoryHelper) RecordCurrentDirectory() error {
 }
 
 func (self *RecordDirectoryHelper) RecordDirectory(dirName string) error {
-	newDirFilePath := os.Getenv("LAZYGIT_NEW_DIR_FILE")
+	newDirFilePath := os.Getenv("SLG_NEW_DIR_FILE")
 	if newDirFilePath == "" {
 		return nil
 	}

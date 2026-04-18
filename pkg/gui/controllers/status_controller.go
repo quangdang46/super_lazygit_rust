@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/constants"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/constants"
+	"github.com/quangdang46/slg/pkg/gui/presentation"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 
@@ -136,7 +136,7 @@ func cursorInSubstring(cx int, prefix string, substring string) bool {
 	return cx >= runeCount(prefix) && cx < runeCount(prefix+substring)
 }
 
-func lazygitTitle() string {
+func slgTitle() string {
 	return `
    _                       _ _
   | |                     (_) |
@@ -235,7 +235,7 @@ func (self *StatusController) showDashboard() {
 
 	dashboardString := strings.Join(
 		[]string{
-			lazygitTitle(),
+			slgTitle(),
 			fmt.Sprintf("Copyright %d Jesse Duffield", time.Now().Year()),
 			fmt.Sprintf("Keybindings: %s", fmt.Sprintf(constants.Links.Docs.Keybindings, versionStr)),
 			fmt.Sprintf("Config Options: %s", fmt.Sprintf(constants.Links.Docs.Config, versionStr)),

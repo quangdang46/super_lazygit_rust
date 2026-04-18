@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 type GpgHelper struct {
@@ -20,7 +20,7 @@ func NewGpgHelper(c *HelperCommon) *GpgHelper {
 }
 
 // Currently there is a bug where if we switch to a subprocess from within
-// WithWaitingStatus we get stuck there and can't return to lazygit. We could
+// WithWaitingStatus we get stuck there and can't return to slg. We could
 // fix this bug, or just stop running subprocesses from within there, given that
 // we don't need to see a loading status if we're in a subprocess.
 func (self *GpgHelper) WithGpgHandling(cmdObj *oscommands.CmdObj, configKey git_commands.GpgConfigKey, waitingStatus string, onSuccess func() error, refreshScope []types.RefreshableView) error {

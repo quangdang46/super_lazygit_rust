@@ -16,37 +16,37 @@ import (
 
 	"github.com/jesseduffield/gocui"
 	"github.com/jesseduffield/lazycore/pkg/boxlayout"
-	appTypes "github.com/jesseduffield/lazygit/pkg/app/types"
-	"github.com/jesseduffield/lazygit/pkg/commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_config"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/common"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/gui/context"
-	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
-	"github.com/jesseduffield/lazygit/pkg/gui/keybindings"
-	"github.com/jesseduffield/lazygit/pkg/gui/modes/cherrypicking"
-	"github.com/jesseduffield/lazygit/pkg/gui/modes/diffing"
-	"github.com/jesseduffield/lazygit/pkg/gui/modes/filtering"
-	"github.com/jesseduffield/lazygit/pkg/gui/modes/marked_base_commit"
-	"github.com/jesseduffield/lazygit/pkg/gui/popup"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation/authors"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation/graph"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation/icons"
-	"github.com/jesseduffield/lazygit/pkg/gui/services/custom_commands"
-	"github.com/jesseduffield/lazygit/pkg/gui/status"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/i18n"
-	"github.com/jesseduffield/lazygit/pkg/integration/components"
-	integrationTypes "github.com/jesseduffield/lazygit/pkg/integration/types"
-	"github.com/jesseduffield/lazygit/pkg/tasks"
-	"github.com/jesseduffield/lazygit/pkg/theme"
-	"github.com/jesseduffield/lazygit/pkg/updates"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	appTypes "github.com/quangdang46/slg/pkg/app/types"
+	"github.com/quangdang46/slg/pkg/commands"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/commands/git_config"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/common"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/gui/context"
+	"github.com/quangdang46/slg/pkg/gui/controllers/helpers"
+	"github.com/quangdang46/slg/pkg/gui/keybindings"
+	"github.com/quangdang46/slg/pkg/gui/modes/cherrypicking"
+	"github.com/quangdang46/slg/pkg/gui/modes/diffing"
+	"github.com/quangdang46/slg/pkg/gui/modes/filtering"
+	"github.com/quangdang46/slg/pkg/gui/modes/marked_base_commit"
+	"github.com/quangdang46/slg/pkg/gui/popup"
+	"github.com/quangdang46/slg/pkg/gui/presentation"
+	"github.com/quangdang46/slg/pkg/gui/presentation/authors"
+	"github.com/quangdang46/slg/pkg/gui/presentation/graph"
+	"github.com/quangdang46/slg/pkg/gui/presentation/icons"
+	"github.com/quangdang46/slg/pkg/gui/services/custom_commands"
+	"github.com/quangdang46/slg/pkg/gui/status"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/i18n"
+	"github.com/quangdang46/slg/pkg/integration/components"
+	integrationTypes "github.com/quangdang46/slg/pkg/integration/types"
+	"github.com/quangdang46/slg/pkg/tasks"
+	"github.com/quangdang46/slg/pkg/theme"
+	"github.com/quangdang46/slg/pkg/updates"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 	"github.com/sasha-s/go-deadlock"
 	"gopkg.in/ozeidan/fuzzy-patricia.v3/patricia"
@@ -89,7 +89,7 @@ type Gui struct {
 	viewPtmxMap map[string]*os.File
 	stopChan    chan struct{}
 
-	// when lazygit is opened outside a git directory we want to open to the most
+	// when slg is opened outside a git directory we want to open to the most
 	// recent repo with the recent repos popup showing
 	showRecentRepos bool
 
@@ -115,7 +115,7 @@ type Gui struct {
 	IsRefreshingFiles bool
 
 	// we use this to decide whether we'll return to the original directory that
-	// lazygit was opened in, or if we'll retain the one we're currently in.
+	// slg was opened in, or if we'll retain the one we're currently in.
 	RetainOriginalDir bool
 
 	// stores long-running operations associated with items (e.g. when a branch
@@ -126,11 +126,11 @@ type Gui struct {
 
 	PrevLayout PrevLayout
 
-	// this is the initial dir we are in upon opening lazygit. We hold onto this
+	// this is the initial dir we are in upon opening slg. We hold onto this
 	// in case we want to restore it before quitting for users who have set up
 	// the feature for changing directory upon quit.
 	// The reason we don't just wait until quit time to handle changing directories
-	// is because some users want to keep track of the current lazygit directory in an outside
+	// is because some users want to keep track of the current slg directory in an outside
 	// process
 	InitialDir string
 
@@ -376,8 +376,8 @@ func (gui *Gui) onNewRepo(startArgs appTypes.StartArgs, contextKey types.Context
 	})
 
 	gui.g.SetOpenHyperlinkFunc(func(url string, viewname string) error {
-		if strings.HasPrefix(url, "lazygit-edit:") {
-			re := regexp.MustCompile(`^lazygit-edit://(.+?)(?::(\d*))?$`)
+		if strings.HasPrefix(url, "slg-edit:") {
+			re := regexp.MustCompile(`^slg-edit://(.+?)(?::(\d*))?$`)
 			matches := re.FindStringSubmatch(url)
 			if matches == nil {
 				return fmt.Errorf(gui.Tr.InvalidLazygitEditURL, url)
@@ -434,10 +434,10 @@ func (gui *Gui) onNewRepo(startArgs appTypes.StartArgs, contextKey types.Context
 
 func (gui *Gui) getPerRepoConfigFiles() []*config.ConfigFile {
 	repoConfigFiles := []*config.ConfigFile{
-		// TODO: add filepath.Join(gui.git.RepoPaths.RepoPath(), ".lazygit.yml"),
+		// TODO: add filepath.Join(gui.git.RepoPaths.RepoPath(), ".slg.yml"),
 		// with trust prompt
 		{
-			Path:   filepath.Join(gui.git.RepoPaths.RepoGitDirPath(), "lazygit.yml"),
+			Path:   filepath.Join(gui.git.RepoPaths.RepoGitDirPath(), "slg.yml"),
 			Policy: config.ConfigFilePolicySkipIfMissing,
 		},
 	}
@@ -446,7 +446,7 @@ func (gui *Gui) getPerRepoConfigFiles() []*config.ConfigFile {
 	dir := filepath.Dir(prevDir)
 	for dir != prevDir {
 		repoConfigFiles = utils.Prepend(repoConfigFiles, &config.ConfigFile{
-			Path:   filepath.Join(dir, ".lazygit.yml"),
+			Path:   filepath.Join(dir, ".slg.yml"),
 			Policy: config.ConfigFilePolicySkipIfMissing,
 		})
 		prevDir = dir

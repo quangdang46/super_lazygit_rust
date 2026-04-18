@@ -17,11 +17,11 @@ import (
 // so if you want to log something that's printed when the -debug flag is set,
 // you'll need to ensure the struct you're working with has a logger field (
 // and most of them do).
-// Global is only available if the LAZYGIT_LOG_PATH environment variable is set.
+// Global is only available if the SLG_LOG_PATH environment variable is set.
 var Global *logrus.Entry
 
 func init() {
-	logPath := os.Getenv("LAZYGIT_LOG_PATH")
+	logPath := os.Getenv("SLG_LOG_PATH")
 	if logPath != "" {
 		Global = NewDevelopmentLogger(logPath)
 	}

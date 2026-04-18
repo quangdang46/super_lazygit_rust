@@ -25,7 +25,7 @@
   "NoCommitToAmend": "Brak commita do poprawienia.",
   "CommitChangesWithEditor": "Zatwierdź zmiany używając edytora git",
   "FindBaseCommitForFixup": "Znajdź bazowy commit do poprawki",
-  "FindBaseCommitForFixupTooltip": "Znajdź commit, na którym opierają się Twoje obecne zmiany, w celu poprawienia/zmiany commita. To pozwala Ci uniknąć przeglądania commitów w Twojej gałęzi jeden po drugim, aby zobaczyć, który commit powinien być poprawiony/zmieniony. Zobacz dokumentację: <https://github.com/jesseduffield/lazygit/tree/master/docs/Fixup_Commits.md>",
+  "FindBaseCommitForFixupTooltip": "Znajdź commit, na którym opierają się Twoje obecne zmiany, w celu poprawienia/zmiany commita. To pozwala Ci uniknąć przeglądania commitów w Twojej gałęzi jeden po drugim, aby zobaczyć, który commit powinien być poprawiony/zmieniony. Zobacz dokumentację: <https://github.com/jesseduffield/slg/tree/master/docs/Fixup_Commits.md>",
   "NoBaseCommitsFound": "Nie znaleziono bazowych commitów",
   "MultipleBaseCommitsFoundStaged": "Znaleziono wiele bazowych commitów. (Spróbuj zatwierdzić mniej zmian naraz)",
   "MultipleBaseCommitsFoundUnstaged": "Znaleziono wiele bazowych commitów. (Spróbuj zatwierdzić część zmian)",
@@ -169,7 +169,7 @@
   "UpdateAvailable": "Pobrać i zainstalować wersję {{.newVersion}}?",
   "UpdateInProgressWaitingStatus": "Aktualizacja",
   "UpdateCompletedTitle": "Aktualizacja zakończona!",
-  "UpdateCompleted": "Aktualizacja została pomyślnie zainstalowana. Uruchom ponownie lazygit, aby zaczęła działać.",
+  "UpdateCompleted": "Aktualizacja została pomyślnie zainstalowana. Uruchom ponownie slg, aby zaczęła działać.",
   "FailedToRetrieveLatestVersionErr": "Nie udało się pobrać informacji o wersji",
   "OnLatestVersionErr": "Masz już najnowszą wersję",
   "MajorVersionErr": "Nowa wersja ({{.newVersion}}) zawiera zmiany niekompatybilne wstecznie w porównaniu z bieżącą wersją ({{.currentVersion}})",
@@ -301,7 +301,7 @@
   "DiscardFileChangesTitle": "Odrzuć zmiany w pliku",
   "BareRepo": "Próbujesz otworzyć Lazygit w gołym repozytorium, ale Lazygit jeszcze nie obsługuje gołych repozytoriów. Otworzyć najnowsze repozytorium? (t/n) ",
   "InitialBranch": "Nazwa gałęzi? (pozostaw puste dla domyślnej gita): ",
-  "NoRecentRepositories": "Musisz otworzyć lazygit w repozytorium git. Brak ważnych ostatnich repozytoriów. Wyjście.",
+  "NoRecentRepositories": "Musisz otworzyć slg w repozytorium git. Brak ważnych ostatnich repozytoriów. Wyjście.",
   "IncorrectNotARepository": "Wartość 'notARepository' jest nieprawidłowa. Powinna być jedną z 'prompt', 'create', 'skip', lub 'quit'.",
   "AutoStashPrompt": "Musisz schować i wyciągnąć swoje zmiany, aby je przenieść. Zrobić to automatycznie? (enter/esc)",
   "Discard": "Odrzuć",
@@ -334,7 +334,7 @@
   "ResetSoftTooltip": "Resetuj HEAD do wybranego commita, zachowując zmiany między bieżącym a wybranym commit jako zmiany zatwierdzone.",
   "ResetMixedTooltip": "Resetuj HEAD do wybranego commita, zachowując zmiany między bieżącym a wybranym commit jako zmiany niezatwierdzone.",
   "ResetHardTooltip": "Resetuj HEAD do wybranego commita, odrzucając wszystkie zmiany między bieżącym a wybranym commit, jak również wszystkie bieżące modyfikacje w drzewie roboczym.",
-  "PressEnterToReturn": "Naciśnij enter, aby wrócić do lazygit",
+  "PressEnterToReturn": "Naciśnij enter, aby wrócić do slg",
   "ViewStashOptions": "Wyświetl opcje schowka",
   "ViewStashOptionsTooltip": "Wyświetl opcje schowka (np. schowaj wszystko, schowaj zatwierdzone, schowaj niezatwierdzone).",
   "Stash": "Schowaj",
@@ -795,7 +795,7 @@
     "EditRebaseFromBaseCommit": "Rozpoczynanie interaktywnego rebazowania od '{{.baseCommit}}' na '{{.targetBranchName}}'"
   },
   "BreakingChangesTitle": "Zmiany przełomowe",
-  "BreakingChangesMessage": "Aktualizujesz do nowej wersji lazygit, która zawiera zmiany przełomowe. Proszę przejrzeć poniższe notatki i zaktualizować swoją konfigurację, jeśli jest to konieczne.\nAby uzyskać więcej informacji, zobacz pełne notatki do wydania na <https://github.com/jesseduffield/lazygit/releases>.",
+  "BreakingChangesMessage": "Aktualizujesz do nowej wersji slg, która zawiera zmiany przełomowe. Proszę przejrzeć poniższe notatki i zaktualizować swoją konfigurację, jeśli jest to konieczne.\nAby uzyskać więcej informacji, zobacz pełne notatki do wydania na <https://github.com/jesseduffield/slg/releases>.",
   "BreakingChangesByVersion": {
     "0.41.0": "- Gdy naciśniesz 'g', aby wywołać menu resetu git, opcja 'mixed' jest teraz pierwsza i domyślna, a nie 'soft'. Jest to dlatego, że 'mixed' jest najczęściej używaną opcją.\n- Panel wiadomości commita teraz domyślnie zawija tekst (tj. dodaje znaki nowej linii, gdy osiągniesz margines). Możesz dostosować konfigurację w następujący sposób:\n\ngit:\n  commit:\n    autoWrapCommitMessage: true\n    autoWrapWidth: 72\n\n- Klawisz 'v' był już używany w widoku staging do rozpoczęcia zaznaczania zakresu, ale teraz możesz go użyć do rozpoczęcia zaznaczania zakresu w dowolnym widoku. Niestety koliduje to z klawiszem 'v' dla wklejania commitów (cherry-pick), więc teraz wklejanie commitów odbywa się za pomocą 'shift+V', a dla spójności kopiowanie commitów odbywa się teraz za pomocą 'shift+C' zamiast 'c'. Zauważ, że klawisz 'v' to tylko jeden ze sposobów na rozpoczęcie zaznaczania zakresu: możesz zamiast tego użyć shift+góra/dół. Więc jeśli chcesz skonfigurować klawisze cherry-pick, aby uzyskać stare zachowanie, ustaw następujące w swojej konfiguracji:\n\nkeybinding:\n  universal:\n      toggleRangeSelect: <coś innego niż v>\n    commits:\n      cherryPickCopy: 'c'\n      pasteCommits: 'v'\n\n- Sciskanie fixupów za pomocą 'shift-S' teraz wywołuje menu, z domyślną opcją sciskania wszystkich commitów fixup w gałęzi. Oryginalne zachowanie sciskania tylko commitów fixup powyżej wybranego commita jest nadal dostępne jako druga opcja w tym menu.\n- Statusy ładowania push/pull/fetch są teraz wyświetlane przy gałęzi, a nie w popupie. Pozwala to np. na równoczesne fetchowanie wielu gałęzi i widzenie statusu dla każdej gałęzi.\n- Graf logu git w widoku commitów jest teraz zawsze wyświetlany domyślnie (wcześniej był wyświetlany tylko, gdy widok był maksymalizowany). Jeśli uznasz to za zbyt hałaśliwe, możesz to zmienić za pomocą ctrl+L -> 'Pokaż graf git' -> 'gdy maksymalizowany'\n\t  "
   }

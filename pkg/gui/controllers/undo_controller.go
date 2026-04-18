@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/utils"
 )
 
 // Quick summary of how this all works:
@@ -74,7 +74,7 @@ func (self *UndoController) Context() types.Context {
 }
 
 func (self *UndoController) reflogUndo() error {
-	undoEnvVars := []string{"GIT_REFLOG_ACTION=[lazygit undo]"}
+	undoEnvVars := []string{"GIT_REFLOG_ACTION=[slg undo]"}
 	undoingStatus := self.c.Tr.UndoingStatus
 
 	if self.c.Git().Status.WorkingTreeState().Any() {
@@ -138,7 +138,7 @@ func (self *UndoController) reflogUndo() error {
 }
 
 func (self *UndoController) reflogRedo() error {
-	redoEnvVars := []string{"GIT_REFLOG_ACTION=[lazygit redo]"}
+	redoEnvVars := []string{"GIT_REFLOG_ACTION=[slg redo]"}
 	redoingStatus := self.c.Tr.RedoingStatus
 
 	if self.c.Git().Status.WorkingTreeState().Any() {
@@ -211,9 +211,9 @@ func (self *UndoController) parseReflogForActions(onUserAction func(counter int,
 		}
 
 		if rebaseFinishCommitHash == "" {
-			if ok, _ := utils.FindStringSubmatch(reflogCommit.Name, `^\[lazygit undo\]`); ok {
+			if ok, _ := utils.FindStringSubmatch(reflogCommit.Name, `^\[slg undo\]`); ok {
 				counter++
-			} else if ok, _ := utils.FindStringSubmatch(reflogCommit.Name, `^\[lazygit redo\]`); ok {
+			} else if ok, _ := utils.FindStringSubmatch(reflogCommit.Name, `^\[slg redo\]`); ok {
 				counter--
 			} else if ok, _ := utils.FindStringSubmatch(reflogCommit.Name, `^rebase (-i )?\(abort\)|^rebase (-i )?\(finish\)`); ok {
 				rebaseFinishCommitHash = reflogCommit.Hash()

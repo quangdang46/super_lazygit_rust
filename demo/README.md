@@ -1,2 +1,2 @@
-This directory contains stuff for recording lazygit demos.
+This directory contains stuff for recording slg demos.
 

@@ -1,6 +1,6 @@
 The JSON files in this directory are machine-generated; please do not edit.
 
-Translating lazygit happens at https://crowdin.com/project/lazygit/.
+Translating slg happens at https://crowdin.com/project/slg/.
 
 # Updating translations from Crowdin
 
@@ -15,5 +15,5 @@ The English version of all the texts is still maintained in
 `pkg/i18n/english.go`; it needs to be uploaded to Crowdin regularly. To do this,
 call `go run cmd/i18n/main.go`; this will create an unversioned file `en.json`
 in the root of the repository. Upload this to
-`https://crowdin.com/project/lazygit/sources/files` and delete it from the
+`https://crowdin.com/project/slg/sources/files` and delete it from the
 working copy again.

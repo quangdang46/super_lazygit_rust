@@ -10,7 +10,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 
@@ -66,7 +66,7 @@ func (gui *Gui) newPtyTask(view *gocui.View, cmd *exec.Cmd, prefix string) error
 		// This communicates to pagers that we're in a very simple
 		// terminal that they should not expect to have much capabilities.
 		// Moving the cursor, clearing the screen, or querying for colors are among such "advanced" capabilities.
-		// Context: https://github.com/jesseduffield/lazygit/issues/3419
+		// Context: https://github.com/quangdang46/slg/issues/3419
 		cmd.Env = removeExistingTermEnvVars(cmd.Env)
 		cmd.Env = append(cmd.Env, "TERM=dumb")
 

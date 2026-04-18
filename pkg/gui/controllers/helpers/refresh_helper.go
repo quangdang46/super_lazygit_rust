@@ -8,16 +8,16 @@ import (
 
 	"github.com/jesseduffield/generics/set"
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	"github.com/jesseduffield/lazygit/pkg/gui/context"
-	"github.com/jesseduffield/lazygit/pkg/gui/filetree"
-	"github.com/jesseduffield/lazygit/pkg/gui/mergeconflicts"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/config"
+	"github.com/quangdang46/slg/pkg/gui/context"
+	"github.com/quangdang46/slg/pkg/gui/filetree"
+	"github.com/quangdang46/slg/pkg/gui/mergeconflicts"
+	"github.com/quangdang46/slg/pkg/gui/presentation"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 )
 
@@ -33,7 +33,7 @@ type RefreshHelper struct {
 
 	// Tracks repos for which the user has dismissed the "select base GitHub remote"
 	// prompt, to avoid re-prompting on every subsequent refresh within the same session.
-	// Keyed by repo path so that switching to a different repo while lazygit is running
+	// Keyed by repo path so that switching to a different repo while slg is running
 	// still triggers the prompt there.
 	githubBaseRemotePromptDismissed map[string]bool
 }

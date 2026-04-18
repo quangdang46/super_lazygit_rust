@@ -3,8 +3,8 @@ package context
 import (
 	"math"
 
-	"github.com/jesseduffield/lazygit/pkg/gui/mergeconflicts"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/mergeconflicts"
+	"github.com/quangdang46/slg/pkg/gui/types"
 	"github.com/sasha-s/go-deadlock"
 )
 

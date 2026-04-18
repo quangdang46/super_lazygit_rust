@@ -3,8 +3,8 @@ package git_commands
 import (
 	"testing"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/hosting_service"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/hosting_service"
+	"github.com/quangdang46/slg/pkg/commands/models"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,34 +16,34 @@ func TestGetRepoInfoFromURL(t *testing.T) {
 	}{
 		{
 			name: "SSH URL",
-			url:  "git@github.com:jesseduffield/lazygit.git",
+			url:  "git@github.com:jesseduffield/slg.git",
 			expected: hosting_service.RepoInformation{
 				Owner:      "jesseduffield",
-				Repository: "lazygit",
+				Repository: "slg",
 			},
 		},
 		{
 			name: "HTTPS URL",
-			url:  "https://github.com/jesseduffield/lazygit.git",
+			url:  "https://github.com/quangdang46/slg.git",
 			expected: hosting_service.RepoInformation{
 				Owner:      "jesseduffield",
-				Repository: "lazygit",
+				Repository: "slg",
 			},
 		},
 		{
 			name: "HTTPS URL without .git",
-			url:  "https://github.com/jesseduffield/lazygit",
+			url:  "https://github.com/quangdang46/slg",
 			expected: hosting_service.RepoInformation{
 				Owner:      "jesseduffield",
-				Repository: "lazygit",
+				Repository: "slg",
 			},
 		},
 		{
 			name: "SSH URL with org nesting",
-			url:  "git@github.com:my-org/sub-group/lazygit.git",
+			url:  "git@github.com:my-org/sub-group/slg.git",
 			expected: hosting_service.RepoInformation{
 				Owner:      "my-org/sub-group",
-				Repository: "lazygit",
+				Repository: "slg",
 			},
 		},
 	}
@@ -80,7 +80,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              42,
 					Title:               "Add feature",
 					State:               "OPEN",
-					Url:                 "https://github.com/jesseduffield/lazygit/pull/42",
+					Url:                 "https://github.com/quangdang46/slg/pull/42",
 					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
 				},
 			},
@@ -94,7 +94,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/lazygit.git"},
+					Urls: []string{"git@github.com:jesseduffield/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -103,7 +103,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              42,
 					Title:               "Add feature",
 					State:               "OPEN",
-					Url:                 "https://github.com/jesseduffield/lazygit/pull/42",
+					Url:                 "https://github.com/quangdang46/slg/pull/42",
 					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
 				},
 			},
@@ -128,7 +128,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/lazygit.git"},
+					Urls: []string{"git@github.com:jesseduffield/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{},
@@ -154,11 +154,11 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/lazygit.git"},
+					Urls: []string{"git@github.com:jesseduffield/slg.git"},
 				},
 				{
 					Name: "contributor",
-					Urls: []string{"git@github.com:contributor/lazygit.git"},
+					Urls: []string{"git@github.com:contributor/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -192,7 +192,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/lazygit.git"},
+					Urls: []string{"git@github.com:jesseduffield/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{},
@@ -211,14 +211,14 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			branches: []*models.Branch{
 				{
 					Name:           "my-branch",
-					UpstreamRemote: "git@github.com:contributor/lazygit.git",
+					UpstreamRemote: "git@github.com:contributor/slg.git",
 					UpstreamBranch: "my-branch",
 				},
 			},
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/lazygit.git"},
+					Urls: []string{"git@github.com:jesseduffield/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -240,7 +240,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              50,
 					Title:               "Newest PR",
 					State:               "CLOSED",
-					Url:                 "https://github.com/jesseduffield/lazygit/pull/50",
+					Url:                 "https://github.com/quangdang46/slg/pull/50",
 					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
 				},
 				{
@@ -248,7 +248,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              30,
 					Title:               "Middle PR",
 					State:               "OPEN",
-					Url:                 "https://github.com/jesseduffield/lazygit/pull/30",
+					Url:                 "https://github.com/quangdang46/slg/pull/30",
 					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
 				},
 				{
@@ -256,7 +256,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              10,
 					Title:               "Oldest PR",
 					State:               "CLOSED",
-					Url:                 "https://github.com/jesseduffield/lazygit/pull/10",
+					Url:                 "https://github.com/quangdang46/slg/pull/10",
 					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
 				},
 			},
@@ -270,7 +270,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/lazygit.git"},
+					Urls: []string{"git@github.com:jesseduffield/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -279,7 +279,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 					Number:              50,
 					Title:               "Newest PR",
 					State:               "CLOSED",
-					Url:                 "https://github.com/jesseduffield/lazygit/pull/50",
+					Url:                 "https://github.com/quangdang46/slg/pull/50",
 					HeadRepositoryOwner: models.GithubRepositoryOwner{Login: "jesseduffield"},
 				},
 			},
@@ -305,7 +305,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"https://github.com/jesseduffield/lazygit.git"},
+					Urls: []string{"https://github.com/quangdang46/slg.git"},
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{
@@ -339,7 +339,7 @@ func TestGenerateGithubPullRequestMap(t *testing.T) {
 			remotes: []*models.Remote{
 				{
 					Name: "origin",
-					Urls: []string{"git@github.com:jesseduffield/lazygit.git"}, // Lowercase j
+					Urls: []string{"git@github.com:jesseduffield/slg.git"}, // Lowercase j
 				},
 			},
 			expected: map[string]*models.GithubPullRequest{

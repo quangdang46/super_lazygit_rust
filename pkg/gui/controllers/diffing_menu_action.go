@@ -3,8 +3,8 @@ package controllers
 import (
 	"fmt"
 
-	"github.com/jesseduffield/lazygit/pkg/gui/modes/diffing"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/modes/diffing"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 type DiffingMenuAction struct {

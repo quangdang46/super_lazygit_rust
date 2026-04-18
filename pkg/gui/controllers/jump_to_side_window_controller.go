@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/gui/types"
 	"github.com/samber/lo"
 )
 

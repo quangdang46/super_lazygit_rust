@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jesseduffield/lazygit/pkg/constants"
-	"github.com/jesseduffield/lazygit/pkg/gui/keybindings"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
-	"github.com/jesseduffield/lazygit/pkg/theme"
+	"github.com/quangdang46/slg/pkg/constants"
+	"github.com/quangdang46/slg/pkg/gui/keybindings"
+	"github.com/quangdang46/slg/pkg/gui/style"
+	"github.com/quangdang46/slg/pkg/theme"
 )
 
 // our UI command log looks like this:
@@ -77,7 +77,7 @@ func (gui *Gui) getRandomTip() string {
 	}
 
 	tips := []string{
-		// keybindings and lazygit-specific advice
+		// keybindings and slg-specific advice
 		fmt.Sprintf(
 			"To force push, press '%s' and then if the push is rejected you will be asked if you want to force push",
 			formattedKey(config.Universal.Push),
@@ -95,7 +95,7 @@ func (gui *Gui) getRandomTip() string {
 			"In flat file view, merge conflicts are sorted to the top. To switch to flat file view press '%s'",
 			formattedKey(config.Files.ToggleTreeView),
 		),
-		"If you want to learn Go and can think of ways to improve lazygit, join the team! Click 'Ask Question' and express your interest",
+		"If you want to learn Go and can think of ways to improve slg, join the team! Click 'Ask Question' and express your interest",
 		fmt.Sprintf(
 			"If you press '%s'/'%s' you can undo/redo your changes. Be wary though, this only applies to branches/commits, so only do this if your worktree is clear.\nDocs: %s",
 			formattedKey(config.Universal.Undo),
@@ -163,7 +163,7 @@ func (gui *Gui) getRandomTip() string {
 			formattedKey(config.Universal.PrevBlockAlt2),
 		),
 
-		"You can use lazygit with a bare repo by passing the --git-dir and --work-tree arguments as you would for the git CLI",
+		"You can use slg with a bare repo by passing the --git-dir and --work-tree arguments as you would for the git CLI",
 
 		// general advice
 		"`git commit` is really just the programmer equivalent of saving your game. Always do it before embarking on an ambitious change!",
@@ -175,11 +175,11 @@ func (gui *Gui) getRandomTip() string {
 
 		// links
 		fmt.Sprintf(
-			"If you want a git diff with syntax colouring, check out lazygit's integration with delta:\n%s",
+			"If you want a git diff with syntax colouring, check out slg's integration with delta:\n%s",
 			constants.Links.Docs.CustomPagers,
 		),
 		fmt.Sprintf(
-			"You can build your own custom menus and commands to run from within lazygit. For examples see:\n%s",
+			"You can build your own custom menus and commands to run from within slg. For examples see:\n%s",
 			constants.Links.Docs.CustomCommands,
 		),
 		fmt.Sprintf(

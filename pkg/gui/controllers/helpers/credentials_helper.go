@@ -1,8 +1,8 @@
 package helpers
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/gui/types"
 )
 
 type CredentialsHelper struct {
@@ -20,7 +20,7 @@ func NewCredentialsHelper(
 // PromptUserForCredential wait for a username, password or passphrase input from the credentials popup
 // We return a channel rather than returning the string directly so that the calling function knows
 // when the prompt has been created (before the user has entered anything) so that it can
-// note that we're now waiting on user input and lazygit isn't processing anything.
+// note that we're now waiting on user input and slg isn't processing anything.
 func (self *CredentialsHelper) PromptUserForCredential(passOrUname oscommands.CredentialType) <-chan string {
 	ch := make(chan string)
 

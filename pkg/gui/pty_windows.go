@@ -12,6 +12,6 @@ func (gui *Gui) onResize() error {
 }
 
 func (gui *Gui) newPtyTask(view *gocui.View, cmd *exec.Cmd, prefix string) error {
-	cmd.Env = append(cmd.Env, fmt.Sprintf("LAZYGIT_COLUMNS=%d", view.InnerWidth()))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("SLG_COLUMNS=%d", view.InnerWidth()))
 	return gui.newCmdTask(view, cmd, prefix)
 }

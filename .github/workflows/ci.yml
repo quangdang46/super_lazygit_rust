@@ -93,7 +93,7 @@ jobs:
       - name: Test code
         env:
           # See https://go.dev/blog/integration-test-coverage
-          LAZYGIT_GOCOVERDIR: /tmp/code_coverage
+          SLG_GOCOVERDIR: /tmp/code_coverage
         run: |
           mkdir -p /tmp/code_coverage
           ./scripts/run_integration_tests.sh

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
 )
 
 type FlowCommands struct {

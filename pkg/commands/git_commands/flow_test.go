@@ -3,7 +3,7 @@ package git_commands
 import (
 	"testing"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/git_config"
+	"github.com/quangdang46/slg/pkg/commands/git_config"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -29,9 +29,9 @@ git:
 
 ![](https://i.imgur.com/QJpQkF3.png)
 
-A cool feature of delta is --hyperlinks, which renders clickable links for the line numbers in the left margin, and lazygit supports these. To use them, set the `pager:` config to `delta --dark --paging=never --line-numbers --hyperlinks --hyperlinks-file-link-format="lazygit-edit://{path}:{line}"`; this allows you to click on an underlined line number in the diff to jump right to that same line in your editor.
+A cool feature of delta is --hyperlinks, which renders clickable links for the line numbers in the left margin, and slg supports these. To use them, set the `pager:` config to `delta --dark --paging=never --line-numbers --hyperlinks --hyperlinks-file-link-format="slg-edit://{path}:{line}"`; this allows you to click on an underlined line number in the diff to jump right to that same line in your editor.
 
-Note that delta's `--navigate` option doesn't work in lazygit, for technical reasons.
+Note that delta's `--navigate` option doesn't work in slg, for technical reasons.
 
 ## Diff-so-fancy
 
@@ -62,7 +62,7 @@ Be careful with this one, I think the homebrew and pip versions are behind maste
 
 Some diff tools can't work as a simple pager like the ones above do, because they need access to the entire diff, so just post-processing git's diff is not enough for them. The most notable example is probably [difftastic](https://difftastic.wilfred.me.uk).
 
-These can be used in lazygit by using the `externalDiffCommand` config; in the case of difftastic, that could be
+These can be used in slg by using the `externalDiffCommand` config; in the case of difftastic, that could be
 
 ```yaml
 git:
@@ -80,7 +80,7 @@ git:
     - externalDiffCommand: difft --color=always --display=inline --syntax-highlight=off
 ```
 
-Instead of setting this command in lazygit's `externalDiffCommand` config, you can also tell lazygit to use the external diff command that is configured in git itself (`diff.external`), by using
+Instead of setting this command in slg's `externalDiffCommand` config, you can also tell slg to use the external diff command that is configured in git itself (`diff.external`), by using
 
 ```yaml
 git:
@@ -92,7 +92,7 @@ This can be useful if you also want to use it for diffs on the command line, and
 
 ## Emulating custom pagers on Windows
 
-There is a trick to emulate custom pagers on Windows using a Powershell script configured as an external diff command. It's not perfect, but certainly better than nothing. To do this, save the following script as `lazygit-pager.ps1` at a convenient place on your disk:
+There is a trick to emulate custom pagers on Windows using a Powershell script configured as an external diff command. It's not perfect, but certainly better than nothing. To do this, save the following script as `slg-pager.ps1` at a convenient place on your disk:
 
 ```pwsh
 #!/usr/bin/env pwsh
@@ -102,17 +102,17 @@ $new = $args[4].Replace('\', '/')
 $path = $args[0]
 git diff --no-index --no-ext-diff $old $new
   | %{ $_.Replace($old, $path).Replace($new, $path) }
-  | delta --width=$env:LAZYGIT_COLUMNS
+  | delta --width=$env:SLG_COLUMNS
 ```
 
-Use the pager of your choice with the arguments you like in the last line of the script. Personally I wouldn't want to use lazygit anymore without delta's `--hyperlinks --hyperlinks-file-link-format="lazygit-edit://{path}:{line}"` args, see [above](#delta).
+Use the pager of your choice with the arguments you like in the last line of the script. Personally I wouldn't want to use slg anymore without delta's `--hyperlinks --hyperlinks-file-link-format="slg-edit://{path}:{line}"` args, see [above](#delta).
 
-In your lazygit config, use
+In your slg config, use
 
 ```yml
 git:
   pagers:
-    - externalDiffCommand: "C:/wherever/lazygit-pager.ps1"
+    - externalDiffCommand: "C:/wherever/slg-pager.ps1"
 ```
 
 The main limitation of this approach compared to a "real" pager is that renames are not displayed correctly; they are shown as if they were modifications of the old file. (This affects only the hunk headers; the diff itself is always correct.)

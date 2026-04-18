@@ -15,8 +15,8 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/jesseduffield/lazycore/pkg/utils"
-	"github.com/jesseduffield/lazygit/pkg/integration/components"
-	"github.com/jesseduffield/lazygit/pkg/integration/tests"
+	"github.com/quangdang46/slg/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/integration/tests"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,11 +27,11 @@ func TestIntegration(t *testing.T) {
 
 	parallelTotal := tryConvert(os.Getenv("PARALLEL_TOTAL"), 1)
 	parallelIndex := tryConvert(os.Getenv("PARALLEL_INDEX"), 0)
-	raceDetector := os.Getenv("LAZYGIT_RACE_DETECTOR") != ""
-	// LAZYGIT_GOCOVERDIR is the directory where we write coverage files to. If this directory
+	raceDetector := os.Getenv("SLG_RACE_DETECTOR") != ""
+	// SLG_GOCOVERDIR is the directory where we write coverage files to. If this directory
 	// is defined, go binaries built with the -cover flag will write coverage files to
 	// to it.
-	codeCoverageDir := os.Getenv("LAZYGIT_GOCOVERDIR")
+	codeCoverageDir := os.Getenv("SLG_GOCOVERDIR")
 	testNumber := 0
 
 	err := components.RunTests(components.RunTestArgs{
@@ -65,7 +65,7 @@ func TestIntegration(t *testing.T) {
 func runCmdHeadless(cmd *exec.Cmd) (int, error) {
 	cmd.Env = append(
 		cmd.Env,
-		"LAZYGIT_HEADLESS=true",
+		"SLG_HEADLESS=true",
 		"TERM=xterm",
 	)
 

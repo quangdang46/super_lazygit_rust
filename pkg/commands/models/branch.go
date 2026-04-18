@@ -28,7 +28,7 @@ type Branch struct {
 	DetachedHead bool
 	// if we have a named remote locally this will be the name of that remote e.g.
 	// 'origin' or 'tiwood'. If we don't have the remote locally it'll look like
-	// 'git@github.com:tiwood/lazygit.git'
+	// 'git@github.com:tiwood/slg.git'
 	UpstreamRemote string
 	UpstreamBranch string
 	// subject line in commit message

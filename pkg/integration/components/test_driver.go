@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/jesseduffield/lazygit/pkg/config"
-	integrationTypes "github.com/jesseduffield/lazygit/pkg/integration/types"
+	"github.com/quangdang46/slg/pkg/config"
+	integrationTypes "github.com/quangdang46/slg/pkg/integration/types"
 )
 
 type TestDriver struct {
@@ -66,7 +66,7 @@ func (self *TestDriver) Common() *Common {
 	return &Common{t: self}
 }
 
-// for when you want to allow lazygit to process something before continuing
+// for when you want to allow slg to process something before continuing
 func (self *TestDriver) Wait(milliseconds int) {
 	time.Sleep(time.Duration(milliseconds) * time.Millisecond)
 }
@@ -92,7 +92,7 @@ func (self *TestDriver) Shell() *Shell {
 	return self.shell
 }
 
-// for making assertions on lazygit views
+// for making assertions on slg views
 func (self *TestDriver) Views() *Views {
 	return &Views{t: self}
 }

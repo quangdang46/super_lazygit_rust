@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/jesseduffield/gocui"
-	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/gui/types"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/git_commands"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/gui/types"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 	"github.com/stefanhaller/git-todo-parser/todo"
 )
@@ -227,11 +227,11 @@ func (self *MergeAndRebaseHelper) PromptToContinueRebase() error {
 		HandleConfirm: func() error {
 			// By the time we get here, we might have unstaged changes again,
 			// e.g. if the user had to fix build errors after resolving the
-			// conflicts, but after lazygit opened the prompt already. Ask again
+			// conflicts, but after slg opened the prompt already. Ask again
 			// to auto-stage these.
 
 			// Need to refresh the files to be really sure if this is the case.
-			// We would otherwise be relying on lazygit's auto-refresh on focus,
+			// We would otherwise be relying on slg's auto-refresh on focus,
 			// but this is not supported by all terminals or on all platforms.
 			self.c.Refresh(types.RefreshOptions{
 				Mode: types.SYNC, Scope: []types.RefreshableView{types.FILES},

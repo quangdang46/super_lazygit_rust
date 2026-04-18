@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "lastScanned": 1776510397560,
-  "projectRoot": "/home/quangdang/projects/tools/super_lazygit_rust",
+  "projectRoot": "/home/quangdang/projects/tools/super_slg_rust",
   "techStack": {
     "languages": [
       {
@@ -97,8 +97,8 @@
         "README.md"
       ]
     },
-    "lazygit-master": {
-      "path": "lazygit-master",
+    "slg-master": {
+      "path": "slg-master",
       "purpose": null,
       "fileCount": 4,
       "lastAccessed": 1776510397539,
@@ -189,6 +189,19 @@
       ]
     }
   },
-  "hotPaths": [],
+  "hotPaths": [
+    {
+      "path": "main.go",
+      "accessCount": 2,
+      "lastAccessed": 1776518645406,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 1,
+      "lastAccessed": 1776518597897,
+      "type": "directory"
+    }
+  ],
   "userDirectives": []
 }

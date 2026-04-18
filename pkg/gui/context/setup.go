@@ -1,6 +1,6 @@
 package context
 
-import "github.com/jesseduffield/lazygit/pkg/gui/types"
+import "github.com/quangdang46/slg/pkg/gui/types"
 
 func NewContextTree(c *ContextCommon) *ContextTree {
 	commitFilesContext := NewCommitFilesContext(c)

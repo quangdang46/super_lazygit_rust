@@ -5,9 +5,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/common"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/common"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 	"github.com/sasha-s/go-deadlock"
 )
@@ -66,7 +66,7 @@ func (self *MainBranches) GetMergeBase(refName string) string {
 	// error is because one of the main branches has been deleted since the last
 	// call to determineMainBranches, or because the refName has no common
 	// history with any of the main branches. Since the former should happen
-	// very rarely, users must quit and restart lazygit to fix it; the latter is
+	// very rarely, users must quit and restart slg to fix it; the latter is
 	// also not very common, but can totally happen and is not an error.
 
 	output, _, _ := self.cmd.New(

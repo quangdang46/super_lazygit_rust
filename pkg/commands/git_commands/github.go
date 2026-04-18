@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/auth"
-	"github.com/jesseduffield/lazygit/pkg/commands/hosting_service"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/hosting_service"
+	"github.com/quangdang46/slg/pkg/commands/models"
 	"github.com/samber/lo"
 	"golang.org/x/sync/errgroup"
 )
@@ -33,7 +33,7 @@ func (self *GitHubCommands) ConfiguredBaseRemoteName() string {
 	// the remote's URL determines the GitHub repo. Since `gh repo set-default` on the command line
 	// sets the config this way, it's probably good enough in practice, but for completeness it
 	// would be nice to also support the case where the config value is a full remote name (e.g.
-	// "jesseduffield/lazygit").
+	// "jesseduffield/slg").
 
 	cmdArgs := NewGitCmd("config").
 		Arg("--local", "--get-regexp", `remote\..*\.gh-resolved`).

@@ -1,15 +1,15 @@
 package worktree
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/config"
-	. "github.com/jesseduffield/lazygit/pkg/integration/components"
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
 )
 
 // Can't think of a better name than 'dotfile' repo: I'm using that
 // because that's the case we're typically dealing with.
 
 var DotfileBareRepo = NewIntegrationTest(NewIntegrationTestArgs{
-	Description:  "Open lazygit in the worktree of a dotfile bare repo and add a file and commit",
+	Description:  "Open slg in the worktree of a dotfile bare repo and add a file and commit",
 	ExtraCmdArgs: []string{"--git-dir={{.actualPath}}/.bare", "--work-tree={{.actualPath}}/repo"},
 	Skip:         false,
 	SetupConfig:  func(config *config.AppConfig) {},
@@ -20,7 +20,7 @@ var DotfileBareRepo = NewIntegrationTest(NewIntegrationTestArgs{
 		//  - repo (the worktree)
 		//
 		// The first repo is called 'repo' because that's the
-		// directory that all lazygit tests start in
+		// directory that all slg tests start in
 
 		// Delete the .git dir that all tests start with by default
 		shell.DeleteFile(".git")

@@ -12,7 +12,7 @@ import (
 )
 
 // this is for running shell commands, mostly for the sake of setting up the repo
-// but you can also run the commands from within lazygit to emulate things happening
+// but you can also run the commands from within slg to emulate things happening
 // in the background.
 type Shell struct {
 	// working directory the shell is invoked in
@@ -468,7 +468,7 @@ func (self *Shell) MakeExecutable(path string) *Shell {
 	return self
 }
 
-// Help files are located at test/files from the root the lazygit repo.
+// Help files are located at test/files from the root the slg repo.
 // E.g. You may want to create a pre-commit hook file there, then call this
 // function to copy it into your test repo.
 func (self *Shell) CopyHelpFile(source string, destination string) *Shell {

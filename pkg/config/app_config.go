@@ -12,18 +12,18 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/jesseduffield/generics/orderedset"
-	"github.com/jesseduffield/lazygit/pkg/utils"
-	"github.com/jesseduffield/lazygit/pkg/utils/yaml_utils"
+	"github.com/quangdang46/slg/pkg/utils"
+	"github.com/quangdang46/slg/pkg/utils/yaml_utils"
 	"github.com/samber/lo"
 	"gopkg.in/yaml.v3"
 )
 
-// AppConfig contains the base configuration fields required for lazygit.
+// AppConfig contains the base configuration fields required for slg.
 type AppConfig struct {
 	debug                 bool   `long:"debug" env:"DEBUG" default:"false"`
 	version               string `long:"version" env:"VERSION" default:"unversioned"`
 	buildDate             string `long:"build-date" env:"BUILD_DATE"`
-	name                  string `long:"name" env:"NAME" default:"lazygit"`
+	name                  string `long:"name" env:"NAME" default:"slg"`
 	buildSource           string `long:"build-source" env:"BUILD_SOURCE" default:""`
 	userConfig            *UserConfig
 	globalUserConfigFiles []*ConfigFile
@@ -590,19 +590,19 @@ func findConfigFile(filename string) (exists bool, path string) {
 		return true, filepath.Join(envConfigDir, filename)
 	}
 
-	// look for jesseduffield/lazygit/filename in XDG_CONFIG_HOME and XDG_CONFIG_DIRS
-	legacyConfigPath, err := xdg.SearchConfigFile(filepath.Join("jesseduffield", "lazygit", filename))
+	// look for jesseduffield/slg/filename in XDG_CONFIG_HOME and XDG_CONFIG_DIRS
+	legacyConfigPath, err := xdg.SearchConfigFile(filepath.Join("jesseduffield", "slg", filename))
 	if err == nil {
 		return true, legacyConfigPath
 	}
 
-	// look for lazygit/filename in XDG_CONFIG_HOME and XDG_CONFIG_DIRS
-	configFilepath, err := xdg.SearchConfigFile(filepath.Join("lazygit", filename))
+	// look for slg/filename in XDG_CONFIG_HOME and XDG_CONFIG_DIRS
+	configFilepath, err := xdg.SearchConfigFile(filepath.Join("slg", filename))
 	if err == nil {
 		return true, configFilepath
 	}
 
-	return false, filepath.Join(xdg.ConfigHome, "lazygit", filename)
+	return false, filepath.Join(xdg.ConfigHome, "slg", filename)
 }
 
 var ConfigFilename = "config.yml"
@@ -615,8 +615,8 @@ func stateFilePath(filename string) (string, error) {
 		return legacyStateFile, nil
 	}
 
-	// looks for XDG_STATE_HOME/lazygit/filename
-	return xdg.StateFile(filepath.Join("lazygit", filename))
+	// looks for XDG_STATE_HOME/slg/filename
+	return xdg.StateFile(filepath.Join("slg", filename))
 }
 
 // SaveAppState marshalls the AppState struct and writes it to the disk
@@ -699,7 +699,7 @@ type AppState struct {
 	DidShowHunkStagingHint bool
 	LastVersion            string // this is the last version the user was using, for the purpose of showing release notes
 
-	// these are for shell commands typed in directly, not for custom commands in the lazygit config.
+	// these are for shell commands typed in directly, not for custom commands in the slg config.
 	// For backwards compatibility we keep the old name in yaml files.
 	ShellCommandsHistory []string `yaml:"customcommandshistory"`
 
@@ -728,8 +728,8 @@ func getDefaultAppState() *AppState {
 }
 
 func LogPath() (string, error) {
-	if os.Getenv("LAZYGIT_LOG_PATH") != "" {
-		return os.Getenv("LAZYGIT_LOG_PATH"), nil
+	if os.Getenv("SLG_LOG_PATH") != "" {
+		return os.Getenv("SLG_LOG_PATH"), nil
 	}
 
 	return stateFilePath("development.log")

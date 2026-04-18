@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/jesseduffield/generics/set"
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/common"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/common"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/samber/lo"
 	"golang.org/x/sync/errgroup"
 )
@@ -246,7 +246,7 @@ func (self *BranchLoader) obtainBranches() []*models.Branch {
 		if len(split) != len(branchFields) {
 			// Ignore line if it isn't separated into the expected number of parts
 			// This is probably a warning message, for more info see:
-			// https://github.com/jesseduffield/lazygit/issues/1385#issuecomment-885580439
+			// https://github.com/quangdang46/slg/issues/1385#issuecomment-885580439
 			return nil, false
 		}
 

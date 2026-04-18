@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/jesseduffield/lazygit/pkg/config/user-config",
+  "$id": "https://github.com/jesseduffield/slg/pkg/config/user-config",
   "$ref": "#/$defs/UserConfig",
   "$defs": {
     "CommitConfig": {
@@ -61,7 +61,7 @@
       "properties": {
         "key": {
           "type": "string",
-          "description": "The key to trigger the command. Use a single letter or one of the values from https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md"
+          "description": "The key to trigger the command. Use a single letter or one of the values from https://github.com/jesseduffield/slg/blob/master/docs/keybindings/Custom_Keybindings.md"
         },
         "commandMenu": {
           "items": {
@@ -123,7 +123,7 @@
             "logWithPty",
             "popup"
           ],
-          "description": "Where the output of the command should go. 'none' discards it, 'terminal' suspends lazygit and runs the command in the terminal (useful for commands that require user input), 'log' streams it to the command log, 'logWithPty' is like 'log' but runs the command in a pseudo terminal (can be useful for commands that produce colored output when the output is a terminal), and 'popup' shows it in a popup."
+          "description": "Where the output of the command should go. 'none' discards it, 'terminal' suspends slg and runs the command in the terminal (useful for commands that require user input), 'log' streams it to the command log, 'logWithPty' is like 'log' but runs the command in a pseudo terminal (can be useful for commands that produce colored output when the output is a terminal), and 'popup' shows it in a popup."
         },
         "outputTitle": {
           "type": "string",
@@ -292,7 +292,7 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "Custom icons for filenames and file extensions\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-files-icon--color"
+      "description": "Custom icons for filenames and file extensions\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-files-icon--color"
     },
     "GitConfig": {
       "properties": {
@@ -301,7 +301,7 @@
             "$ref": "#/$defs/PagingConfig"
           },
           "type": "array",
-          "description": "Array of pagers. Each entry has the following format:\n\n  # Value of the --color arg in the git diff command. Some pagers want\n  # this to be set to 'always' and some want it set to 'never'\n  colorArg: \"always\"\n\n  # e.g.\n  # diff-so-fancy\n  # delta --dark --paging=never\n  # ydiff -p cat -s --wrap --width={{columnWidth}}\n  pager: \"\"\n\n  # e.g. 'difft --color=always'\n  externalDiffCommand: \"\"\n\n  # If true, Lazygit will use git's `diff.external` config for paging.\n  # The advantage over `externalDiffCommand` is that this can be\n  # configured per file type in .gitattributes; see\n  # https://git-scm.com/docs/gitattributes#_defining_an_external_diff_driver.\n  useExternalDiffGitConfig: false\n\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Custom_Pagers.md for more information."
+          "description": "Array of pagers. Each entry has the following format:\n\n  # Value of the --color arg in the git diff command. Some pagers want\n  # this to be set to 'always' and some want it set to 'never'\n  colorArg: \"always\"\n\n  # e.g.\n  # diff-so-fancy\n  # delta --dark --paging=never\n  # ydiff -p cat -s --wrap --width={{columnWidth}}\n  pager: \"\"\n\n  # e.g. 'difft --color=always'\n  externalDiffCommand: \"\"\n\n  # If true, Lazygit will use git's `diff.external` config for paging.\n  # The advantage over `externalDiffCommand` is that this can be\n  # configured per file type in .gitattributes; see\n  # https://git-scm.com/docs/gitattributes#_defining_an_external_diff_driver.\n  useExternalDiffGitConfig: false\n\nSee https://github.com/jesseduffield/slg/blob/master/docs/Custom_Pagers.md for more information."
         },
         "commit": {
           "$ref": "#/$defs/CommitConfig",
@@ -345,7 +345,7 @@
             "onlyMainBranches",
             "allBranches"
           ],
-          "description": "If not \"none\", lazygit will automatically fast-forward local branches to match their upstream after fetching. Applies to branches that are not the currently checked out branch, and only to those that are strictly behind their upstream (as opposed to diverged).\nPossible values: 'none' | 'onlyMainBranches' | 'allBranches'",
+          "description": "If not \"none\", slg will automatically fast-forward local branches to match their upstream after fetching. Applies to branches that are not the currently checked out branch, and only to those that are strictly behind their upstream (as opposed to diverged).\nPossible values: 'none' | 'onlyMainBranches' | 'allBranches'",
           "default": "onlyMainBranches"
         },
         "fetchAll": {
@@ -355,7 +355,7 @@
         },
         "autoStageResolvedConflicts": {
           "type": "boolean",
-          "description": "If true, lazygit will automatically stage files that used to have merge conflicts but no longer do; and it will also ask you if you want to continue a merge or rebase if you've resolved all conflicts. If false, it won't do either of these things.",
+          "description": "If true, slg will automatically stage files that used to have merge conflicts but no longer do; and it will also ask you if you want to continue a merge or rebase if you've resolved all conflicts. If false, it won't do either of these things.",
           "default": true
         },
         "branchLogCmd": {
@@ -405,7 +405,7 @@
             "$ref": "#/$defs/CommitPrefixConfig"
           },
           "type": "array",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#predefined-commit-message-prefix"
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#predefined-commit-message-prefix"
         },
         "commitPrefixes": {
           "additionalProperties": {
@@ -415,11 +415,11 @@
             "type": "array"
           },
           "type": "object",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#predefined-commit-message-prefix"
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#predefined-commit-message-prefix"
         },
         "branchPrefix": {
           "type": "string",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#predefined-branch-name-prefix"
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#predefined-branch-name-prefix"
         },
         "parseEmoji": {
           "type": "boolean",
@@ -466,25 +466,25 @@
             "type": "string"
           },
           "type": "object",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-author-color"
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-author-color"
         },
         "branchColors": {
           "additionalProperties": {
             "type": "string"
           },
           "type": "object",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-branch-color\nDeprecated: use branchColorPatterns instead"
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-branch-color\nDeprecated: use branchColorPatterns instead"
         },
         "branchColorPatterns": {
           "additionalProperties": {
             "type": "string"
           },
           "type": "object",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-branch-color"
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-branch-color"
         },
         "customIcons": {
           "$ref": "#/$defs/CustomIconsConfig",
-          "description": "Custom icons for filenames and file extensions\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-files-icon--color"
+          "description": "Custom icons for filenames and file extensions\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-files-icon--color"
         },
         "scrollHeight": {
           "type": "integer",
@@ -499,7 +499,7 @@
         },
         "scrollOffMargin": {
           "type": "integer",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#scroll-off-margin",
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#scroll-off-margin",
           "default": 2
         },
         "scrollOffBehavior": {
@@ -618,7 +618,7 @@
         },
         "theme": {
           "$ref": "#/$defs/ThemeConfig",
-          "description": "Config relating to colors and styles.\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#color-attributes"
+          "description": "Config relating to colors and styles.\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#color-attributes"
         },
         "commitLength": {
           "$ref": "#/$defs/CommitLengthConfig",
@@ -1626,7 +1626,7 @@
             "never",
             "when-maximised"
           ],
-          "description": "This determines whether the git graph is rendered in the commits panel\nOne of 'always' | 'never' | 'when-maximised'\n\nCan be toggled from within lazygit with `Log menu -\u003e Show git graph` (`\u003cc-l\u003e` in the commits window by default).",
+          "description": "This determines whether the git graph is rendered in the commits panel\nOne of 'always' | 'never' | 'when-maximised'\n\nCan be toggled from within slg with `Log menu -\u003e Show git graph` (`\u003cc-l\u003e` in the commits window by default).",
           "default": "always"
         },
         "showWholeGraph": {
@@ -1679,7 +1679,7 @@
         },
         "editInTerminal": {
           "type": "boolean",
-          "description": "Whether lazygit suspends until an edit process returns"
+          "description": "Whether slg suspends until an edit process returns"
         },
         "openDirInEditor": {
           "type": "string",
@@ -1712,15 +1712,15 @@
         },
         "copyToClipboardCmd": {
           "type": "string",
-          "description": "CopyToClipboardCmd is the command for copying to clipboard.\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-command-for-copying-to-and-pasting-from-clipboard"
+          "description": "CopyToClipboardCmd is the command for copying to clipboard.\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-command-for-copying-to-and-pasting-from-clipboard"
         },
         "readFromClipboardCmd": {
           "type": "string",
-          "description": "ReadFromClipboardCmd is the command for reading the clipboard.\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-command-for-copying-to-and-pasting-from-clipboard"
+          "description": "ReadFromClipboardCmd is the command for reading the clipboard.\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-command-for-copying-to-and-pasting-from-clipboard"
         },
         "shellFunctionsFile": {
           "type": "string",
-          "description": "A shell startup file containing shell aliases or shell functions. This will be sourced before running any shell commands, so that shell functions are available in the `:` command prompt or even in custom commands.\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#using-aliases-or-functions-in-shell-commands"
+          "description": "A shell startup file containing shell aliases or shell functions. This will be sourced before running any shell commands, so that shell functions are available in the `:` command prompt or even in custom commands.\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#using-aliases-or-functions-in-shell-commands"
         }
       },
       "additionalProperties": false,
@@ -1862,7 +1862,7 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "description": "Background color of selected line.\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#highlighting-the-selected-line",
+          "description": "Background color of selected line.\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#highlighting-the-selected-line",
           "default": [
             "blue"
           ]
@@ -1950,7 +1950,7 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "Config relating to colors and styles.\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#color-attributes"
+      "description": "Config relating to colors and styles.\nSee https://github.com/jesseduffield/slg/blob/master/docs/Config.md#color-attributes"
     },
     "UpdateConfig": {
       "properties": {
@@ -2018,14 +2018,14 @@
           },
           "type": "array",
           "uniqueItems": true,
-          "description": "User-configured commands that can be invoked from within Lazygit\nSee https://github.com/jesseduffield/lazygit/blob/master/docs/Custom_Command_Keybindings.md"
+          "description": "User-configured commands that can be invoked from within Lazygit\nSee https://github.com/jesseduffield/slg/blob/master/docs/Custom_Command_Keybindings.md"
         },
         "services": {
           "additionalProperties": {
             "type": "string"
           },
           "type": "object",
-          "description": "See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-pull-request-urls"
+          "description": "See https://github.com/jesseduffield/slg/blob/master/docs/Config.md#custom-pull-request-urls"
         },
         "notARepository": {
           "type": "string",

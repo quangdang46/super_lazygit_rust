@@ -37,8 +37,8 @@
             go = prev."go_${builtins.replaceStrings [ "." ] [ "_" ] goVersion}";
           };
 
-          lazygit = pkgs.buildGoModule rec {
-            pname = "lazygit";
+          slg = pkgs.buildGoModule rec {
+            pname = "slg";
             version = "dev";
 
             gitCommit = inputs.self.rev or inputs.self.dirtyRev or "dev";
@@ -64,17 +64,17 @@
             ];
 
             postInstall = ''
-              wrapProgram $out/bin/lazygit \
+              wrapProgram $out/bin/slg \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
             '';
 
             meta = {
               description = "A simple terminal UI for git commands";
-              homepage = "https://github.com/jesseduffield/lazygit";
+              homepage = "https://github.com/jesseduffield/slg";
               license = pkgs.lib.licenses.mit;
               maintainers = [ "jesseduffield" ];
               platforms = pkgs.lib.platforms.unix;
-              mainProgram = "lazygit";
+              mainProgram = "slg";
             };
           };
         in
@@ -86,12 +86,12 @@
           };
 
           packages = {
-            default = lazygit;
-            inherit lazygit;
+            default = slg;
+            inherit slg;
           };
 
           devShells.default = pkgs.mkShell {
-            name = "lazygit-dev";
+            name = "slg-dev";
 
             buildInputs = with pkgs; [
               # Go toolchain
@@ -113,12 +113,12 @@
             programs.gofmt.enable = true;
           };
 
-          checks.build = lazygit;
+          checks.build = slg;
         };
 
       flake = {
         overlays.default = final: prev: {
-          lazygit = inputs.self.packages.${final.system}.lazygit;
+          slg = inputs.self.packages.${final.system}.slg;
         };
       };
     };

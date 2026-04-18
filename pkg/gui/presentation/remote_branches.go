@@ -1,9 +1,9 @@
 package presentation
 
 import (
-	"github.com/jesseduffield/lazygit/pkg/commands/models"
-	"github.com/jesseduffield/lazygit/pkg/gui/presentation/icons"
-	"github.com/jesseduffield/lazygit/pkg/theme"
+	"github.com/quangdang46/slg/pkg/commands/models"
+	"github.com/quangdang46/slg/pkg/gui/presentation/icons"
+	"github.com/quangdang46/slg/pkg/theme"
 	"github.com/samber/lo"
 )
 

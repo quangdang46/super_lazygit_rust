@@ -3,7 +3,7 @@
 ## Packages
 
 * `pkg/app`: Contains startup code, initialises a bunch of stuff like logging, the user config, etc, before starting the gui. Catches and handles some errors that the gui raises.
-* `pkg/app/daemon`: Contains code relating to the lazygit daemon. This could be better named: it's is not a daemon in the sense that it's a long-running background process; rather it's a short-lived background process that we pass to git for certain tasks, like GIT_EDITOR for when we want to set the TODO file for an interactive rebase.
+* `pkg/app/daemon`: Contains code relating to the slg daemon. This could be better named: it's is not a daemon in the sense that it's a long-running background process; rather it's a short-lived background process that we pass to git for certain tasks, like GIT_EDITOR for when we want to set the TODO file for an interactive rebase.
 * `pkg/cheatsheet`: Generates the keybinding cheatsheets in `docs/keybindings`.
 * `pkg/commands/git_commands`: All communication to the git binary happens here. So for example there's a `Checkout` method which calls `git checkout`.
 * `pkg/commands/oscommands`: Contains code for talking to the OS, and for invoking commands in general
@@ -18,7 +18,7 @@
 * `pkg/i18n`: Contains internationalised strings
 * `pkg/integration`: Contains end-to-end tests
 * `pkg/jsonschema`: Contains generator for user config JSON schema.
-* `pkg/logs`: Contains code for instantiating the logger and for tailing the logs via `lazygit --logs`
+* `pkg/logs`: Contains code for instantiating the logger and for tailing the logs via `slg --logs`
 * `pkg/tasks`: Contains code for running asynchronous tasks: mostly related to efficiently rendering command output to the main window.
 * `pkg/theme`: Contains code related to colour themes.
 * `pkg/updates`: Contains code related to Lazygit updates (checking for update, download and installing the update)
@@ -88,9 +88,9 @@ Often, as part of handling a keypress, we'll want to run some code asynchronousl
 
 ## Using UserConfig
 
-The UserConfig struct is loaded from lazygit's global config file (and possibly repo-specific config files). It can be re-loaded while lazygit is running, e.g. when the user edits one of the config files. In this case we should make sure that any new or changed config values take effect immediately. The easiest way to achieve this is what we do in most controllers or helpers: these have a pointer to the `common.Common` struct, which contains the UserConfig, and access it from there. Since the UserConfig instance in `common.Common` is updated whenever we reload the config, the code can be sure that it always uses an up-to-date value, and there's nothing else to do.
+The UserConfig struct is loaded from slg's global config file (and possibly repo-specific config files). It can be re-loaded while slg is running, e.g. when the user edits one of the config files. In this case we should make sure that any new or changed config values take effect immediately. The easiest way to achieve this is what we do in most controllers or helpers: these have a pointer to the `common.Common` struct, which contains the UserConfig, and access it from there. Since the UserConfig instance in `common.Common` is updated whenever we reload the config, the code can be sure that it always uses an up-to-date value, and there's nothing else to do.
 
-If that's not possible for some reason, see if you can add code to `Gui.onUserConfigLoaded` to update things from the new config; there are some examples in that function to use as a guide. If that's too hard to do too, add the config to the list in `Gui.checkForChangedConfigsThatDontAutoReload` so that the user is asked to quit and restart lazygit.
+If that's not possible for some reason, see if you can add code to `Gui.onUserConfigLoaded` to update things from the new config; there are some examples in that function to use as a guide. If that's too hard to do too, add the config to the list in `Gui.checkForChangedConfigsThatDontAutoReload` so that the user is asked to quit and restart slg.
 
 ## Legacy code structure
 

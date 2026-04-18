@@ -166,7 +166,7 @@
   "SquashAboveCommitsTooltip": "Squash bovenstaande commits",
   "CommitChangesWithoutHook": "Commit veranderingen zonder pre-commit hook",
   "ResetTo": "Reset naar",
-  "PressEnterToReturn": "Press om terug te gaan naar lazygit",
+  "PressEnterToReturn": "Press om terug te gaan naar slg",
   "ViewStashOptions": "Bekijk stash opties",
   "StashAllChanges": "Stash-bestanden",
   "StashAllChangesKeepIndex": "Stash staged wijzigingen",

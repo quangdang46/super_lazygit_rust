@@ -76,7 +76,7 @@ linters:
         - -ST1022, # The documentation of an exported variable or constant should start with variable's name
 
       dot-import-whitelist:
-        - github.com/jesseduffield/lazygit/pkg/integration/components
+        - github.com/jesseduffield/slg/pkg/integration/components
     revive:
       severity: warning
       rules:

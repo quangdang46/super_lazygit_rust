@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
 )
 
 type StashCommands struct {
@@ -112,7 +112,7 @@ func (self *StashCommands) StashAndKeepIndex(message string) error {
 func (self *StashCommands) StashUnstagedChanges(message string) error {
 	if err := self.cmd.New(
 		NewGitCmd("commit").
-			Arg("--no-verify", "-m", "[lazygit] stashing unstaged changes").
+			Arg("--no-verify", "-m", "[slg] stashing unstaged changes").
 			ToArgv(),
 	).Run(); err != nil {
 		return err

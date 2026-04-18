@@ -3,7 +3,7 @@ package config
 import (
 	"strconv"
 
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/utils"
 )
 
 type PagerConfig struct {
@@ -22,7 +22,7 @@ func (self *PagerConfig) currentPagerConfig() *PagingConfig {
 	}
 
 	// Guard against the pager index being out of range, which can happen if the user
-	// has removed pagers from their config file while lazygit is running.
+	// has removed pagers from their config file while slg is running.
 	if self.pagerIndex >= len(pagers) {
 		self.pagerIndex = 0
 	}

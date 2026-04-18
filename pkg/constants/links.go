@@ -19,19 +19,19 @@ var Links = struct {
 	RepoUrl     string
 	Releases    string
 }{
-	RepoUrl:     "https://github.com/jesseduffield/lazygit",
-	Issues:      "https://github.com/jesseduffield/lazygit/issues",
+	RepoUrl:     "https://github.com/quangdang46/slg",
+	Issues:      "https://github.com/quangdang46/slg/issues",
 	Donate:      "https://github.com/sponsors/jesseduffield",
-	Discussions: "https://github.com/jesseduffield/lazygit/discussions",
-	Releases:    "https://github.com/jesseduffield/lazygit/releases",
+	Discussions: "https://github.com/quangdang46/slg/discussions",
+	Releases:    "https://github.com/quangdang46/slg/releases",
 	Docs: Docs{
-		CustomPagers:      "https://github.com/jesseduffield/lazygit/blob/master/docs/Custom_Pagers.md",
-		CustomKeybindings: "https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md",
-		CustomCommands:    "https://github.com/jesseduffield/lazygit/wiki/Custom-Commands-Compendium",
-		Keybindings:       "https://github.com/jesseduffield/lazygit/blob/%s/docs/keybindings",
-		Undoing:           "https://github.com/jesseduffield/lazygit/blob/master/docs/Undoing.md",
-		Config:            "https://github.com/jesseduffield/lazygit/blob/%s/docs/Config.md",
+		CustomPagers:      "https://github.com/quangdang46/slg/blob/master/docs/Custom_Pagers.md",
+		CustomKeybindings: "https://github.com/quangdang46/slg/blob/master/docs/keybindings/Custom_Keybindings.md",
+		CustomCommands:    "https://github.com/quangdang46/slg/wiki/Custom-Commands-Compendium",
+		Keybindings:       "https://github.com/quangdang46/slg/blob/%s/docs/keybindings",
+		Undoing:           "https://github.com/quangdang46/slg/blob/master/docs/Undoing.md",
+		Config:            "https://github.com/quangdang46/slg/blob/%s/docs/Config.md",
 		Tutorial:          "https://youtu.be/VDXvbHZYeKY",
-		CustomPatchDemo:   "https://github.com/jesseduffield/lazygit#rebase-magic-custom-patches",
+		CustomPatchDemo:   "https://github.com/quangdang46/slg#rebase-magic-custom-patches",
 	},
 }

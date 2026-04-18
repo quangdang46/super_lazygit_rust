@@ -1,6 +1,6 @@
 # Custom Command Keybindings
 
-You can add custom command keybindings in your config.yml (accessible by pressing 'e' on the status panel from within lazygit) like so:
+You can add custom command keybindings in your config.yml (accessible by pressing 'e' on the status panel from within slg) like so:
 
 ```yml
 customCommands:
@@ -50,13 +50,13 @@ Custom command keybindings will appear alongside inbuilt keybindings when you vi
 For a given custom command, here are the allowed fields:
 | _field_ | _description_ | required |
 |-----------------|----------------------|-|
-| key | The key to trigger the command. Use a single letter or one of the values from [here](https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md). Custom commands without a key specified can be triggered by selecting them from the keybindings (`?`) menu | no |
+| key | The key to trigger the command. Use a single letter or one of the values from [here](https://github.com/jesseduffield/slg/blob/master/docs/keybindings/Custom_Keybindings.md). Custom commands without a key specified can be triggered by selecting them from the keybindings (`?`) menu | no |
 | command | The command to run (using Go template syntax for placeholder values) | yes |
 | context | The context in which to listen for the key (see [below](#contexts)) | yes |
 | prompts | A list of prompts that will request user input before running the final command | no |
 | loadingText | Text to display while waiting for command to finish | no |
 | description | Label for the custom command when displayed in the keybindings menu | no |
-| output | Where the output of the command should go. 'none' discards it, 'terminal' suspends lazygit and runs the command in the terminal (useful for commands that require user input), 'log' streams it to the command log, 'logWithPty' is like 'log' but runs the command in a pseudo terminal (can be useful for commands that produce colored output when the output is a terminal), and 'popup' shows it in a popup. | no |
+| output | Where the output of the command should go. 'none' discards it, 'terminal' suspends slg and runs the command in the terminal (useful for commands that require user input), 'log' streams it to the command log, 'logWithPty' is like 'log' but runs the command in a pseudo terminal (can be useful for commands that produce colored output when the output is a terminal), and 'popup' shows it in a popup. | no |
 | outputTitle | The title to display in the popup panel if output is set to 'popup'. If left unset, the command will be used as the title. | no |
 | after | Actions to take after the command has completed | no |
 
@@ -193,7 +193,7 @@ The permitted option fields are:
 | name | The first part of the label | no |
 | description | The second part of the label | no |
 | value | the value that will be used in the command | yes |
-| key | Keybinding to invoke this menu option without needing to navigate to it. Can be a single letter or one of the values from [here](https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md) | no |
+| key | Keybinding to invoke this menu option without needing to navigate to it. Can be a single letter or one of the values from [here](https://github.com/jesseduffield/slg/blob/master/docs/keybindings/Custom_Keybindings.md) | no |
 
 If an option has no name the value will be displayed to the user in place of the name, so you're allowed to only include the value like so:
 
@@ -272,7 +272,7 @@ In this example, pressing 'f', 'h', or 'r' will directly select the correspondin
 | valueFormat       | How to format matched groups from the filter to construct a menu item's value | no        |
 | labelFormat       | Like valueFormat but for the labels. If `labelFormat` is not specified, `valueFormat` is shown instead. | no         |
 
-Here's an example using named groups in the regex. Notice how we can pipe the label to a colour function for coloured output (available colours [here](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md))
+Here's an example using named groups in the regex. Notice how we can pipe the label to a colour function for coloured output (available colours [here](https://github.com/jesseduffield/slg/blob/master/docs/Config.md))
 
 ```yml
   - key : 'a'
@@ -378,7 +378,7 @@ CheckedOutBranch
 (For legacy reasons, `SelectedLocalCommit`, `SelectedReflogCommit`, and `SelectedSubCommit` are also available, but they are deprecated.)
 
 
-To see what fields are available on e.g. the `SelectedFile`, see [here](https://github.com/jesseduffield/lazygit/blob/master/pkg/gui/services/custom_commands/models.go) (all the modelling lives in the same file).
+To see what fields are available on e.g. the `SelectedFile`, see [here](https://github.com/jesseduffield/slg/blob/master/pkg/gui/services/custom_commands/models.go) (all the modelling lives in the same file).
 
 We don't support accessing all elements of a range selection yet. We might add this in the future, but as a special case you can access the range of selected commits by using `SelectedCommitRange`, which has two properties `.To` and `.From` which are the hashes of the bottom and top selected commits, respectively. This is useful for passing them to a git command that operates on a range of commits. For example, to create patches for all selected commits, you might use
 ```yml
@@ -405,7 +405,7 @@ initialValue: "username/{{ runCommand "date +\"%Y/%-m\"" }}/"
 
 ## Keybinding collisions
 
-If your custom keybinding collides with an inbuilt keybinding that is defined for the same context, only the custom keybinding will be executed. This also applies to the global context. However, one caveat is that if you have a custom keybinding defined on the global context for some key, and there is an in-built keybinding defined for the same key and for a specific context (say the 'files' context), then the in-built keybinding will take precedence. See how to change in-built keybindings [here](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#keybindings)
+If your custom keybinding collides with an inbuilt keybinding that is defined for the same context, only the custom keybinding will be executed. This also applies to the global context. However, one caveat is that if you have a custom keybinding defined on the global context for some key, and there is an in-built keybinding defined for the same key and for a specific context (say the 'files' context), then the in-built keybinding will take precedence. See how to change in-built keybindings [here](https://github.com/jesseduffield/slg/blob/master/docs/Config.md#keybindings)
 
 ## Menus of custom commands
 
@@ -434,4 +434,4 @@ If you want to verify that your command actually does what you expect, you can w
 
 ## More Examples
 
-See the [wiki](https://github.com/jesseduffield/lazygit/wiki/Custom-Commands-Compendium) page for more examples, and feel free to add your own custom commands to this page so others can benefit!
+See the [wiki](https://github.com/jesseduffield/slg/wiki/Custom-Commands-Compendium) page for more examples, and feel free to add your own custom commands to this page so others can benefit!

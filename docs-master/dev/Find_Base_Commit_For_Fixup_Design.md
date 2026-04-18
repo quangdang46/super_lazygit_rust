@@ -1,4 +1,4 @@
-# About the mechanics of lazygit's "Find base commit for fixup" command
+# About the mechanics of slg's "Find base commit for fixup" command
 
 ## Background
 
@@ -53,8 +53,8 @@ in this case; ctrl-f doesn't, to enforce that you pay attention to how you group
 the changes. There's another reason for this behavior: ctrl-f doesn't create
 fixup commits itself (unlike git-absorb), instead it just selects the found base
 commit so that the user can decide whether to amend the changes right in, or
-create a fixup commit from there (both are single-key commands in lazygit). And
-lazygit doesn't support non-contiguous multiselections of commits, but even if
+create a fixup commit from there (both are single-key commands in slg). And
+slg doesn't support non-contiguous multiselections of commits, but even if
 it did, it wouldn't help much in this case.
 
 ## The mechanics
@@ -119,7 +119,7 @@ is this:
 --- a/my_file.go
 +++ b/my_file.go
 @@ -12,2 +12,3 @@ import (
- 	"github.com/jesseduffield/lazygit/pkg/utils"
+ 	"github.com/jesseduffield/slg/pkg/utils"
 +	"github.com/samber/lo"
  	"golang.org/x/sync/errgroup"
 @@ -308,9 +309,5 @@ func (self *FixupHelper) blameAddedLines(addedLineHunks []*hunk) ([]string, error
@@ -198,7 +198,7 @@ where, for instance, D and E are the two blame results.
 
 Unfortunately, determining the ancestry relationship between two commits using
 git commands is a bit expensive and not totally straightforward. Fortunately,
-it's not necessary in lazygit because lazygit has the most recent 300 commits
+it's not necessary in slg because slg has the most recent 300 commits
 cached in memory, and can simply search its linear list of commits to see which
 one is closer to the beginning of the list. If only one of the two commits is
 found within those 300 commits, then that's the more recent one; if neither is
@@ -221,7 +221,7 @@ be found.
 Lazygit doesn't have this problem. For a given blame result it needs to
 determine whether that commit is already on main, and if it can find the commit
 in its cached list of the first 300 commits it can get that information from
-there, because lazygit knows what the user's configured main branches are
+there, because slg knows what the user's configured main branches are
 (`master` and `main` by default, but it could also include branches like `devel`
 or `1.0-hotfixes`), and so it can tell for each commit whether it's contained in
 one of those main branches. And if it can't find it among the first 300 commits,

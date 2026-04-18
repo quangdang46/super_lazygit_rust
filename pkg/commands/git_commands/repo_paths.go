@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
-	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
-	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/quangdang46/slg/pkg/commands/oscommands"
+	"github.com/quangdang46/slg/pkg/utils"
 	"github.com/spf13/afero"
 )
 
@@ -64,7 +64,7 @@ func MockRepoPaths(currentPath string) *RepoPaths {
 		worktreeGitDirPath: filepath.Join(currentPath, ".git"),
 		repoPath:           currentPath,
 		repoGitDirPath:     filepath.Join(currentPath, ".git"),
-		repoName:           "lazygit",
+		repoName:           "slg",
 		isBareRepo:         false,
 	}
 }
