@@ -1,126 +1,168 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  # schedule:
+  #   # Runs at 8:00 AM UTC on every Saturday
+  #   # We'll check below if it's the first Saturday of the month, and fail if not
+  #   - cron: '0 8 * * 6'
 
-permissions:
-  contents: write
+  # Allow manual triggering of the workflow
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        type: choice
+        required: true
+        default: 'patch'
+        options:
+          - minor
+          - patch
+      ignore_blocks:
+        description: 'Ignore blocking PRs/issues'
+        type: boolean
+        required: true
+        default: false
 
-env:
-  CARGO_TERM_COLOR: always
-  PACKAGE_NAME: super-lazygit-app
-  BINARY_NAME: super-lazygit
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            use-cross: true
-            archive-suffix: linux-x86_64
-            archive-ext: tar.gz
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            use-cross: true
-            archive-suffix: linux-aarch64
-            archive-ext: tar.gz
-          - target: x86_64-apple-darwin
-            os: macos-13
-            use-cross: false
-            archive-suffix: macos-x86_64
-            archive-ext: tar.gz
-          - target: aarch64-apple-darwin
-            os: macos-14
-            use-cross: false
-            archive-suffix: macos-aarch64
-            archive-ext: tar.gz
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            use-cross: false
-            archive-suffix: windows-x86_64
-            archive-ext: zip
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install cross
-        if: matrix.use-cross
-        uses: taiki-e/install-action@cross
-
-      - name: Build release binaries with cross
-        if: matrix.use-cross
-        run: cross build --release --locked --package "$PACKAGE_NAME" --bin "$BINARY_NAME" --target "${{ matrix.target }}"
-
-      - name: Build release binaries natively
-        if: ${{ !matrix.use-cross }}
-        shell: bash
-        run: cargo build --release --locked --package "$PACKAGE_NAME" --bin "$BINARY_NAME" --target "${{ matrix.target }}"
-
-      - name: Package Unix archive
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME}"
-          STAGE_DIR="dist/${BINARY_NAME}-${VERSION}-${{ matrix.archive-suffix }}"
-          mkdir -p "$STAGE_DIR"
-          cp "target/${{ matrix.target }}/release/${BINARY_NAME}" "$STAGE_DIR/${BINARY_NAME}"
-          cp README.md LICENSE "$STAGE_DIR/"
-          tar -C dist -czf "dist/${BINARY_NAME}-${VERSION}-${{ matrix.archive-suffix }}.tar.gz" "${BINARY_NAME}-${VERSION}-${{ matrix.archive-suffix }}"
-          shasum -a 256 "dist/${BINARY_NAME}-${VERSION}-${{ matrix.archive-suffix }}.tar.gz" | awk '{print $1}' > "dist/${BINARY_NAME}-${VERSION}-${{ matrix.archive-suffix }}.tar.gz.sha256"
-
-      - name: Package Windows archive
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = "$env:GITHUB_REF_NAME"
-          $stageDir = "dist/${env:BINARY_NAME}-$version-${{ matrix.archive-suffix }}"
-          New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/${env:BINARY_NAME}.exe" "$stageDir/${env:BINARY_NAME}.exe"
-          Copy-Item "README.md" "$stageDir/"
-          Copy-Item "LICENSE" "$stageDir/"
-          Compress-Archive -Path "$stageDir/*" -DestinationPath "dist/${env:BINARY_NAME}-$version-${{ matrix.archive-suffix }}.zip" -Force
-          $hash = (Get-FileHash "dist/${env:BINARY_NAME}-$version-${{ matrix.archive-suffix }}.zip" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path "dist/${env:BINARY_NAME}-$version-${{ matrix.archive-suffix }}.zip.sha256" -Value $hash
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*.tar.gz.sha256
-            dist/*.zip
-            dist/*.zip.sha256
-
-  release:
-    name: Publish GitHub release
+  check-and-release:
     runs-on: ubuntu-latest
-    needs: build
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
+      - name: Check for correct repository
+        if: ${{ github.event_name != 'workflow_dispatch' && github.repository != 'stefanhaller/lazygit' }}
+        run: |
+          echo "Should only run in the stefanhaller/lazygit repository"
+          exit 1
 
-      - uses: softprops/action-gh-release@v2
+      - name: Check for first Saturday of the month
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        run: |
+          if (( $(date +%e) > 7 )); then
+            echo "This is not the first Saturday of the month"
+            exit 1
+          fi
+
+      - name: Checkout Code
+        uses: actions/checkout@v6
         with:
-          generate_release_notes: true
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.tar.gz.sha256
-            artifacts/*.zip
-            artifacts/*.zip.sha256
+          repository: jesseduffield/lazygit
+          token: ${{ secrets.LAZYGIT_RELEASE_PAT }}
+          fetch-depth: 0
+
+      - name: Get Latest Tag
+        run: |
+          latest_tag=$(git describe --tags $(git rev-list --tags --max-count=1) || echo "v0.0.0")
+
+          if ! [[ $latest_tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Tag format is invalid. Expected format: vX.X.X"
+            exit 1
+          fi
+
+          echo "Latest tag: $latest_tag"
+          echo "latest_tag=$latest_tag" >> $GITHUB_ENV
+
+      - name: Check for changes since last release
+        env:
+          LATEST_TAG: ${{ env.latest_tag }}
+        run: |
+          if [ -z "$(git diff --name-only "$LATEST_TAG")" ]; then
+            echo "No changes detected since last release"
+            exit 1
+          fi
+
+      - name: Check that docs and schema are up to date
+        run: |
+          if diff -r -q docs docs-master > /dev/null && diff -r -q schema schema-master > /dev/null; then
+            echo "Docs and schema are up to date."
+          else
+            echo "Docs or schema are out of date. Please run 'scripts/update_docs_for_release.sh' and make a PR."
+            exit 1
+          fi
+
+      - name: Check for Blocking Issues/PRs
+        if: ${{ !inputs.ignore_blocks }}
+        id: check_blocks
+        run: |
+          gh auth setup-git
+          gh auth status
+
+          echo "Checking for blocking issues and PRs..."
+
+          # Check for blocking issues
+          blocking_issues=$(gh issue list -l blocks-release --json number,title --jq '.[] | "- \(.title) (#\(.number))"')
+
+          # Check for blocking PRs
+          blocking_prs=$(gh pr list -l blocks-release --json number,title --jq '.[] | "- \(.title) (#\(.number)) (PR)"')
+
+          # Combine the results
+          blocking_items="$blocking_issues"$'\n'"$blocking_prs"
+
+          # Remove empty lines
+          blocking_items=$(echo "$blocking_items" | grep . || true)
+
+          if [ -n "$blocking_items" ]; then
+            echo "Blocking issues/PRs detected:"
+            echo "$blocking_items"
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.LAZYGIT_RELEASE_PAT }}
+
+      - name: Calculate next version
+        env:
+          LATEST_TAG: ${{ env.latest_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          VERSION_BUMP: ${{ inputs.version_bump }}
+        run: |
+          echo "Latest tag: $LATEST_TAG"
+          IFS='.' read -r major minor patch <<< "$LATEST_TAG"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$VERSION_BUMP" == "patch" ]]; then
+              patch=$((patch + 1))
+            else
+              minor=$((minor + 1))
+              patch=0
+            fi
+          else
+            # Default behavior for scheduled runs
+            minor=$((minor + 1))
+            patch=0
+          fi
+
+          new_tag="$major.$minor.$patch"
+
+          if ! [[ $new_tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: New tag's format is invalid. Expected format: vX.X.X"
+            exit 1
+          fi
+
+          echo "New tag: $new_tag"
+          echo "new_tag=$new_tag" >> $GITHUB_ENV
+
+      - name: Create and Push Tag
+        env:
+          NEW_TAG: ${{ env.new_tag }}
+          GITHUB_TOKEN: ${{ secrets.LAZYGIT_RELEASE_PAT }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$NEW_TAG" -a -m "Release $NEW_TAG"
+          git push origin "$NEW_TAG"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.x
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
+        with:
+          distribution: goreleaser
+          version: v2
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{secrets.LAZYGIT_RELEASE_PAT}}
