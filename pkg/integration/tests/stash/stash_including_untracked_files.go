@@ -1,0 +1,43 @@
+package stash
+
+import (
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
+)
+
+var StashIncludingUntrackedFiles = NewIntegrationTest(NewIntegrationTestArgs{
+	Description:  "Stashing all files including untracked ones",
+	ExtraCmdArgs: []string{},
+	Skip:         false,
+	SetupConfig:  func(config *config.AppConfig) {},
+	SetupRepo: func(shell *Shell) {
+		shell.EmptyCommit("initial commit")
+		shell.CreateFile("file_1", "content")
+		shell.CreateFile("file_2", "content")
+		shell.GitAdd("file_1")
+	},
+	Run: func(t *TestDriver, keys config.KeybindingConfig) {
+		t.Views().Stash().
+			IsEmpty()
+
+		t.Views().Files().
+			Lines(
+				Equals("▼ /"),
+				Equals("  A  file_1"),
+				Equals("  ?? file_2"),
+			).
+			Press(keys.Files.ViewStashOptions)
+
+		t.ExpectPopup().Menu().Title(Equals("Stash options")).Select(Contains("Stash all changes including untracked files")).Confirm()
+
+		t.ExpectPopup().Prompt().Title(Equals("Stash changes")).Type("my stashed file").Confirm()
+
+		t.Views().Stash().
+			Lines(
+				Contains("my stashed file"),
+			)
+
+		t.Views().Files().
+			IsEmpty()
+	},
+})

@@ -1,0 +1,24 @@
+package misc
+
+import (
+	"github.com/quangdang46/slg/pkg/config"
+	. "github.com/quangdang46/slg/pkg/integration/components"
+)
+
+var InitialOpen = NewIntegrationTest(NewIntegrationTestArgs{
+	Description:  "Confirms a popup appears on first opening Lazygit",
+	ExtraCmdArgs: []string{},
+	Skip:         false,
+	SetupConfig: func(config *config.AppConfig) {
+		config.GetUserConfig().DisableStartupPopups = false
+	},
+	SetupRepo: func(shell *Shell) {},
+	Run: func(t *TestDriver, keys config.KeybindingConfig) {
+		t.ExpectPopup().Confirmation().
+			Title(Equals("")).
+			Content(Contains("Thanks for using slg!")).
+			Confirm()
+
+		t.Views().Files().IsFocused()
+	},
+})

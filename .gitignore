@@ -1,14 +1,36 @@
-references/
-/target/
+# Please do not add personal files
 
-# bv (beads viewer) local config and caches
-.bv/
+# Logs
+*.log
 
-.grove/
-.why/
-.scope/
-.super-lazygit/
-registry.*
-.beads/
-.why
-.omc/*
+# Notes
+*.notes
+
+# Tests
+test/repos/repo
+coverage.txt
+
+# JetBrains stuff
+.idea/
+
+# Binaries
+slg
+slg.exe
+
+test/git_server/data
+
+test/_results/**
+
+oryxBuildBinary
+__debug_bin*
+
+.worktrees
+demo/output/*
+
+coverage.out
+
+# Nix
+result
+result-*
+.direnv
+.envrc

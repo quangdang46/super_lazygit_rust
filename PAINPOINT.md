@@ -1,4 +1,4 @@
-# super_lazygit_rust — Pain Points
+# super_slg_rust — Pain Points
 
 ## Who is this for?
 

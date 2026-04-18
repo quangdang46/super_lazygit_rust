@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"mv vendor/github.com/quangdang46/* vendor/github.com/jesseduffield/ 2>/dev/null; rmdir vendor/github.com/quangdang46 2>/dev/null; ls vendor/github.com/jesseduffield/\",\"description\":\"Restor...",
+  "error": "Exit code 2\nls: cannot access 'vendor/github.com/jesseduffield/': No such file or directory",
+  "timestamp": "2026-04-18T13:24:41.868Z",
+  "retry_count": 1
+}

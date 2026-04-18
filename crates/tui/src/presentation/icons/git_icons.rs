@@ -1,9 +1,0 @@
-pub const BRANCH_ICON: &str = "\u{f062c}";
-pub const DETACHED_HEAD_ICON: &str = "\u{e729}";
-pub const TAG_ICON: &str = "\u{f02b}";
-pub const COMMIT_ICON: &str = "\u{f0718}";
-pub const MERGE_COMMIT_ICON: &str = "\u{f062d}";
-pub const DEFAULT_REMOTE_ICON: &str = "\u{f02a2}";
-pub const STASH_ICON: &str = "\u{f01c}";
-pub const LINKED_WORKTREE_ICON: &str = "\u{f0339}";
-pub const MISSING_LINKED_WORKTREE_ICON: &str = "\u{f033a}";

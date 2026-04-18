@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "root_fingerprint": "/home/quangdang/projects/tools/super_lazygit_rust",
+  "saved_at": 1776519783,
+  "workspace": {
+    "current_root": "/home/quangdang/projects/tools/super_lazygit_rust",
+    "discovered_repo_ids": [
+      "/home/quangdang/projects/tools/super_lazygit_rust"
+    ],
+    "repo_summaries": {
+      "/home/quangdang/projects/tools/super_lazygit_rust": {
+        "repo_id": "/home/quangdang/projects/tools/super_lazygit_rust",
+        "display_name": "super_lazygit_rust",
+        "real_path": "/home/quangdang/projects/tools/super_lazygit_rust",
+        "display_path": "/home/quangdang/projects/tools/super_lazygit_rust",
+        "branch": "port",
+        "head_kind": "Branch",
+        "dirty": true,
+        "staged_count": 1044,
+        "unstaged_count": 3,
+        "untracked_count": 0,
+        "ahead_count": 0,
+        "behind_count": 0,
+        "conflicted": false,
+        "last_fetch_at": 1776519490,
+        "last_local_activity_at": 1776519783,
+        "last_refresh_at": 1776519783,
+        "watcher_freshness": "Fresh",
+        "remote_summary": {
+          "tracking_branch": "origin/port",
+          "remote_name": "origin"
+        },
+        "last_error": null
+      }
+    },
+    "selected_repo_id": "/home/quangdang/projects/tools/super_lazygit_rust",
+    "sort_mode": "Attention",
+    "filter_mode": "All",
+    "search_query": "",
+    "search_match_index": 0,
+    "preview_mode": "Summary",
+    "scan_status": {
+      "Complete": {
+        "scanned_repos": 1
+      }
+    },
+    "watcher_health": "Healthy",
+    "last_full_refresh_at": 1776519781
+  },
+  "repo_paths": {
+    "/home/quangdang/projects/tools/super_lazygit_rust": "/home/quangdang/projects/tools/super_lazygit_rust"
+  }
+}
