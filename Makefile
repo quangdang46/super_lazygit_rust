@@ -7,7 +7,7 @@ build:
 
 .PHONY: install
 install:
-	go install
+	go install -mod=mod
 
 .PHONY: run
 run: build
